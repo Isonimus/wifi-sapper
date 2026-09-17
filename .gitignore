@@ -1,0 +1,7 @@
+# PlatformIO build output and caches
+.pio/
+
+# Node dependencies (package-lock.json is kept for reproducible verify tooling)
+node_modules/
+
+# Verify artifacts are committed as evidence (ADR-0004), so they are NOT ignored.

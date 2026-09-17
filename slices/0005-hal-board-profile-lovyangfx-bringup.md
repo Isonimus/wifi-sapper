@@ -127,3 +127,12 @@ verify script.
 
 _(filled at merge — the freeze step: what actually shipped, confirming each scenario or
 recording the deviation.)_
+
+## Amendment — 2026-09-17: reference device is the Cardputer ADV
+
+The reference board named "M5Stack Cardputer" throughout this slice is specifically the
+**Cardputer ADV** — the physical device on hand. The Adversary repo labels this same hardware
+as plain "Cardputer" everywhere, so its `m5stack-stamps3` board id, pin map, and display
+config (reused here) are in fact the ADV's. Electrically for this slice (display + serial)
+the two are the same StampS3, so nothing in the plan changes; Scenario C's bring-up artifact
+is captured on the actual ADV.

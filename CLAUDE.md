@@ -12,7 +12,8 @@ keyboard, or SD card.
 Stack: C++17 on the Arduino framework over ESP-IDF (pioarduino platform + Bruce's patched
 esp32-arduino libs, required for raw deauth TX), built with PlatformIO. LovyanGFX for display
 (auto-detect across M5Stack, CYD, Lilygo, and generic panels). ArduinoJson; Unity for native
-unit tests. First reference target: **M5Stack Cardputer** (ESP32-S3, no PSRAM).
+unit tests. First reference target: **M5Stack Cardputer ADV** (ESP32-S3, no PSRAM — the
+Adversary repo labels this same hardware plainly as "Cardputer").
 
 General working practices — quality bar, testing standard, commit hygiene, delegation,
 correction, language — live in [`docs/quality-bar.md`](docs/quality-bar.md) and apply here

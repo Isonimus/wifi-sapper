@@ -1,0 +1,17 @@
+{
+  "name": "esp32-wifi-sapper",
+  "private": true,
+  "version": "0.0.0",
+  "description": "WiFi Sapper — portable, headless-first ESP-32 handshake-autohunt appliance. This package.json is the verification script registry (ADR-0004), not a web toolchain.",
+  "type": "module",
+  "scripts": {
+    "test:native": "pio test -e native",
+    "build:boards": "pio run -e cardputer",
+    "verify:device": "node scripts/0005-cardputer-bringup-verify.mjs",
+    "lint": "node scripts/lint-docs.mjs .",
+    "index": "node scripts/build-index.mjs ."
+  },
+  "devDependencies": {
+    "serialport": "^12.0.0"
+  }
+}
