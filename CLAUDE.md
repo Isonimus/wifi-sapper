@@ -136,7 +136,10 @@ actually wired (R11), so a row cannot claim a check that runs nowhere.
 
 | # | Invariant | Source | Enforced by |
 |---|---|---|---|
-| 1 | _(none yet — add as they are decided)_ | | |
+| 1 | Serial observation commands (`ping`, `state`, event tap) mutate no engine state — they expose only what the device already publishes or logs. | ADR-0003 | review-only |
+| 2 | Injected stimulus enters the engine only through the same seams a real event uses — never a parallel test-only path. | ADR-0003 | review-only |
+| 3 | Every state that blocks before the engine loop runs (e.g. first-boot captive portal) pumps the serial channel. | ADR-0003 | pending (LEDGER) |
+| 4 | The actuation/stimulus vocabulary is absent from any build without `SAPPER_TEST_HOOKS` — no shipped binary can be commanded to deauth or upload over serial. | ADR-0003 | pending (LEDGER) |
 
 When an ADR's consequences create a rule that all *future* work must follow, add the row
 in the same commit as the ADR.
