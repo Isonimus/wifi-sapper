@@ -20,8 +20,7 @@ open that corpus, so it skips qualified references (stele:ADR-0009).
      Slices below are the initial roadmap; each earns its ADR(s) as it is picked up, and the
      ADR citation is added to its line then (rule 8 rejects a citation that does not resolve). -->
 
-- [feature] serial control channel for the device-verify harness — read-only ping/state/event-tap unflagged in every build, stimulus/fault injection behind a SAPPER_TEST_HOOKS flag (adapt dupin:ADR-0014; the Sapper has a live deauth/upload path dupin lacks). Underpins every slice's verify script, so land it with or just after slice-1
-- [feature] slice-1: HAL skeleton + Board Profile capability struct + LovyanGFX bring-up on Cardputer (native + board build green)
+- [feature] serial control channel — STIMULUS half only: fault/stimulus injection behind SAPPER_TEST_HOOKS (synthetic handshake via the capture seam, stubbed wpa-sec responses, forced heap/time faults, hourly-sync clock advance), compiled out of release (ADR-0003). The observation half shipped in slice-0005; land the stimulus half with the engine it drives (slice-3/4)
 - [feature] slice-2: WiFi STA + NTP time sync + captive AP config portal (WiFi creds + wpa-sec API key → NVS)
 - [feature] slice-3: capture engine — port handshake_capture + deauth + station_scanner + pcap writer (headless)
 - [feature] slice-4: HuntEngine — extract the endless AutoHunt state machine out of the UI into a headless engine
