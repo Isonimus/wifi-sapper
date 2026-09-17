@@ -1,0 +1,79 @@
+#!/bin/sh
+# Stele pre-commit hook — the load-bearing enforcement decision (stele:ADR-0003).
+#
+# A linter nobody runs is another convention resting on memory, which is the failure this
+# project exists to fix. This hook makes the checks mechanical: no green corpus, no commit.
+# CI (.github/workflows/docs.yml) is the backstop for clones without the hook installed.
+#
+# Install: ln -sf ../../.claude/hooks/pre-commit .git/hooks/pre-commit
+# (/init-method does this; see stele:ADR-0003. Do NOT install on a linter-red corpus — fix the
+#  reds first, or every commit is blocked. See LEDGER.)
+#
+# Bypass in a genuine emergency with `git commit --no-verify`; CI still catches it.
+
+set -e
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not found on PATH — cannot run doc checks." >&2
+  exit 1
+fi
+
+# The checks run against the COMMIT, not the working tree (stele:ADR-0018). Reading the working
+# tree passes on a state no commit will ever contain: stage a broken ADR, fix it without
+# staging the fix, and the hook is green while HEAD lands red. `git write-tree` is used
+# rather than `git stash --keep-index` because it touches nothing the operator owns.
+tree=$(git write-tree)
+
+staged=$(mktemp -d)
+trap 'rm -rf "$staged"' EXIT
+
+# Only what the two checks actually read. The full tree costs ~1.1ms per tracked file —
+# ~11s on a 10k-file repo, which is a hook people delete (stele:ADR-0018 has the numbers).
+# stele:ADR-0018: a rule that starts reading a file outside this list must extend it here, or
+# the hook checks a file it never extracted. That obligation was missed exactly once, by
+# the very next feature: rules 14 and 15 read the prose files and ran nowhere in the hook
+# for a whole release. `test/read-set.test.mjs` now compares this list against the scope
+# the linter exports, so the next omission fails a test instead of going quiet. Paths
+# absent from the tree are dropped, because `git archive` fails on a pathspec that matches
+# nothing.
+paths=''
+for candidate in adr slices LEDGER.md CLAUDE.md README.md docs .claude/commands scripts package.json; do
+  if git cat-file -e "$tree:$candidate" 2>/dev/null; then
+    paths="$paths $candidate"
+  fi
+done
+
+# No doc path in the tree at all is not a reason to skip: the checks then run against an
+# empty directory and rule 10 reports "no adr/ or slices/ directory here", which is the
+# right diagnosis rather than a silent pass.
+if [ -n "$paths" ]; then
+  # shellcheck disable=SC2086  # word splitting is the point: $paths is a pathspec list.
+  git archive "$tree" -- $paths | tar -x -C "$staged"
+fi
+
+# The commit's own checkers, not the working tree's (stele:ADR-0018) — grading a commit with a
+# linter it does not contain is the same defect one turn removed. No fallback to the
+# working copy: a silent fallback is the thing this hook exists to remove.
+for checker in lint-docs.mjs build-index.mjs check-immutable.mjs; do
+  if [ ! -f "$staged/scripts/$checker" ]; then
+    echo "pre-commit: scripts/$checker is not in the commit — cannot check it against itself." >&2
+    echo "            Stage the vendored checker, or run /init-method --update." >&2
+    exit 1
+  fi
+done
+
+# 1. Invariants must hold (rules 1–8 block; rule 9 warns). Zero-dependency, so no install.
+node "$staged/scripts/lint-docs.mjs" "$staged"
+
+# 2. The generated index must match the corpus. A stale INDEX.md is drift by another name;
+#    regenerate and stage it rather than letting it fall behind.
+node "$staged/scripts/build-index.mjs" --check "$staged"
+
+# 3. Immutable documents may only grow (stele:ADR-0019). Skipped on an unborn branch, where the
+#    first commit has nothing to have edited.
+if git rev-parse --verify --quiet HEAD >/dev/null; then
+  node "$staged/scripts/check-immutable.mjs" HEAD "$tree"
+fi

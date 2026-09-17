@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "commands": {
+    ".claude/commands/adr.md": "1490571ed69c3063f96750fbf190972844466ea521b9fbafd4a4ea0367de092a",
+    ".claude/commands/audit.md": "77c9ba4e86402edcfb4db12a7667bc7c890967487951ef1eeaaaec65d2e54a7f",
+    ".claude/commands/init-method.md": "007ca7a5e39ce063d05c064fe8e909094acb7dad543248ab940abaabbf1d0b28",
+    ".claude/commands/remember.md": "6f0cb8cf1cf06faf5f6c761b82bbc83c3e59038ab8b3b9f027e968649355dd4b",
+    ".claude/commands/slice.md": "f2b4bd4a4d98fe37bb987956dd1ffe32e97cf83a7d9d679e52dbe779d2613f69",
+    ".claude/commands/wrap-up.md": "656703bfef923e76d1f29656215013247c79e325ca7d1168c0887021642efc6b",
+    "docs/quality-bar.md": "c6cae9e568413128dcb2838c96b2303dc5e82b935befe27ec5c20469f0929913"
+  }
+}
