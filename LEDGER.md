@@ -29,6 +29,8 @@ open that corpus, so it skips qualified references (stele:ADR-0009).
 - [feature] slice-7: alert surfaces — web dashboard + LED status codes + optional screen toast + push webhook (ntfy/Discord)
 - [feature] slice-8: broaden hardware — CYD / M5Stick / bare-ESP32 board profiles + per-profile memory & palette tuning
 - [feature] allowlist-only operating mode for unattended deauth, surfaced in the config portal (atop the ported whitelist)
+- [feature] wire cloud CI to run ADR-0004 lanes 1–2 on push (npm run test:native + build:boards) — backs §4 invariant 5 that no CI lane depends on attached hardware; device verify (lane 3) stays a hardware-runner/manual step (ADR-0004)
+- [feature] author README.md — dev entry point (build/test/flash/verify commands, the serial observation protocol, board bring-up) cited from CLAUDE.md so it is not orphaned (stele:ADR-0010)
 - [deferred] OTA firmware update for field appliances — scope-heavy, revisit after the capture→sync spine (slices 1–6) is green
 
 ## Resolved
