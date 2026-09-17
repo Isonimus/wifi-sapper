@@ -1,0 +1,2 @@
+[STATE] phase=bringup heap_free=287132 heap_max=233460 disp=240x135
+[STATE] phase=bringup heap_free=287132 heap_max=233460 disp=240x135

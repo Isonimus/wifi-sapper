@@ -136,3 +136,37 @@ as plain "Cardputer" everywhere, so its `m5stack-stamps3` board id, pin map, and
 config (reused here) are in fact the ADV's. Electrically for this slice (display + serial)
 the two are the same StampS3, so nothing in the plan changes; Scenario C's bring-up artifact
 is captured on the actual ADV.
+
+Frozen 2026-09-17. All four Definition-of-Done scenarios met on the M5Stack Cardputer ADV:
+
+- **Scenario A (native, lane 1)** — `pio test -e native` passes 13/13: the serial parser
+  (vocabulary, over-length refusal, `CommandReader` reset) and the Board Profile / display-HAL
+  resolution tests.
+- **Scenario B (board compile, lane 2)** — `pio run -e cardputer` compiles and links to a
+  `.elf` against pioarduino 55.03.34 + Bruce's IDF-5.5 libs, and the `weaken_deauth` pre-script
+  leaves `ieee80211_raw_frame_sanity_check` weak (`nm` shows `W`). Static RAM 23.5 KB / 327 KB,
+  flash 422 KB.
+- **Scenario C (panel, lane 3)** — the `LGFX_Cardputer` panel initialised at 240×135 and the
+  bring-up frame rendered correctly on the physical screen (border on all four edges, R/G/B
+  blocks in order, corner-to-corner diagonal). The `dump` artifact
+  (`artifacts/0005-cardputer-bringup.png`) reconstructs the canvas and proves the render
+  pipeline; the physical panel confirmed the parameters.
+- **Scenario D (observation channel, lane 3)** — `ping`→`[CMD] pong`; `[STATE]` carried
+  `heap_free=287132 heap_max=233460 disp=240x135`, identical across two reads, evidencing the
+  observation path mutates nothing.
+
+Deviations from the plan, all recorded here rather than by editing the plan above:
+
+- **LovyanGFX pinned to 1.2.29, not an arbitrary release.** Releases before the Aug-2025 fix
+  (e.g. the 1.2.0 first resolved from cache) fail to compile `Bus_RGB.cpp` against ESP-IDF 5.5
+  (`gpio_hal_iomux_func_sel` renamed to `gpio_hal_func_sel`). 1.2.29 carries the version-guarded
+  fix. A stale `.pio` cache masked the bump once — the lib cache must actually re-resolve.
+- **Panel params sourced from M5GFX `board_M5CardputerADV`, not a guess.** Bring-up first
+  showed a black screen: the panel inits fine but stays dark until `setBrightness()` is called
+  after `init()`, and the bus is `SPI3_HOST`. Both are now in `LGFX_Cardputer` / `LgfxDisplay`.
+- **Two verify-script bugs fixed on first hardware run.** RGB565 is stored MSB-first in the
+  `LGFX_Sprite` buffer (decode big-endian), and every request must register its serial listener
+  *before* sending or the first streamed dump lines land in a handler gap and are dropped.
+- **`native` env uses `gnu++17`** so the Board Profile's designated initializers compile.
+
+The reference device throughout is the Cardputer ADV (see the amendment above).

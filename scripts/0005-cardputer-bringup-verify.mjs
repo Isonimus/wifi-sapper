@@ -87,19 +87,28 @@ class Channel {
     });
   }
 
-  /** Collect lines until `end` matches; returns the lines in between. */
-  collectUntil(end, timeoutMs) {
+  /**
+   * Capture a bulk dump in a single handler: ignore lines until `header` matches, then
+   * collect lines until `end`. One handler with no registration gap — register it *before*
+   * sending the command, so the first continuously-streamed lines cannot arrive unlistened.
+   */
+  captureDump(header, end, timeoutMs) {
     return new Promise((resolve, reject) => {
+      let headerLine = null;
       const lines = [];
       const timer = setTimeout(() => {
         this.waiters = this.waiters.filter((w) => w !== onLine);
-        reject(new Error(`timed out collecting until ${end}`));
+        reject(new Error('timed out capturing dump'));
       }, timeoutMs);
       const onLine = (line) => {
+        if (headerLine === null) {
+          if (header.test(line)) headerLine = line;
+          return;
+        }
         if (end.test(line)) {
           clearTimeout(timer);
           this.waiters = this.waiters.filter((w) => w !== onLine);
-          resolve(lines);
+          resolve({ header: headerLine, lines });
         } else {
           lines.push(line);
         }
@@ -136,7 +145,7 @@ function pngChunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crc]);
 }
 
-/** RGB565 little-endian bytes -> 24-bit PNG. */
+/** RGB565 big-endian bytes (LGFX_Sprite order) -> 24-bit PNG. */
 function rgb565ToPng(width, height, bytes) {
   const raw = Buffer.alloc(height * (1 + width * 3));
   let o = 0;
@@ -144,7 +153,9 @@ function rgb565ToPng(width, height, bytes) {
     raw[o++] = 0; // filter: none
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 2;
-      const v = bytes[i] | (bytes[i + 1] << 8);
+      // LGFX_Sprite stores RGB565 MSB-first (big-endian) — that is the order it DMAs to the
+      // SPI panel, and getBuffer() hands back that raw buffer. Decode big-endian to match.
+      const v = (bytes[i] << 8) | bytes[i + 1];
       const r5 = (v >> 11) & 0x1f;
       const g6 = (v >> 5) & 0x3f;
       const b5 = v & 0x1f;
@@ -182,33 +193,39 @@ async function main() {
   console.log(`opened ${path} @ ${BAUD}`);
 
   try {
+    // Every request registers its listener BEFORE sending, so a reply (or the first line of a
+    // bulk dump) that arrives immediately cannot land in a gap with no handler.
+
     // Scenario D — ping liveness.
+    const pong = channel.waitForLine(/^\[CMD\] pong/, REPLY_TIMEOUT_MS);
     await channel.send('ping');
-    await channel.waitForLine(/^\[CMD\] pong/, REPLY_TIMEOUT_MS);
+    await pong;
 
     // Scenario C/D — state, well-formed and carrying geometry.
+    const state1p = channel.waitForLine(/^\[STATE\]/, REPLY_TIMEOUT_MS);
     await channel.send('state');
-    const state1 = await channel.waitForLine(/^\[STATE\]/, REPLY_TIMEOUT_MS);
+    const state1 = await state1p;
     const geom = /disp=(\d+)x(\d+)/.exec(state1);
     if (!geom) fail(`[STATE] missing disp=WxH: ${state1}`);
     const heap1 = parseHeapFree(state1);
     if (heap1 === null) fail(`[STATE] missing heap_free: ${state1}`);
 
     // Scenario D — a second state must report the same free heap (observation is read-only).
+    const state2p = channel.waitForLine(/^\[STATE\]/, REPLY_TIMEOUT_MS);
     await channel.send('state');
-    const state2 = await channel.waitForLine(/^\[STATE\]/, REPLY_TIMEOUT_MS);
+    const state2 = await state2p;
     const heap2 = parseHeapFree(state2);
     if (heap1 !== null && heap2 !== null && Math.abs(heap1 - heap2) > HEAP_STABILITY_TOLERANCE) {
       fail(`free heap moved between reads (${heap1} -> ${heap2}); observation is not read-only`);
     }
 
     // Scenario C — dump the canvas and reconstruct the artifact.
+    const dumpP = channel.captureDump(/^\[DUMP\] begin/, /^\[DUMP\] end/, DUMP_TIMEOUT_MS);
     await channel.send('dump');
-    const begin = await channel.waitForLine(/^\[DUMP\] begin/, REPLY_TIMEOUT_MS);
+    const { header: begin, lines: hexLines } = await dumpP;
     const dm = /w=(\d+) h=(\d+) bpp=16 bytes=(\d+)/.exec(begin);
     if (!dm) throw new Error(`malformed dump header: ${begin}`);
     const [, w, h, nbytes] = dm.map(Number);
-    const hexLines = await channel.collectUntil(/^\[DUMP\] end/, DUMP_TIMEOUT_MS);
     const hex = hexLines.join('');
     const bytes = Buffer.from(hex, 'hex');
     if (bytes.length !== nbytes) {

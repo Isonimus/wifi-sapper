@@ -6,11 +6,12 @@
  * Cardputer is brought up through LovyanGFX directly, not M5GFX, so the portable path is
  * exercised from day one (ADR-0002 #5).
  *
- * ⚠ The panel driver, offsets, inversion, and RGB order below are the community-known
- * starting hypothesis for the 240x135 Cardputer panel. ADR-0002 §5 deliberately does NOT
- * assert them here — slice-0005's `dump` artifact (a PNG reconstructed from the canvas) is
- * what confirms or corrects them. If the bring-up image is offset, mirrored, or colour-
- * swapped, the fix is here and the corrected values are recorded in the slice's `As built`.
+ * The panel driver, pins, offsets, inversion, and RGB order below are taken from M5GFX's
+ * `board_M5CardputerADV` configuration (the proven config for this exact hardware) and were
+ * confirmed on the physical panel in slice-0005's bring-up (ADR-0002 §5). The `dump` artifact
+ * proves the render pipeline; the screen itself confirmed these panel parameters. Note the
+ * SPI bus is SPI3_HOST and the backlight must be switched on with setBrightness() after
+ * init() — a panel that inits fine still shows black until then.
  */
 #pragma once
 
@@ -28,7 +29,7 @@ public:
     LGFX_Cardputer() {
         {
             auto cfg = _bus.config();
-            cfg.spi_host = SPI2_HOST;   // ESP32-S3 FSPI
+            cfg.spi_host = SPI3_HOST;   // matches M5GFX's proven Cardputer ADV config
             cfg.spi_mode = 0;
             cfg.freq_write = 40000000;
             cfg.freq_read = 16000000;
@@ -49,12 +50,12 @@ public:
             cfg.pin_busy = -1;
             cfg.panel_width = 135;      // physical portrait; rotation 1 presents 240x135
             cfg.panel_height = 240;
-            cfg.offset_x = 52;          // ⚠ hypothesis — confirmed by the dump artifact
-            cfg.offset_y = 40;          // ⚠ hypothesis
+            cfg.offset_x = 52;          // M5GFX board_M5CardputerADV; confirmed on hardware
+            cfg.offset_y = 40;
             cfg.offset_rotation = 0;
             cfg.readable = false;
-            cfg.invert = true;          // ⚠ hypothesis
-            cfg.rgb_order = false;      // ⚠ hypothesis
+            cfg.invert = true;          // ST7789 on this panel is inverted
+            cfg.rgb_order = false;
             cfg.dlen_16bit = false;
             cfg.bus_shared = false;
             _panel.config(cfg);

@@ -16,6 +16,9 @@ LgfxDisplay::LgfxDisplay(const BoardProfile& profile)
 bool LgfxDisplay::begin() {
     if (!m_panel.init()) return false;
     m_panel.setRotation(m_profile.display.rotation);
+    // Without this the PWM backlight duty stays at 0 and the panel is black even though it
+    // initialised and the canvas is correct — the failure slice-0005's first bring-up hit.
+    m_panel.setBrightness(255);
 
     m_canvas.setColorDepth(m_profile.display.colorBits);
     // A null buffer here means the SRAM budget could not fund the canvas — fail loud rather
