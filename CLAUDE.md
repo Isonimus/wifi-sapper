@@ -142,6 +142,8 @@ actually wired (R11), so a row cannot claim a check that runs nowhere.
 | 3 | Every state that blocks before the engine loop runs (e.g. first-boot captive portal) pumps the serial channel. | ADR-0003 | pending (LEDGER) |
 | 4 | The actuation/stimulus vocabulary is absent from any build without `SAPPER_TEST_HOOKS` — no shipped binary can be commanded to deauth or upload over serial. | ADR-0003 | pending (LEDGER) |
 | 5 | No cloud-CI lane depends on attached hardware — device-in-the-loop verification runs on a hardware lane and its artifact is committed for review. | ADR-0004 | pending (LEDGER) |
+| 6 | Provisioned secrets (WiFi credentials, wpa-sec key) are read and written only through the `persistProvisioning()` NVS seam — never scattered across call sites. | ADR-0006 | review-only |
+| 7 | No build's serial vocabulary can write or clear provisioning credentials — provisioning is never a serial actuation path. | ADR-0006 | review-only |
 
 When an ADR's consequences create a rule that all *future* work must follow, add the row
 in the same commit as the ADR.
