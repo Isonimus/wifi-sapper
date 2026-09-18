@@ -36,6 +36,10 @@ void LgfxDisplay::drawPixel(int32_t x, int32_t y, uint16_t color565) {
 void LgfxDisplay::present() { m_canvas.pushSprite(0, 0); }
 
 size_t LgfxDisplay::canvasByteLength() const {
+    // Honour the IDisplay contract: 0 when there is no canvas. If createSprite() failed in
+    // begin() the geometry is still non-zero, so reporting m_width*m_height*2 here would make
+    // streamDump() announce a payload it cannot send. Gate on the buffer, not the geometry.
+    if (m_canvas.getBuffer() == nullptr) return 0;
     return static_cast<size_t>(m_width) * m_height * 2;  // RGB565: two bytes per pixel
 }
 

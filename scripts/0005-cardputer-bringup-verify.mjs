@@ -43,14 +43,33 @@ async function resolvePort() {
   return match.path;
 }
 
-/** A line-oriented view over the port, remembering any fatal line seen at any time. */
+/**
+ * A line-oriented view over the port, remembering any fatal line seen at any time.
+ *
+ * Waiters are objects `{ onLine, reject }`. A transport error (e.g. the cable is unplugged
+ * mid-run) rejects every pending waiter at once, so a real disconnect fails loud immediately
+ * instead of stalling each pending read to its full timeout with a misleading message.
+ */
 class Channel {
   constructor(port) {
     this.port = port;
     this.buffer = '';
     this.waiters = [];
     this.fatalLine = null;
+    this.portError = null;
     port.on('data', (chunk) => this.onData(chunk));
+    port.on('error', (err) => this.onError(err));
+  }
+
+  remove(waiter) {
+    this.waiters = this.waiters.filter((w) => w !== waiter);
+  }
+
+  onError(err) {
+    this.portError = err;
+    const pending = this.waiters;
+    this.waiters = [];
+    for (const w of pending) w.reject(err);
   }
 
   onData(chunk) {
@@ -60,7 +79,8 @@ class Channel {
       const line = this.buffer.slice(0, nl).replace(/\r$/, '');
       this.buffer = this.buffer.slice(nl + 1);
       if (/^\[(FATAL|ERROR)\]/.test(line)) this.fatalLine = line;
-      for (const w of this.waiters) w(line);
+      // Copy: a waiter's onLine may remove itself (or, via onError, the list) mid-iteration.
+      for (const w of [...this.waiters]) w.onLine(line);
     }
   }
 
@@ -70,20 +90,30 @@ class Channel {
     );
   }
 
-  /** Resolve with the first line matching `pattern`, or reject on timeout. */
+  /** Resolve with the first line matching `pattern`; reject on timeout or transport error. */
   waitForLine(pattern, timeoutMs) {
     return new Promise((resolve, reject) => {
+      if (this.portError) {
+        reject(this.portError);
+        return;
+      }
       const timer = setTimeout(() => {
-        this.waiters = this.waiters.filter((w) => w !== onLine);
+        this.remove(waiter);
         reject(new Error(`timed out waiting for ${pattern}`));
       }, timeoutMs);
-      const onLine = (line) => {
-        if (!pattern.test(line)) return;
-        clearTimeout(timer);
-        this.waiters = this.waiters.filter((w) => w !== onLine);
-        resolve(line);
+      const waiter = {
+        onLine: (line) => {
+          if (!pattern.test(line)) return;
+          clearTimeout(timer);
+          this.remove(waiter);
+          resolve(line);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
       };
-      this.waiters.push(onLine);
+      this.waiters.push(waiter);
     });
   }
 
@@ -94,26 +124,36 @@ class Channel {
    */
   captureDump(header, end, timeoutMs) {
     return new Promise((resolve, reject) => {
+      if (this.portError) {
+        reject(this.portError);
+        return;
+      }
       let headerLine = null;
       const lines = [];
       const timer = setTimeout(() => {
-        this.waiters = this.waiters.filter((w) => w !== onLine);
+        this.remove(waiter);
         reject(new Error('timed out capturing dump'));
       }, timeoutMs);
-      const onLine = (line) => {
-        if (headerLine === null) {
-          if (header.test(line)) headerLine = line;
-          return;
-        }
-        if (end.test(line)) {
+      const waiter = {
+        onLine: (line) => {
+          if (headerLine === null) {
+            if (header.test(line)) headerLine = line;
+            return;
+          }
+          if (end.test(line)) {
+            clearTimeout(timer);
+            this.remove(waiter);
+            resolve({ header: headerLine, lines });
+          } else {
+            lines.push(line);
+          }
+        },
+        reject: (err) => {
           clearTimeout(timer);
-          this.waiters = this.waiters.filter((w) => w !== onLine);
-          resolve({ header: headerLine, lines });
-        } else {
-          lines.push(line);
-        }
+          reject(err);
+        },
       };
-      this.waiters.push(onLine);
+      this.waiters.push(waiter);
     });
   }
 }
@@ -186,9 +226,13 @@ function parseHeapFree(stateLine) {
 async function main() {
   const path = await resolvePort();
   const port = new SerialPort({ path, baudRate: BAUD });
-  await new Promise((resolve, reject) =>
-    port.on('open', resolve).on('error', reject),
-  );
+  // `.once` for the open phase: after open resolves, Channel installs the persistent 'error'
+  // handler. A lingering `.on('error', reject)` would be a stale no-op that swallows later
+  // transport errors.
+  await new Promise((resolve, reject) => {
+    port.once('open', resolve);
+    port.once('error', reject);
+  });
   const channel = new Channel(port);
   console.log(`opened ${path} @ ${BAUD}`);
 
@@ -215,6 +259,7 @@ async function main() {
     await channel.send('state');
     const state2 = await state2p;
     const heap2 = parseHeapFree(state2);
+    if (heap2 === null) fail(`[STATE] missing heap_free on 2nd read: ${state2}`);
     if (heap1 !== null && heap2 !== null && Math.abs(heap1 - heap2) > HEAP_STABILITY_TOLERANCE) {
       fail(`free heap moved between reads (${heap1} -> ${heap2}); observation is not read-only`);
     }
