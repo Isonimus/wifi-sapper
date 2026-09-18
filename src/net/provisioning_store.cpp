@@ -52,14 +52,21 @@ bool persistProvisioning(const ProvisioningRecord& record) {
         return false;  // NVS unavailable — fail loud; do not report a store that did not happen.
     }
 
-    // SSID is written last: loadProvisioning() treats an empty SSID as "not provisioned", so if
-    // a write is cut short (e.g. NVS exhaustion) the record fails validation and the next boot
-    // falls back to the portal — never associates with a half-updated credential set. Each
-    // putString returns the bytes stored; a short count is a failed write (0 is valid only for
-    // the open-network empty passphrase, where strlen is also 0).
-    const bool wrote = prefs.putString(kKeyPass, record.pass) == std::strlen(record.pass) &&
-                       prefs.putString(kKeyKey, record.key) == std::strlen(record.key) &&
-                       prefs.putString(kKeySsid, record.ssid) == std::strlen(record.ssid);
+    // Each putString returns the bytes stored; a short count is a failed write (0 is valid only
+    // for the open-network empty passphrase, where strlen is also 0). All three are attempted
+    // unconditionally rather than short-circuited: a short-circuit would skip the SSID write after
+    // an earlier failure and, on a *re-provision*, leave the previous SSID and key sitting beside
+    // the newly written pass — a mixed triad that still passes validateCredentials() and loads as
+    // usable, associating with wrong credentials. On any failed write we clear the namespace, so
+    // the store holds a complete triad or nothing — never a mix (provisioning_store.h) — and the
+    // next boot falls back to the portal instead of a half-updated credential set.
+    const bool wrotePass = prefs.putString(kKeyPass, record.pass) == std::strlen(record.pass);
+    const bool wroteKey = prefs.putString(kKeyKey, record.key) == std::strlen(record.key);
+    const bool wroteSsid = prefs.putString(kKeySsid, record.ssid) == std::strlen(record.ssid);
+    const bool wrote = wrotePass && wroteKey && wroteSsid;
+    if (!wrote) {
+        prefs.clear();  // partial write — wipe so no mixed triad can survive to the next boot.
+    }
     prefs.end();
     return wrote;
 }
@@ -71,6 +78,14 @@ void clearProvisioning() {
     }
     prefs.clear();  // wipe every key in the namespace, forcing the next boot into the portal.
     prefs.end();
+}
+
+void seedProvisioning(const ProvisioningRecord& seed) {
+    // Persist a valid seed; on an invalid one (e.g. a hooks build with no credential flags) clear
+    // any stored triad so the store reflects exactly this seed rather than a prior flash's creds.
+    if (!persistProvisioning(seed)) {
+        clearProvisioning();
+    }
 }
 
 }  // namespace sapper

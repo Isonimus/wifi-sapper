@@ -108,7 +108,10 @@ void seedTestCredentials() {
     std::snprintf(seed.ssid, sizeof(seed.ssid), "%s", SAPPER_TEST_WIFI_SSID);
     std::snprintf(seed.pass, sizeof(seed.pass), "%s", SAPPER_TEST_WIFI_PASS);
     std::snprintf(seed.key, sizeof(seed.key), "%s", SAPPER_TEST_WPASEC_KEY);
-    persistProvisioning(seed);
+    // seedProvisioning() persists a valid seed or clears any stale triad on an invalid one, so a
+    // hooks build with no credential flags routes to the portal instead of inheriting a prior
+    // flash's creds (ADR-0008). Host-tested; not a serial path (invariant #7).
+    seedProvisioning(seed);
 }
 #endif
 

@@ -57,4 +57,16 @@ bool persistProvisioning(const ProvisioningRecord& record);
  */
 void clearProvisioning();
 
+/**
+ * @brief Set the stored triad to exactly @p seed: persist it if valid, otherwise clear any triad
+ *        already in NVS. Composes persistProvisioning()/clearProvisioning() (no direct NVS access),
+ *        so the store stays a single-writer seam (invariant #6).
+ *
+ * Used by the compile-time `SAPPER_TEST_HOOKS` seed (main.cpp): a hooks build with no credential
+ * flags seeds an empty (invalid) triad, and clearing on that failure makes the store
+ * deterministically reflect the build's OWN flags — an empty seed routes to the portal instead of
+ * silently inheriting credentials a prior flash left in NVS (ADR-0008, fail loud).
+ */
+void seedProvisioning(const ProvisioningRecord& seed);
+
 }  // namespace sapper

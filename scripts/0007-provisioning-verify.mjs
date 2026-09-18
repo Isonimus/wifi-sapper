@@ -174,6 +174,10 @@ async function verifyStationBoot(channel, artifact) {
   const deadline = Date.now() + PHASE_TIMEOUT_MS;
   let reachedReady = false;
   while (Date.now() < deadline) {
+    // A spontaneous enterPhase() announcement and a `state` reply share the [STATE] line format, so
+    // this waiter may resolve on either. That is harmless: [STATE] always carries the device's live
+    // phase, so whichever line wins reports the true current phase — no stale/false reading (freeze
+    // adversarial review, dismissed with this reason so it is not re-raised).
     const stateP = channel.waitForLine(/^\[STATE\] phase=\w+/, REPLY_TIMEOUT_MS);
     await channel.send('state');
     const line = await stateP.catch(() => null);
