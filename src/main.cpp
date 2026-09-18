@@ -21,6 +21,7 @@
 #include "net/provisioning.h"
 #include "net/provisioning_store.h"
 #include "net/wifi_station.h"
+#include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
 #if SAPPER_BOARD_HAS_DISPLAY
 #include "hal/display/lgfx_display.h"
@@ -172,9 +173,12 @@ void setup() {
     seedTestCredentials();
 #endif
 
-    // Bench RF sniffer probe (slice-0012, ADR-0011): if a target BSSID is configured, it takes over
-    // the device to prove the promiscuous seam on air, and the normal boot is skipped. Inactive and
-    // compiled out of every shipped build, so this returns false there and boot proceeds normally.
+    // Bench RF probes (slice-0012/0014, ADR-0011/ADR-0013): each takes over the device to prove a
+    // radio seam on air, skipping the normal boot. The discover probe (channel hopping + AP
+    // discovery) gets first refusal, then the fixed-channel sniff probe. Both are inactive unless
+    // their env var is set and compiled out of every shipped build, so these return false there and
+    // boot proceeds normally.
+    if (rfDiscoverProbeBegin()) return;
     if (rfSniffProbeBegin()) return;
 
     ProvisioningRecord creds = {};
@@ -188,6 +192,11 @@ void setup() {
 }
 
 void loop() {
+    if (rfDiscoverProbeActive()) {  // bench RF probe owns the device; the normal boot loop is skipped.
+        rfDiscoverProbePump();
+        delay(5);
+        return;
+    }
     if (rfSniffProbeActive()) {  // bench RF probe owns the device; the normal boot loop is skipped.
         rfSniffProbePump();
         delay(5);

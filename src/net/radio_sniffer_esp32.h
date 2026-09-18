@@ -22,6 +22,7 @@ namespace sapper {
 class Esp32RadioSniffer : public RadioSniffer {
 public:
     bool begin(uint8_t channel, FrameConsumer& consumer) override;
+    bool setChannel(uint8_t channel) override;
     void stop() override;
 };
 

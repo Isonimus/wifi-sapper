@@ -28,8 +28,36 @@ constexpr uint8_t kFcFromDs = 0x02;
 // Beacon fixed body after the MAC header: timestamp(8) + interval(2) + capability(2) = 12 bytes,
 // then the tagged-parameter IE list begins. Each IE is [element id][length][data...].
 constexpr uint16_t kBeaconFixedLen = 12;
-constexpr uint8_t kIeSsid = 0x00;  ///< SSID element id.
+constexpr uint8_t kIeSsid = 0x00;        ///< SSID element id.
+constexpr uint8_t kIeDsParamSet = 0x03;  ///< DS Parameter Set element id; its one octet is the channel.
+constexpr uint8_t kDsParamLen = 1;       ///< A well-formed DS Parameter Set is exactly one octet.
+constexpr uint8_t kMin2GhzChannel = 1;   ///< The DS Parameter Set channel is a 2.4 GHz channel (1-14);
+constexpr uint8_t kMax2GhzChannel = 14;  ///< a value outside this band is a corrupt element, not a channel.
 constexpr size_t kMaxSsidOctets = 32;
+
+// Walk a beacon's tagged-parameter IE list for the element with id `wanted`, returning a pointer to
+// its data (and its length in `ieLen`) or nullptr if absent or the list is malformed. beaconSsid and
+// beaconChannel share this one bounds-checked walk on purpose: a beacon IE that claims more bytes
+// than the frame holds is a malformed frame, and the `pos + 2 + curLen > len` guard is what stops a
+// read past the frame end. Two copies of that guard could drift and silently read out of bounds
+// (quality bar §3), so the walk lives in one place. The IE list starts at a fixed offset — a beacon
+// always has a 24-byte MAC header (no QoS/HTC on management frames) plus the 12-byte fixed body.
+const uint8_t* findBeaconIe(const uint8_t* frame, uint16_t len, uint8_t wanted, uint8_t& ieLen) {
+    ieLen = 0;
+    if (frame == nullptr) return nullptr;
+    uint16_t pos = kMacHeaderLen + kBeaconFixedLen;
+    while (pos + 2 <= len) {
+        const uint8_t curId = frame[pos];
+        const uint8_t curLen = frame[pos + 1];
+        if (pos + 2 + curLen > len) return nullptr;  // IE claims more bytes than the frame holds.
+        if (curId == wanted) {
+            ieLen = curLen;
+            return frame + pos + 2;
+        }
+        pos += 2 + curLen;
+    }
+    return nullptr;
+}
 
 // LLC/SNAP header carrying EAPOL: AA AA 03 00 00 00 88 8E. The SNAP header sits at a variable
 // offset because the MAC header is 24-30 bytes, so we scan a small window for it.
@@ -74,27 +102,28 @@ const uint8_t* frameBssid(const uint8_t* frame, uint16_t len) {
 
 bool beaconSsid(const uint8_t* frame, uint16_t len, char (&out)[33]) {
     out[0] = '\0';
-    if (frame == nullptr) return false;
-    // The IE list starts at a fixed offset: a beacon always has a 24-byte MAC header (no QoS/HTC
-    // applies to management frames) followed by the 12-byte fixed body. Walk from there; `pos`
-    // indexes the [id][len] pair, and an IE that would run past the frame end is malformed, so we
-    // stop rather than read out of bounds (fail loud, no partial read).
-    uint16_t pos = kMacHeaderLen + kBeaconFixedLen;
-    while (pos + 2 <= len) {
-        const uint8_t id = frame[pos];
-        const uint8_t ieLen = frame[pos + 1];
-        if (pos + 2 + ieLen > len) return false;  // IE claims more bytes than the frame holds.
-        if (id == kIeSsid) {
-            // An SSID element over the 32-octet 802.11 maximum is itself malformed. Reject rather
-            // than clamp to 32: a silently truncated network name is a masked error (quality bar §3).
-            if (ieLen > kMaxSsidOctets) return false;
-            std::memcpy(out, frame + pos + 2, ieLen);
-            out[ieLen] = '\0';
-            return true;  // A zero-length SSID (hidden network) is a valid, empty result.
-        }
-        pos += 2 + ieLen;
-    }
-    return false;
+    uint8_t ieLen = 0;
+    const uint8_t* ssid = findBeaconIe(frame, len, kIeSsid, ieLen);
+    if (ssid == nullptr) return false;  // no SSID element, or a malformed IE list before it.
+    // An SSID element over the 32-octet 802.11 maximum is itself malformed. Reject rather than clamp
+    // to 32: a silently truncated network name is a masked error (quality bar §3).
+    if (ieLen > kMaxSsidOctets) return false;
+    std::memcpy(out, ssid, ieLen);
+    out[ieLen] = '\0';
+    return true;  // A zero-length SSID (hidden network) is a valid, empty result.
+}
+
+uint8_t beaconChannel(const uint8_t* frame, uint16_t len) {
+    uint8_t ieLen = 0;
+    const uint8_t* ds = findBeaconIe(frame, len, kIeDsParamSet, ieLen);
+    // Absent or malformed DS Parameter Set → 0 (unknown), never a guessed channel (ADR-0013). A
+    // well-formed element is exactly one octet; any other length is a malformed frame we do not read.
+    if (ds == nullptr || ieLen != kDsParamLen) return 0;
+    const uint8_t channel = ds[0];
+    // An out-of-band octet (a corrupt or spoofed element) is not a channel: report unknown rather
+    // than a value the radio can never tune to, exactly as for an absent element (ADR-0013).
+    if (channel < kMin2GhzChannel || channel > kMax2GhzChannel) return 0;
+    return channel;
 }
 
 const uint8_t* locateEapol(const uint8_t* frame, uint16_t len, uint16_t& eapolLen) {

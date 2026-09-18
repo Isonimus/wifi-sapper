@@ -66,6 +66,16 @@ const uint8_t* frameBssid(const uint8_t* frame, uint16_t len);
 bool beaconSsid(const uint8_t* frame, uint16_t len, char (&out)[33]);
 
 /**
+ * @brief The AP's operating channel from a beacon's DS Parameter Set element, or 0 if unknown.
+ *
+ * Reads the DS Parameter Set IE (element id 3, one octet) — the AP's own statement of its channel,
+ * which is authoritative even when the beacon was heard on an adjacent channel during a sweep. A
+ * beacon with no DS Parameter Set IE, or a malformed one, returns 0 (unknown) rather than a guessed
+ * channel: a wrong channel is a silently-corrupt record later work would act on (ADR-0013).
+ */
+uint8_t beaconChannel(const uint8_t* frame, uint16_t len);
+
+/**
  * @brief Locate the EAPOL payload inside an 802.11 data frame.
  *
  * Scans for the LLC/SNAP header `AA AA 03 00 00 00 88 8E` (the 802.11 header is 24-30 bytes, so

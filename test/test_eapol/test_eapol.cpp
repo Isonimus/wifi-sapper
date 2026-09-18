@@ -130,6 +130,60 @@ void test_is_beacon(void) {
     TEST_ASSERT_FALSE(isBeacon(data.data(), data.size()));
 }
 
+void test_beacon_channel_from_ds_param(void) {
+    // The DS Parameter Set IE (appended after the SSID) is the AP's own channel statement.
+    std::vector<uint8_t> beacon = buildBeacon(kBssid, "Named", /*channel=*/11);
+    TEST_ASSERT_EQUAL_UINT8(11, beaconChannel(beacon.data(), beacon.size()));
+    // The SSID must still read with the DS Parameter Set IE present after it (walk regression).
+    char ssid[33];
+    TEST_ASSERT_TRUE(beaconSsid(beacon.data(), beacon.size(), ssid));
+    TEST_ASSERT_EQUAL_STRING("Named", ssid);
+}
+
+void test_beacon_channel_absent_is_zero(void) {
+    // No DS Parameter Set IE → 0 (unknown), never a guess (ADR-0013).
+    std::vector<uint8_t> beacon = buildBeacon(kBssid, "NoChan");
+    TEST_ASSERT_EQUAL_UINT8(0, beaconChannel(beacon.data(), beacon.size()));
+}
+
+void test_beacon_channel_malformed_ie_list_is_zero(void) {
+    // An IE claiming more bytes than the frame holds is a malformed list; the walk stops and reports
+    // unknown rather than reading past the frame end.
+    std::vector<uint8_t> frame(24 + 12, 0);
+    frame[0] = 0x80;
+    frame.push_back(0x03);  // DS Parameter Set id...
+    frame.push_back(0x05);  // ...claiming 5 octets...
+    frame.push_back(0x06);  // ...but only one is present.
+    TEST_ASSERT_EQUAL_UINT8(0, beaconChannel(frame.data(), frame.size()));
+}
+
+void test_beacon_channel_out_of_band_is_zero(void) {
+    // A well-formed one-octet DS Parameter Set carrying an out-of-band value (a corrupt or spoofed
+    // element) is not a channel the radio can tune to: report unknown, never the raw octet (ADR-0013).
+    std::vector<uint8_t> high = buildBeacon(kBssid, "Corrupt", /*channel=*/200);
+    TEST_ASSERT_EQUAL_UINT8(0, beaconChannel(high.data(), high.size()));
+    std::vector<uint8_t> zero = buildBeacon(kBssid, "Corrupt", /*channel=*/0);
+    TEST_ASSERT_EQUAL_UINT8(0, beaconChannel(zero.data(), zero.size()));
+    std::vector<uint8_t> justOver = buildBeacon(kBssid, "Corrupt", /*channel=*/15);
+    TEST_ASSERT_EQUAL_UINT8(0, beaconChannel(justOver.data(), justOver.size()));
+    // The band edges (1 and 14) are valid and must still read through.
+    std::vector<uint8_t> low = buildBeacon(kBssid, "Edge", /*channel=*/1);
+    TEST_ASSERT_EQUAL_UINT8(1, beaconChannel(low.data(), low.size()));
+    std::vector<uint8_t> top = buildBeacon(kBssid, "Edge", /*channel=*/14);
+    TEST_ASSERT_EQUAL_UINT8(14, beaconChannel(top.data(), top.size()));
+}
+
+void test_beacon_channel_wrong_length_is_zero(void) {
+    // A well-formed DS Parameter Set is exactly one octet; a two-octet element is malformed → 0.
+    std::vector<uint8_t> frame(24 + 12, 0);
+    frame[0] = 0x80;
+    frame.push_back(0x03);  // DS Parameter Set id
+    frame.push_back(0x02);  // length 2 (malformed)
+    frame.push_back(0x06);
+    frame.push_back(0x00);
+    TEST_ASSERT_EQUAL_UINT8(0, beaconChannel(frame.data(), frame.size()));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_identifies_each_pairwise_message);
@@ -143,5 +197,10 @@ int main(int, char**) {
     RUN_TEST(test_oversize_ssid_ie_is_rejected);
     RUN_TEST(test_beacon_without_ssid_ie_reports_absent);
     RUN_TEST(test_is_beacon);
+    RUN_TEST(test_beacon_channel_from_ds_param);
+    RUN_TEST(test_beacon_channel_absent_is_zero);
+    RUN_TEST(test_beacon_channel_out_of_band_is_zero);
+    RUN_TEST(test_beacon_channel_malformed_ie_list_is_zero);
+    RUN_TEST(test_beacon_channel_wrong_length_is_zero);
     return UNITY_END();
 }

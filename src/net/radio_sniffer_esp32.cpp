@@ -69,6 +69,13 @@ bool Esp32RadioSniffer::begin(uint8_t channel, FrameConsumer& consumer) {
     return false;
 }
 
+bool Esp32RadioSniffer::setChannel(uint8_t channel) {
+    // The radio stays promiscuous with the same callback and consumer installed; only the tuned
+    // channel changes. Fail loud if the radio rejects it (e.g. a country-restricted channel) so the
+    // hop driver can see the sweep is not covering the band it asked for.
+    return esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) == ESP_OK;
+}
+
 void Esp32RadioSniffer::stop() {
     // Disable promiscuous mode and detach the consumer. This cannot hard-join a callback already in
     // flight in the driver task — blocking there is forbidden (§4 invariant #10) — so a frame

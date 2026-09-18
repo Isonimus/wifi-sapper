@@ -29,8 +29,11 @@ constexpr uint16_t kKeyInfoM2 = kKiPairwise | kKiMic;
 constexpr uint16_t kKeyInfoM3 = kKiPairwise | kKiAck | kKiMic | kKiInstall | kKiSecure;
 constexpr uint16_t kKeyInfoM4 = kKiPairwise | kKiMic | kKiSecure;
 
-/// Build a beacon frame advertising @p ssid for @p bssid. A hidden network is an empty @p ssid.
-inline std::vector<uint8_t> buildBeacon(const uint8_t bssid[6], const std::string& ssid) {
+/// Build a beacon frame advertising @p ssid for @p bssid. A hidden network is an empty @p ssid. When
+/// @p channel is >= 0 a DS Parameter Set IE (id 3) carrying it is appended after the SSID, so a test
+/// can exercise beaconChannel; the default of -1 omits it (a beacon with no DS Parameter Set).
+inline std::vector<uint8_t> buildBeacon(const uint8_t bssid[6], const std::string& ssid,
+                                        int channel = -1) {
     std::vector<uint8_t> f(24, 0);
     f[0] = 0x80;  // FC: management / beacon.
     std::memset(&f[4], 0xFF, 6);          // Addr1: broadcast destination.
@@ -40,6 +43,11 @@ inline std::vector<uint8_t> buildBeacon(const uint8_t bssid[6], const std::strin
     f.push_back(0x00);                    // SSID element id.
     f.push_back(static_cast<uint8_t>(ssid.size()));
     f.insert(f.end(), ssid.begin(), ssid.end());
+    if (channel >= 0) {
+        f.push_back(0x03);                                    // DS Parameter Set element id.
+        f.push_back(0x01);                                    // length: one octet.
+        f.push_back(static_cast<uint8_t>(channel));           // the AP's operating channel.
+    }
     return f;
 }
 

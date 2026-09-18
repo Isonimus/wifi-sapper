@@ -39,6 +39,10 @@ public:
     /// false if the radio could not be placed in promiscuous mode. The consumer must outlive the
     /// sniffer's started state.
     virtual bool begin(uint8_t channel, FrameConsumer& consumer) = 0;
+    /// Retune the running sniffer to @p channel (1-based) — the retune channel hopping drives
+    /// (ADR-0013). Returns false if the radio rejected the channel (e.g. country-restricted).
+    /// Behaviour is undefined if called before begin(); the same consumer keeps receiving frames.
+    virtual bool setChannel(uint8_t channel) = 0;
     /// Leave promiscuous mode and detach the consumer. A device implementation cannot hard-join a
     /// callback already in flight (blocking in the driver callback is forbidden — ADR-0011, §4
     /// invariant #10), so a frame dequeued just before stop() may still complete its onFrame() after
