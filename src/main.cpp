@@ -21,6 +21,7 @@
 #include "net/provisioning.h"
 #include "net/provisioning_store.h"
 #include "net/wifi_station.h"
+#include "hunt_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
 #if SAPPER_BOARD_HAS_DISPLAY
@@ -173,11 +174,12 @@ void setup() {
     seedTestCredentials();
 #endif
 
-    // Bench RF probes (slice-0012/0014, ADR-0011/ADR-0013): each takes over the device to prove a
-    // radio seam on air, skipping the normal boot. The discover probe (channel hopping + AP
-    // discovery) gets first refusal, then the fixed-channel sniff probe. Both are inactive unless
-    // their env var is set and compiled out of every shipped build, so these return false there and
-    // boot proceeds normally.
+    // Bench RF probes (slice-0012/0014/0016, ADR-0011/ADR-0013/ADR-0015): each takes over the device
+    // to prove a radio seam on air, skipping the normal boot. The hunt probe (the full endless loop)
+    // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
+    // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
+    // every shipped build, so these return false there and boot proceeds normally.
+    if (huntProbeBegin()) return;
     if (rfDiscoverProbeBegin()) return;
     if (rfSniffProbeBegin()) return;
 
@@ -192,6 +194,11 @@ void setup() {
 }
 
 void loop() {
+    if (huntProbeActive()) {  // bench RF probe owns the device; the normal boot loop is skipped.
+        huntProbePump();
+        delay(5);
+        return;
+    }
     if (rfDiscoverProbeActive()) {  // bench RF probe owns the device; the normal boot loop is skipped.
         rfDiscoverProbePump();
         delay(5);

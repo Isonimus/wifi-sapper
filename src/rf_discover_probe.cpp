@@ -13,6 +13,7 @@
 
 #include "net/ap_registry.h"
 #include "net/channel_hopper.h"
+#include "net/channel_list_arg.h"
 #include "net/radio_sniffer_esp32.h"
 
 namespace sapper {
@@ -20,8 +21,6 @@ namespace {
 
 constexpr uint32_t kDefaultDwellMs = 300;  // ≈3× the 102.4ms beacon interval (ADR-0013 decision #5).
 constexpr uint32_t kHeartbeatIntervalMs = 2000;
-constexpr uint8_t kMinChannel = 1;
-constexpr uint8_t kMaxChannel = 14;
 
 bool g_active = false;
 size_t g_reported = 0;
@@ -31,30 +30,6 @@ ChannelHopper* g_hopper = nullptr;
 ApRegistry* g_registry = nullptr;
 Esp32RadioSniffer* g_sniffer = nullptr;
 
-/// Parse a comma-separated channel list ("1,6,11") into @p out; false on any malformed or
-/// out-of-range token, an empty list, or more than the sweep can hold. Fails loud rather than
-/// silently sweeping a partial or wrong band.
-bool parseChannelList(const char* text, uint8_t out[kMaxHopChannels], size_t& count) {
-    count = 0;
-    const char* cursor = text;
-    while (*cursor != '\0') {
-        char* end = nullptr;
-        const long channel = std::strtol(cursor, &end, 10);
-        if (end == cursor) return false;  // not a number where one was expected.
-        if (channel < kMinChannel || channel > kMaxChannel) return false;
-        if (count >= kMaxHopChannels) return false;  // more channels than a sweep can hold.
-        out[count++] = static_cast<uint8_t>(channel);
-        cursor = end;
-        if (*cursor == ',') {
-            ++cursor;
-            if (*cursor == '\0') return false;  // trailing comma: a malformed list, not a channel.
-        } else if (*cursor != '\0') {
-            return false;  // a separator other than a comma is malformed.
-        }
-    }
-    return count > 0;
-}
-
 }  // namespace
 
 bool rfDiscoverProbeBegin() {
@@ -63,9 +38,9 @@ bool rfDiscoverProbeBegin() {
 
     uint8_t channels[kMaxHopChannels] = {0};
     size_t count = 0;
-    if (!parseChannelList(hopText, channels, count)) {
-        Serial.printf("[FATAL] SAPPER_TEST_RF_HOP not a channel list in %u-%u: '%s'\n", kMinChannel,
-                      kMaxChannel, hopText);
+    if (!parseChannelListArg(hopText, channels, count)) {
+        Serial.printf("[FATAL] SAPPER_TEST_RF_HOP not a channel list in %u-%u: '%s'\n", kMinHopChannel,
+                      kMaxHopChannel, hopText);
         return false;
     }
 

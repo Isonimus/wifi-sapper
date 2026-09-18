@@ -81,4 +81,10 @@ void HandshakeCollector::reset() {
     handshake_ = fresh;
 }
 
+void HandshakeCollector::retarget(const uint8_t targetBssid[6], uint8_t channel) {
+    handshake_ = CapturedHandshake{};
+    std::memcpy(handshake_.bssid, targetBssid, sizeof(handshake_.bssid));
+    handshake_.channel = channel;
+}
+
 }  // namespace sapper

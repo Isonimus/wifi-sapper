@@ -1,0 +1,26 @@
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=1
+[HUNT] waiting phase=capturing elapsed=1116463ms discovered=9
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=1
+[HUNT] waiting phase=capturing elapsed=1118464ms discovered=9
+[HUNT] waiting phase=capturing elapsed=1120464ms discovered=9
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=1
+[HUNT] waiting phase=capturing elapsed=1122465ms discovered=9
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=1
+[HUNT] waiting phase=capturing elapsed=1124466ms discovered=9
+[HUNT] waiting phase=capturing elapsed=1126466ms discovered=9
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=1
+[HUNT] waiting phase=capturing elapsed=1128467ms discovered=9
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=1
+[HUNT] waiting phase=capturing elapsed=1130468ms discovered=9
+[HUNT] waiting phase=capturing elapsed=1132468ms discovered=9
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=6
+[HUNT] waiting phase=capturing elapsed=1134469ms discovered=9
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=6
+[HUNT] waiting phase=capturing elapsed=1136470ms discovered=9
+[HUNT] waiting phase=capturing elapsed=1138470ms discovered=9
+[HUNT] capturing bssid=xx:xx:xx:xx:xx:xx channel=11
+[HUNT] waiting phase=capturing elapsed=1140471ms discovered=9
+[HUNT] waiting phase=quiescing elapsed=1142471ms discovered=9
+[HUNT] discovering channels=1,6,11 dwell=300ms
+[HUNT] target bssid=xx:xx:xx:xx:xx:xx ssid=<redacted-ssid> channel=1
+[HUNT] target bssid=xx:xx:xx:xx:xx:xx ssid=<redacted-ssid> channel=1

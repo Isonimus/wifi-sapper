@@ -109,6 +109,32 @@ void test_reset_clears_but_keeps_target(void) {
     TEST_ASSERT_EQUAL_STRING("AgainNet", c.handshake().ssid);
 }
 
+void test_retarget_clears_and_aims_at_a_new_bssid(void) {
+    // The endless hunt re-uses one collector across its round-robin, re-targeting between APs
+    // (ADR-0015). A frame for the old target after retarget must be dropped, and one for the new
+    // target collected.
+    HandshakeCollector c(kBssid, 6);
+    ingestVec(c, buildBeacon(kBssid, "FirstNet"));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true));
+    TEST_ASSERT_TRUE(c.has(HandshakeMessage::M1));
+
+    c.retarget(kOther, 11);
+    TEST_ASSERT_FALSE(c.hasBeacon());
+    TEST_ASSERT_FALSE(c.has(HandshakeMessage::M1));  // the old target's frames are gone.
+    TEST_ASSERT_EQUAL_STRING("", c.handshake().ssid);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kOther, c.handshake().bssid, 6);
+    TEST_ASSERT_EQUAL_UINT8(11, c.handshake().channel);
+
+    // A frame for the previous target is now foreign and dropped; the new target's is collected.
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true));
+    TEST_ASSERT_FALSE(c.has(HandshakeMessage::M1));
+    ingestVec(c, buildBeacon(kOther, "SecondNet"));
+    ingestVec(c, buildEapol(kOther, kClient, sapper_test::kKeyInfoM1, true));
+    ingestVec(c, buildEapol(kOther, kClient, sapper_test::kKeyInfoM2, false));
+    TEST_ASSERT_TRUE(c.isWpaSecValid());
+    TEST_ASSERT_EQUAL_STRING("SecondNet", c.handshake().ssid);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_collects_wpasec_valid_ignoring_foreign);
@@ -117,5 +143,6 @@ int main(int, char**) {
     RUN_TEST(test_full_four_way_is_complete);
     RUN_TEST(test_foreign_only_stays_empty);
     RUN_TEST(test_reset_clears_but_keeps_target);
+    RUN_TEST(test_retarget_clears_and_aims_at_a_new_bssid);
     return UNITY_END();
 }

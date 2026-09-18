@@ -72,6 +72,11 @@ public:
     /// Discard everything collected, keeping the target BSSID and channel.
     void reset();
 
+    /// Discard everything collected and aim at a new target BSSID and channel. The endless hunt
+    /// re-uses one collector across its round-robin of targets, so it re-targets rather than
+    /// value-copying a multi-KB collector per target (ADR-0015). reset() keeps the current target.
+    void retarget(const uint8_t targetBssid[6], uint8_t channel);
+
 private:
     bool matchesTarget(const uint8_t* frame, uint16_t len) const;
 

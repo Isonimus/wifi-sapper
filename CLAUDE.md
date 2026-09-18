@@ -149,6 +149,7 @@ actually wired (R11), so a row cannot claim a check that runs nowhere.
 | 8 | All 802.11/EAPOL frame interpretation lives in the pure capture core, compiled and unit-tested on the native lane; the RF sniffer/TX seams forward raw bytes only and carry no protocol logic. | ADR-0009 | review-only |
 | 9 | Capture artifacts (pcap bytes) are emitted only through the `CaptureSink` seam — no module opens or writes a capture file directly. | ADR-0009 | review-only |
 | 10 | The promiscuous RX callback forwards raw frame bytes to the pure core and does nothing else — no allocation, blocking, or protocol interpretation in the Wi-Fi-driver callback context. | ADR-0011 | review-only |
+| 11 | A consumer is switched under a live `RadioSniffer` only via the atomic router the engine holds as the sniffer's single consumer for its started lifetime; a sink is reset or destroyed only after a quiesce settle with the router aimed away from it — never by a `stop()`/`begin()` re-attach, which cannot hard-join an in-flight callback. | ADR-0015 | review-only |
 
 When an ADR's consequences create a rule that all *future* work must follow, add the row
 in the same commit as the ADR.
