@@ -1,0 +1,2 @@
+[STATE] phase=provisioning heap_free=178152 heap_max=135156 disp=240x135
+[PORTAL] ssid=Sapper-XXXX pass=sapper-setup url=http://192.168.4.1/

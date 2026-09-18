@@ -15,12 +15,16 @@
 
 #include "hal/display/display_hal.h"
 #include "hal/serial/serial_command.h"
+#include "net/provisioning.h"  // Phase — reported live on the [STATE] line (ADR-0006 #3)
 
 namespace sapper {
 
 class SerialChannel {
 public:
-    explicit SerialChannel(const IDisplay& display) : m_display(display) {}
+    /// @param phase The live boot phase, owned by main.cpp and read by reference so `[STATE]`
+    ///        always reports the true phase rather than a value captured at construction.
+    SerialChannel(const IDisplay& display, const Phase& phase)
+        : m_display(display), m_phase(phase) {}
 
     /// Print the boot banner as a [STATE] line so a just-flashed device announces itself.
     void announce() const;
@@ -34,6 +38,7 @@ private:
     void streamDump() const;
 
     const IDisplay& m_display;
+    const Phase& m_phase;
     CommandReader m_reader;
 };
 

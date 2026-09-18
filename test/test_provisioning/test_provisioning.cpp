@@ -126,6 +126,17 @@ void test_softap_ssid_zero_pads(void) {
     TEST_ASSERT_EQUAL_STRING("Sapper-0A05", ssid);
 }
 
+// --- phaseLabel: the serial [STATE] contract ---------------------------------
+
+void test_phase_labels_match_serial_contract(void) {
+    // These exact tokens are what the slice-0007 verify script greps for; pin them so a rename
+    // that would break the device verify fails here first, on the host lane.
+    TEST_ASSERT_EQUAL_STRING("provisioning", phaseLabel(Phase::Provisioning));
+    TEST_ASSERT_EQUAL_STRING("station_connect", phaseLabel(Phase::StationConnect));
+    TEST_ASSERT_EQUAL_STRING("time_sync", phaseLabel(Phase::TimeSync));
+    TEST_ASSERT_EQUAL_STRING("ready", phaseLabel(Phase::Ready));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_rejects_empty_ssid);
@@ -143,5 +154,6 @@ int main(int, char**) {
     RUN_TEST(test_gate_retry_budget_boundary);
     RUN_TEST(test_softap_ssid_from_last_two_mac_bytes);
     RUN_TEST(test_softap_ssid_zero_pads);
+    RUN_TEST(test_phase_labels_match_serial_contract);
     return UNITY_END();
 }

@@ -60,7 +60,8 @@ void SerialChannel::reportState() const {
     // invariant #1; slice-0005 Scenario D).
     char line[96];
     std::snprintf(line, sizeof(line),
-                  "[STATE] phase=bringup heap_free=%u heap_max=%u disp=%ux%u",
+                  "[STATE] phase=%s heap_free=%u heap_max=%u disp=%ux%u",
+                  phaseLabel(m_phase),
                   static_cast<unsigned>(ESP.getFreeHeap()),
                   static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
                   static_cast<unsigned>(m_display.width()),

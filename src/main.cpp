@@ -1,18 +1,26 @@
 /**
  * @file main.cpp
- * @brief slice-0005 bring-up entry point: init the display HAL, draw a bring-up frame, and
- *        serve the serial control channel's observation half (ADR-0001, ADR-0002, ADR-0003).
+ * @brief Boot state machine: provision (captive portal) or associate (STA + NTP), then idle at
+ *        Ready where the capture engine mounts later (ADR-0001, ADR-0002, ADR-0003, ADR-0006).
  *
- * This is a bring-up harness, not the appliance: there is no engine yet (that is slice-3/4).
- * Its whole job is to prove the board comes up and answers over serial, so the later slices
- * build on a foundation confirmed by the verify artifact rather than assumed.
+ * This owns the live boot `Phase` (slice-0007). At boot it seeds the display, decides via the
+ * pure boot gate whether stored credentials send it straight to the station or the portal, and
+ * drives the phases forward — announcing each on the serial `[STATE]` line. There is still no
+ * capture engine (slice-3/4); `Ready` is the headless steady state this slice reaches.
  */
 #include <Arduino.h>
+#include <WiFi.h>
+
+#include <cstdio>
 
 #include "config/active_board.h"
 #include "hal/display/display_hal.h"
 #include "hal/display/null_display.h"
 #include "hal/serial/serial_channel.h"
+#include "net/captive_portal.h"
+#include "net/provisioning.h"
+#include "net/provisioning_store.h"
+#include "net/wifi_station.h"
 #if SAPPER_BOARD_HAS_DISPLAY
 #include "hal/display/lgfx_display.h"
 #endif
@@ -48,17 +56,17 @@ void fillRect(IDisplay& d, int x0, int y0, int w, int h, uint16_t color) {
     }
 }
 
+// Boot self-test / splash. It doubles as the ADR-0002 §5 panel proof; a real status surface is
+// slice-7 (alert surfaces). A screenless board's NullDisplay makes every call a no-op.
 void drawBringupFrame(IDisplay& d) {
     const int w = d.width();
     const int h = d.height();
     d.fillScreen(kBlack);
 
-    // Colour-order probe: red, green, blue blocks along the top-left.
     fillRect(d, 3, 3, 20, 20, kRed);
     fillRect(d, 25, 3, 20, 20, kGreen);
     fillRect(d, 47, 3, 20, 20, kBlue);
 
-    // One-pixel border: any offset/clipping error clips or shifts it.
     for (int x = 0; x < w; ++x) {
         d.drawPixel(x, 0, kWhite);
         d.drawPixel(x, h - 1, kWhite);
@@ -68,14 +76,80 @@ void drawBringupFrame(IDisplay& d) {
         d.drawPixel(w - 1, y, kWhite);
     }
 
-    // Corner-to-corner diagonal: a mirror or rotation error flips its direction.
     const int span = w < h ? w : h;
     for (int i = 0; i < span; ++i) {
         d.drawPixel(i * (w - 1) / (span - 1), i * (h - 1) / (span - 1), kWhite);
     }
 }
 
-SerialChannel g_channel(display());
+// The live boot phase. main.cpp owns it; SerialChannel reads it by reference so `[STATE]` always
+// reports the true phase (ADR-0006 #3). It starts at Provisioning; the boot gate may advance it.
+Phase g_phase = Phase::Provisioning;
+SerialChannel g_channel(display(), g_phase);
+CaptivePortal g_portal;
+
+/// Pump the serial channel during a pre-engine blocking wait (CLAUDE.md §4 invariant #3), passed
+/// as the tick into the bounded STA/NTP waits so `state`/`ping` stay answered during boot.
+void pumpSerial() { g_channel.pump(); }
+
+/// Advance the reported phase and announce it, so every transition emits a `[STATE]` line the
+/// verify script observes (slice-0007 Scenarios C, D).
+void enterPhase(Phase phase) {
+    g_phase = phase;
+    g_channel.announce();
+}
+
+#ifdef SAPPER_TEST_HOOKS
+void seedTestCredentials() {
+    // ADR-0006 #7 reconciled with §4 invariant #7: the bench harness injects credentials through
+    // the persist seam at COMPILE TIME (build flags), never over serial. A hooks build missing a
+    // flag stores an invalid (empty) triad, which the gate simply routes to the portal.
+    ProvisioningRecord seed = {};
+    std::snprintf(seed.ssid, sizeof(seed.ssid), "%s", SAPPER_TEST_WIFI_SSID);
+    std::snprintf(seed.pass, sizeof(seed.pass), "%s", SAPPER_TEST_WIFI_PASS);
+    std::snprintf(seed.key, sizeof(seed.key), "%s", SAPPER_TEST_WPASEC_KEY);
+    persistProvisioning(seed);
+}
+#endif
+
+/// Whether the operator is asking to re-provision a device that already has valid credentials.
+/// The physical trigger (button/keyboard hold at boot) needs an input HAL this repo does not yet
+/// have, so it is deferred (LEDGER, ADR-0006); the STA-fail fallback in runStationBoot() already
+/// re-opens the portal automatically when a provisioned device cannot reach its network.
+bool reprovisionRequested() { return false; }
+
+void startPortal() {
+    enterPhase(Phase::Provisioning);
+    if (!g_portal.begin()) {
+        // Fail loud: no AP means no way to provision (the verify script watches for [FATAL]).
+        Serial.println("[FATAL] captive portal failed to start");
+        return;
+    }
+    char banner[96];
+    std::snprintf(banner, sizeof(banner), "[PORTAL] ssid=%s pass=%s url=http://%s/",
+                  g_portal.apSsid(), kSoftApPassword, WiFi.softAPIP().toString().c_str());
+    Serial.println(banner);
+}
+
+void runStationBoot(const ProvisioningRecord& creds) {
+    for (uint8_t staFail = 0;;) {
+        enterPhase(Phase::StationConnect);
+        if (connectStation(creds.ssid, creds.pass, &pumpSerial)) {
+            enterPhase(Phase::TimeSync);
+            if (syncClock(&pumpSerial)) {
+                enterPhase(Phase::Ready);  // headless steady state; engine mounts here at slice-3/4.
+                return;
+            }
+        }
+        ++staFail;
+        // Budget spent -> fall back to the portal for reconfiguration (fail loud, no silent loop).
+        if (decideBootPhase(/*hasValidStoredCreds=*/true, staFail, /*reprovisionRequested=*/false) ==
+            Phase::Provisioning) {
+            startPortal();
+            return;
+        }
+    }
+}
 
 }  // namespace
 
@@ -85,16 +159,35 @@ void setup() {
 
     IDisplay& d = display();
     if (!d.begin()) {
-        // Fail loud: the verify script watches for [FATAL] and fails the run (ADR-0004 lane 3).
         Serial.println("[FATAL] display init failed");
     }
     drawBringupFrame(d);
     d.present();
 
-    g_channel.announce();
+#ifdef SAPPER_TEST_HOOKS
+    seedTestCredentials();
+#endif
+
+    ProvisioningRecord creds = {};
+    const bool hasCreds = loadProvisioning(creds);
+    const Phase entry = decideBootPhase(hasCreds, /*staFailCount=*/0, reprovisionRequested());
+    if (entry == Phase::Provisioning) {
+        startPortal();
+    } else {
+        runStationBoot(creds);
+    }
 }
 
 void loop() {
     g_channel.pump();
+
+    if (g_phase == Phase::Provisioning) {
+        g_portal.handle();
+        if (g_portal.provisioned()) {
+            Serial.println("[PORTAL] saved; rebooting");
+            delay(500);  // let the HTTP success response flush before the AP drops.
+            ESP.restart();
+        }
+    }
     delay(5);
 }

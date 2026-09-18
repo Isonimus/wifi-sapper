@@ -41,7 +41,9 @@ Every document is exactly one of four things.
   and rewritten to past tense: *"this is what shipped."* Freezing converts it from a
   current-state claim (always going stale) into a historical one (never stale).
 - **README.md** — live document; update it in the same change that alters any
-  user/dev-facing feature or API.
+  user/dev-facing feature or API. It is the repo's operator/dev entry point — the build and
+  verify commands and the first-boot provisioning guide (ADR-0006) — cited here so it is not
+  orphaned (stele:ADR-0010).
 
 **Single writer, one direction.** An ADR records a deferral *once*, as a fact about that
 decision. `LEDGER.md` cites the ADR. **Never reach back into an ADR to close a ledger

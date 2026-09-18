@@ -23,6 +23,7 @@ open that corpus, so it skips qualified references (stele:ADR-0009).
 - [feature] serial control channel — STIMULUS half only: fault/stimulus injection behind SAPPER_TEST_HOOKS (synthetic handshake via the capture seam, stubbed wpa-sec responses, forced heap/time faults, hourly-sync clock advance), compiled out of release (ADR-0003). The observation half shipped in slice-0005; land the stimulus half with the engine it drives (slice-3/4)
 - [deferred] flash-encryption / secure-boot for secrets at rest — plaintext NVS is the slice-2 baseline; the key is readable from a flash dump until this lands (ADR-0006)
 - [feature] optional SD/LittleFS seed-NVS-on-first-boot for boards with storage — a power-user provisioning path alongside the portal (ADR-0006)
+- [feature] physical re-provision trigger (button/keyboard-hold at boot) — needs an input HAL the repo does not have yet; slice-0007 shipped only the automatic STA-fail fallback into the portal, so this is the manual override (ADR-0006)
 - [feature] slice-3: capture engine — port handshake_capture + deauth + station_scanner + pcap writer (headless)
 - [feature] slice-4: HuntEngine — extract the endless AutoHunt state machine out of the UI into a headless engine
 - [feature] slice-5: tls_upload + wpa-sec upload + persisted retry queue (auto-upload on each new capture)
@@ -31,7 +32,7 @@ open that corpus, so it skips qualified references (stele:ADR-0009).
 - [feature] slice-8: broaden hardware — CYD / M5Stick / bare-ESP32 board profiles + per-profile memory & palette tuning (for the M5StickC Plus2, reuse the on-device-tested board definition from the dragon-ball-radar repo rather than deriving one fresh)
 - [feature] allowlist-only operating mode for unattended deauth, surfaced in the config portal (atop the ported whitelist)
 - [feature] wire cloud CI to run ADR-0004 lanes 1–2 on push (npm run test:native + build:boards) — backs §4 invariant 5 that no CI lane depends on attached hardware; device verify (lane 3) stays a hardware-runner/manual step (ADR-0004)
-- [feature] author README.md — dev entry point (build/test/flash/verify commands, the serial observation protocol, board bring-up) cited from CLAUDE.md so it is not orphaned (stele:ADR-0010)
+- [feature] expand README.md — it now carries the build/verify commands and the first-boot provisioning guide (slice-0007); still to add are the serial observation protocol reference and per-board bring-up/flashing steps (stele:ADR-0010)
 - [deferred] OTA firmware update for field appliances — scope-heavy, revisit after the capture→sync spine (slices 1–6) is green
 
 ## Resolved

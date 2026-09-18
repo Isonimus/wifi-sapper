@@ -8,6 +8,7 @@
     "test:native": "pio test -e native",
     "build:boards": "pio run -e cardputer",
     "verify:device": "node scripts/0005-cardputer-bringup-verify.mjs",
+    "verify:provisioning": "node scripts/0007-provisioning-verify.mjs",
     "lint": "node scripts/lint-docs.mjs .",
     "index": "node scripts/build-index.mjs ."
   },

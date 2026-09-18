@@ -90,4 +90,15 @@ Phase decideBootPhase(bool hasValidStoredCreds, uint8_t staFailCount, bool repro
  */
 void formatSoftApSsid(const uint8_t mac[6], char (&out)[kSoftApSsidBufSize]);
 
+/**
+ * @brief The stable serial token for a phase, as it appears in the `[STATE] phase=<token>` line.
+ *
+ * This mapping is a contract, not a display string: the slice-0007 verify script greps for the
+ * exact tokens (`provisioning`, `station_connect`, `time_sync`, `ready`) to assert a device
+ * reached a phase (Scenarios C, D). A typo here silently breaks that grep, so the mapping is
+ * pure and host-tested (ADR-0004 lane 1) rather than inlined into the device-only serial path.
+ * Total over the enum: an added phase without a token fails the switch loudly, not silently.
+ */
+const char* phaseLabel(Phase phase);
+
 }  // namespace sapper
