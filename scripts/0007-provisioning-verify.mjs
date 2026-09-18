@@ -16,12 +16,15 @@
  *       the boot instant; the boot-time `[PORTAL]` banner is captured as evidence when present.
  *       Needs no access point.
  *
- *   d — ATTENDED, bench. Precondition: the `cardputer_testhooks` build flashed, built with
+ *   d — bench. Precondition: the `cardputer_testhooks` build flashed, built with
  *       $SAPPER_TEST_WIFI_SSID/$SAPPER_TEST_WIFI_PASS/$SAPPER_TEST_WPASEC_KEY for a reachable
- *       network. Launch this, then reset the board; asserts the announced phases advance
- *       provisioning->station_connect->time_sync->ready and a final `state` reads `phase=ready`.
+ *       network. Polls `state` and records the phase sequence as the device advances
+ *       station_connect->time_sync->ready; passes once it reads `phase=ready` (reachable only
+ *       after association and an NTP sync past the 2020 sentinel). No board reset needed — and it
+ *       must not be reset mid-run: this board's native USB-CDC serial re-enumerates on reset,
+ *       which would drop the port. Just run it against the booting or booted device.
  *
- * Both halves fail loud on any [FATAL]/[ERROR] line and write an artifact for review.
+ * Both scenarios fail loud on any [FATAL]/[ERROR] line and write an artifact for review.
  *
  * Usage: SAPPER_VERIFY_SCENARIO=c node scripts/0007-provisioning-verify.mjs [/dev/ttyACM0]
  */
@@ -30,12 +33,17 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 const BAUD = 115200;
 const ARTIFACT_DIR = 'artifacts';
-const ARTIFACT_STATE = `${ARTIFACT_DIR}/0007-provisioning.state.txt`;
+// Per-scenario artifact: C and D run against different builds/NVS states, so each keeps its own
+// evidence rather than overwriting the other's (ADR-0004 invariant #5).
+const artifactPath = (scenario) => `${ARTIFACT_DIR}/0007-provisioning.scenario-${scenario}.state.txt`;
 const REPLY_TIMEOUT_MS = 4000;
 const PHASE_TIMEOUT_MS = 45000; // STA association + first NTP sync can take tens of seconds
 
+const POLL_INTERVAL_MS = 2000; // between `state` polls while the device advances through phases
+
 const failures = [];
 const fail = (message) => failures.push(message);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Resolve the serial port: explicit arg/env wins, else the first Espressif-looking device. */
 async function resolvePort() {
@@ -127,7 +135,7 @@ class Channel {
  * Scenario C: an unprovisioned device raises the portal and keeps serving serial while it blocks.
  * Machine-checkable and needs no access point.
  */
-async function verifyPortal(channel) {
+async function verifyPortal(channel, artifact) {
   const observed = [];
 
   // The regression for invariant #3: with the portal blocking in loop(), the channel must still
@@ -149,40 +157,48 @@ async function verifyPortal(channel) {
   // machine-checkable core.
   if (channel.portalLine) observed.push(channel.portalLine);
 
-  writeFileSync(ARTIFACT_STATE, `${observed.join('\n')}\n`);
-  console.log(`wrote ${ARTIFACT_STATE}`);
+  writeFileSync(artifact, `${observed.join('\n')}\n`);
+  console.log(`wrote ${artifact}`);
 }
 
 /**
- * Scenario D: a provisioned device advances through the phases to Ready. Attended — the operator
- * resets the board after launch so the announced progression streams from a clean boot.
+ * Scenario D: a provisioned device advances through the phases to Ready. Polls `state` rather
+ * than catching a boot stream, because this board's native USB-CDC serial does not survive a
+ * reset (the port re-enumerates). The device answers `state` in every phase (invariant #3), so
+ * polling records the progression as it happens and confirms the end state without a reset.
  */
-async function verifyStationBoot(channel) {
-  console.log('reset the board now — waiting for the boot phase progression...');
-  const observed = [];
+async function verifyStationBoot(channel, artifact) {
+  console.log('polling state as the device advances to ready (do not reset the board)...');
+  const sequence = []; // one entry per distinct phase observed, in order
 
-  // The phases are announced in order as they happen; wait for each in turn from the reset boot.
-  for (const [phase, timeout] of [
-    ['station_connect', PHASE_TIMEOUT_MS],
-    ['time_sync', PHASE_TIMEOUT_MS],
-    ['ready', PHASE_TIMEOUT_MS],
-  ]) {
-    const line = await channel
-      .waitForLine(new RegExp(`^\\[STATE\\] phase=${phase}\\b`), timeout)
-      .catch((e) => {
-        fail(`did not reach phase=${phase}: ${e.message}`);
-        return null;
-      });
-    if (line) observed.push(line);
+  const deadline = Date.now() + PHASE_TIMEOUT_MS;
+  let reachedReady = false;
+  while (Date.now() < deadline) {
+    const stateP = channel.waitForLine(/^\[STATE\] phase=\w+/, REPLY_TIMEOUT_MS);
+    await channel.send('state');
+    const line = await stateP.catch(() => null);
+    if (line) {
+      const phase = /phase=(\w+)/.exec(line)?.[1] ?? null;
+      if (phase && (sequence.length === 0 || sequence[sequence.length - 1].phase !== phase)) {
+        sequence.push({ phase, line });
+        console.log(`  observed phase=${phase}`);
+      }
+      if (phase === 'ready') {
+        reachedReady = true;
+        break;
+      }
+    }
+    if (channel.fatalLine) break; // fail-loud handled by the caller
+    await sleep(POLL_INTERVAL_MS);
   }
 
-  // Confirm the steady state with an explicit query, independent of catching the announcement.
-  const stateP = channel.waitForLine(/^\[STATE\] phase=ready\b/, REPLY_TIMEOUT_MS);
-  await channel.send('state');
-  await stateP.catch((e) => fail(`final state not phase=ready: ${e.message}`));
+  if (!reachedReady) {
+    const last = sequence[sequence.length - 1]?.line ?? 'no reply';
+    fail(`did not reach phase=ready within ${PHASE_TIMEOUT_MS}ms (last: ${last})`);
+  }
 
-  writeFileSync(ARTIFACT_STATE, `${observed.join('\n')}\n`);
-  console.log(`wrote ${ARTIFACT_STATE}`);
+  writeFileSync(artifact, `${sequence.map((s) => s.line).join('\n')}\n`);
+  console.log(`wrote ${artifact}`);
 }
 
 async function main() {
@@ -199,13 +215,14 @@ async function main() {
   });
   const channel = new Channel(port);
   mkdirSync(ARTIFACT_DIR, { recursive: true });
+  const artifact = artifactPath(scenario);
   console.log(`opened ${path} @ ${BAUD} — scenario ${scenario}`);
 
   try {
     if (scenario === 'c') {
-      await verifyPortal(channel);
+      await verifyPortal(channel, artifact);
     } else {
-      await verifyStationBoot(channel);
+      await verifyStationBoot(channel, artifact);
     }
     if (channel.fatalLine) fail(`device reported: ${channel.fatalLine}`);
   } finally {
@@ -217,7 +234,7 @@ async function main() {
     for (const f of failures) console.error(`  - ${f}`);
     process.exit(1);
   }
-  console.log(`\nPASS — scenario ${scenario} verified; review ${ARTIFACT_STATE}.`);
+  console.log(`\nPASS — scenario ${scenario} verified; review ${artifact}.`);
 }
 
 main().catch((err) => {

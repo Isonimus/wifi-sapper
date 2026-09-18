@@ -1,0 +1,2 @@
+[STATE] phase=time_sync heap_free=187228 heap_max=143348 disp=240x135
+[STATE] phase=ready heap_free=186716 heap_max=143348 disp=240x135
