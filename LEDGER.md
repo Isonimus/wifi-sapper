@@ -21,7 +21,6 @@ open that corpus, so it skips qualified references (stele:ADR-0009).
      ADR citation is added to its line then (rule 8 rejects a citation that does not resolve). -->
 
 - [feature] serial control channel — STIMULUS half only: fault/stimulus injection behind SAPPER_TEST_HOOKS (synthetic handshake via the capture seam, stubbed wpa-sec responses, forced heap/time faults, hourly-sync clock advance), compiled out of release (ADR-0003). The observation half shipped in slice-0005; land the stimulus half with the engine it drives (slice-3/4)
-- [feature] slice-2: WiFi STA + NTP time sync + captive AP config portal (WiFi creds + wpa-sec API key → NVS) (ADR-0006)
 - [deferred] flash-encryption / secure-boot for secrets at rest — plaintext NVS is the slice-2 baseline; the key is readable from a flash dump until this lands (ADR-0006)
 - [feature] optional SD/LittleFS seed-NVS-on-first-boot for boards with storage — a power-user provisioning path alongside the portal (ADR-0006)
 - [feature] slice-3: capture engine — port handshake_capture + deauth + station_scanner + pcap writer (headless)
