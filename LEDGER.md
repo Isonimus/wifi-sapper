@@ -24,7 +24,10 @@ open that corpus, so it skips qualified references (stele:ADR-0009).
 - [deferred] flash-encryption / secure-boot for secrets at rest — plaintext NVS is the slice-2 baseline; the key is readable from a flash dump until this lands (ADR-0006)
 - [feature] optional SD/LittleFS seed-NVS-on-first-boot for boards with storage — a power-user provisioning path alongside the portal (ADR-0006)
 - [feature] physical re-provision trigger (button/keyboard-hold at boot) — needs an input HAL the repo does not have yet; slice-0007 shipped only the automatic STA-fail fallback into the portal, so this is the manual override (ADR-0006)
-- [feature] slice-3: capture engine — port handshake_capture + deauth + station_scanner + pcap writer (headless)
+- [feature] capture: RF sniffer — promiscuous-mode HAL that hops channels and feeds raw frames into the pure capture core (slice-0010); ships the lane-3 on-air handshake→pcap verify (ADR-0009)
+- [feature] capture: deauth — pure deauth/disassoc frame building + raw-TX seam to force handshake renegotiation, gated by the SAPPER_TEST_HOOKS actuation rule (ADR-0009, ADR-0003)
+- [feature] capture: station scanner — passive client discovery for targeted deauth of connected clients (ADR-0009)
+- [deferred] PMKID (clientless) capture — a second capture mode alongside the 4-way handshake, deferred to keep the capture core to one path (ADR-0009)
 - [feature] slice-4: HuntEngine — extract the endless AutoHunt state machine out of the UI into a headless engine
 - [feature] slice-5: tls_upload + wpa-sec upload + persisted retry queue (auto-upload on each new capture)
 - [feature] slice-6: wpa-sec cracked-download + hourly scheduler + per-BSSID manifest + new-password alerts

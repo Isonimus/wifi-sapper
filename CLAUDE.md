@@ -146,6 +146,8 @@ actually wired (R11), so a row cannot claim a check that runs nowhere.
 | 5 | No cloud-CI lane depends on attached hardware — device-in-the-loop verification runs on a hardware lane and its artifact is committed for review. | ADR-0004 | pending (LEDGER) |
 | 6 | Provisioned secrets (WiFi credentials, wpa-sec key) are read and written only through the `persistProvisioning()` NVS seam — never scattered across call sites. | ADR-0006 | review-only |
 | 7 | No build's serial vocabulary can write or clear provisioning credentials — provisioning is never a serial actuation path. | ADR-0006 | review-only |
+| 8 | All 802.11/EAPOL frame interpretation lives in the pure capture core, compiled and unit-tested on the native lane; the RF sniffer/TX seams forward raw bytes only and carry no protocol logic. | ADR-0009 | review-only |
+| 9 | Capture artifacts (pcap bytes) are emitted only through the `CaptureSink` seam — no module opens or writes a capture file directly. | ADR-0009 | review-only |
 
 When an ADR's consequences create a rule that all *future* work must follow, add the row
 in the same commit as the ADR.
