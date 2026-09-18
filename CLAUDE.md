@@ -141,7 +141,7 @@ actually wired (R11), so a row cannot claim a check that runs nowhere.
 |---|---|---|---|
 | 1 | Serial observation commands (`ping`, `state`, event tap) mutate no engine state — they expose only what the device already publishes or logs. | ADR-0003 | review-only |
 | 2 | Injected stimulus enters the engine only through the same seams a real event uses — never a parallel test-only path. | ADR-0003 | review-only |
-| 3 | Every state that blocks before the engine loop runs (e.g. first-boot captive portal) pumps the serial channel. | ADR-0003 | pending (LEDGER) |
+| 3 | Every state that blocks before the engine loop runs (e.g. first-boot captive portal) pumps the serial channel. | ADR-0003 | verified_by: scripts/0007-provisioning-verify.mjs |
 | 4 | The actuation/stimulus vocabulary is absent from any build without `SAPPER_TEST_HOOKS` — no shipped binary can be commanded to deauth or upload over serial. | ADR-0003 | pending (LEDGER) |
 | 5 | No cloud-CI lane depends on attached hardware — device-in-the-loop verification runs on a hardware lane and its artifact is committed for review. | ADR-0004 | pending (LEDGER) |
 | 6 | Provisioned secrets (WiFi credentials, wpa-sec key) are read and written only through the `persistProvisioning()` NVS seam — never scattered across call sites. | ADR-0006 | review-only |

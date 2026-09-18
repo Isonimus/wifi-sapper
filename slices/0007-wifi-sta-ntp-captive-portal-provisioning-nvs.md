@@ -178,3 +178,68 @@ never committed.
 
 _(filled at merge — the freeze step: what actually shipped, confirming each Definition-of-Done
 scenario was met or recording the deviation.)_
+
+Frozen 2026-09-18. All four Definition-of-Done scenarios met on the M5Stack Cardputer ADV.
+
+- **Scenario A (native, lane 1)** — `pio test -e native` passes 29/29, of which 16 are
+  `test/test_provisioning`: `validateCredentials` at each rejection boundary and the accepting
+  cases (empty SSID, over-32-byte SSID, passphrase outside 8–63 bytes, empty key, null fields;
+  the accepted WPA2 triad, the open-network empty passphrase, the length boundaries),
+  `decideBootPhase` on every gate branch (valid→station, absent/invalid→portal, reprovision→
+  portal, the STA-retry-budget boundary), `softApSsid` (last two MAC bytes, zero-padding), and
+  `phase_labels_match_serial_contract` — the last pins the four `[STATE]` phase tokens the
+  verify script matches on.
+- **Scenario B (board compile, lane 2)** — both configurations link with no error against
+  pioarduino 55.03.34 + Bruce's IDF-5.5 libs: the shipped `cardputer` env and the
+  `cardputer_testhooks` env (`-DSAPPER_TEST_HOOKS=1` plus the three credential build flags read
+  from the environment). Static RAM 48044 B / 327 KB (14.7%) for both; flash 1080975 B (shipped)
+  vs 1081079 B (test-hooks) — the 104-byte delta is the compile-time seed path. The invariant-#6
+  claim (`persistProvisioning()` the sole NVS writer) and invariant-#7 claim (no serial
+  vocabulary writes or clears credentials) hold on review: the test-hooks seed reaches NVS only
+  through `persistProvisioning()` at boot from build flags, never a serial command, in either
+  build.
+- **Scenario C (portal + observability, lane 3)** — on the Cardputer ADV with the `sapper` NVS
+  namespace erased and the shipped build flashed, the device raised the SoftAP `Sapper-XXXX`,
+  reported `phase=provisioning`, and answered `ping`→`[CMD] pong` and repeated `state` reads with
+  the phase holding steady — the invariant-#3 proof that the pre-engine portal state pumps the
+  serial channel. Evidence: `artifacts/0007-provisioning.scenario-c.state.txt`.
+- **Scenario D (provisioned boot, lane 3)** — the `cardputer_testhooks` build, seeded at boot
+  with a reachable network's credentials through `persistProvisioning()`, associated and synced
+  its clock; the verify script observed the phase advance through `time_sync` to `ready` with the
+  clock past the year-2020 sentinel. Evidence:
+  `artifacts/0007-provisioning.scenario-d.state.txt`.
+
+Deviations from the plan, recorded here rather than by editing the plan above:
+
+- **SoftAP SSID read from efuse, not the interface MAC — a defect caught on hardware.** The
+  first hardware run named the AP `Sapper-0000`: `main.cpp` read the MAC with
+  `WiFi.macAddress()` before WiFi was started, which returns all zeros. Fixed by reading the
+  SoftAP MAC from efuse with `esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP)` inside
+  `CaptivePortal::begin()` (valid regardless of WiFi state) and dropping the `mac` parameter from
+  `begin()`; the re-run produced `Sapper-XXXX`. This is exactly the "measure, don't assume"
+  case §3 exists for — the SSID naming was unit-tested pure (`softApSsid`), but the *source* of
+  the MAC was only provable on hardware.
+- **Scenario D verifies by polling, not by resetting.** The plan says "the device boots and the
+  verify script polls `state`"; the first attempt instead reset the board mid-run, which hung:
+  this board's native USB-CDC serial re-enumerates on reset and the open port is dropped, so the
+  script never saw the rebooted device. The script polls `state` against the already-booted
+  device — sound because invariant #3 has every phase pump the channel — and must not be reset
+  mid-run. The script header records this.
+- **Per-scenario artifact files.** The `## Verification` section names a single
+  `artifacts/0007-provisioning.state.txt`; as built, C and D each write their own
+  (`…scenario-c.state.txt`, `…scenario-d.state.txt`) so running D does not overwrite C's
+  committed evidence, since the two run against different builds and NVS states.
+- **Only the automatic re-provision route shipped; the physical trigger is deferred.** The
+  Design describes a GPIO/button-hold-at-boot clear on input-bearing profiles, but the repo has
+  no input HAL yet, so `reprovisionRequested()` returns `false` with the reason cited at the
+  site and only the STA-failure fallback of `decideBootPhase()` re-opens the portal. The physical
+  trigger is an open LEDGER item (ADR-0006).
+- **The freeze's adversarial pass found and fixed two store defects, reversing this slice's
+  "no fake NVS" testing note.** The `/wrap-up` correctness review (stele:ADR-0017) found that
+  `persistProvisioning()` could leave a mixed triad on a partial NVS write (a re-provision whose
+  middle write fails), and that the `SAPPER_TEST_HOOKS` seed swallowed its persist result and so
+  kept stale credentials when flashed with no flags onto a provisioned board. Both were fixed and
+  are now guarded by native regression tests that fail before each fix and pass after — which
+  required bringing the store into the native lane behind a fake `<Preferences.h>`. The Design
+  section above deliberately declined that fake as speculative; the review is the rule-of-three
+  second reason that reverses it, recorded (not by editing the plan) in ADR-0008.
