@@ -148,6 +148,7 @@ actually wired (R11), so a row cannot claim a check that runs nowhere.
 | 7 | No build's serial vocabulary can write or clear provisioning credentials — provisioning is never a serial actuation path. | ADR-0006 | review-only |
 | 8 | All 802.11/EAPOL frame interpretation lives in the pure capture core, compiled and unit-tested on the native lane; the RF sniffer/TX seams forward raw bytes only and carry no protocol logic. | ADR-0009 | review-only |
 | 9 | Capture artifacts (pcap bytes) are emitted only through the `CaptureSink` seam — no module opens or writes a capture file directly. | ADR-0009 | review-only |
+| 10 | The promiscuous RX callback forwards raw frame bytes to the pure core and does nothing else — no allocation, blocking, or protocol interpretation in the Wi-Fi-driver callback context. | ADR-0011 | review-only |
 
 When an ADR's consequences create a rule that all *future* work must follow, add the row
 in the same commit as the ADR.

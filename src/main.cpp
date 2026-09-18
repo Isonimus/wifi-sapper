@@ -21,6 +21,7 @@
 #include "net/provisioning.h"
 #include "net/provisioning_store.h"
 #include "net/wifi_station.h"
+#include "rf_sniff_probe.h"
 #if SAPPER_BOARD_HAS_DISPLAY
 #include "hal/display/lgfx_display.h"
 #endif
@@ -171,6 +172,11 @@ void setup() {
     seedTestCredentials();
 #endif
 
+    // Bench RF sniffer probe (slice-0012, ADR-0011): if a target BSSID is configured, it takes over
+    // the device to prove the promiscuous seam on air, and the normal boot is skipped. Inactive and
+    // compiled out of every shipped build, so this returns false there and boot proceeds normally.
+    if (rfSniffProbeBegin()) return;
+
     ProvisioningRecord creds = {};
     const bool hasCreds = loadProvisioning(creds);
     const Phase entry = decideBootPhase(hasCreds, /*staFailCount=*/0, reprovisionRequested());
@@ -182,6 +188,12 @@ void setup() {
 }
 
 void loop() {
+    if (rfSniffProbeActive()) {  // bench RF probe owns the device; the normal boot loop is skipped.
+        rfSniffProbePump();
+        delay(5);
+        return;
+    }
+
     g_channel.pump();
 
     if (g_phase == Phase::Provisioning) {
