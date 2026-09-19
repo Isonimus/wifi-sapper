@@ -21,9 +21,11 @@
 #include "net/provisioning.h"
 #include "net/provisioning_store.h"
 #include "net/wifi_station.h"
+#include "hunt_loop.h"
 #include "hunt_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
+#include "upload_probe.h"
 #if SAPPER_BOARD_HAS_DISPLAY
 #include "hal/display/lgfx_display.h"
 #endif
@@ -143,7 +145,12 @@ void runStationBoot(const ProvisioningRecord& creds) {
         if (connectStation(creds.ssid, creds.pass, &pumpSerial)) {
             enterPhase(Phase::TimeSync);
             if (syncClock(&pumpSerial)) {
-                enterPhase(Phase::Ready);  // headless steady state; engine mounts here at slice-3/4.
+                enterPhase(Phase::Ready);  // headless steady state.
+                // Start the shipped hunt→enqueue→drain→upload loop (ADR-0017 decision #8). It releases
+                // the boot association and re-owns the radio promiscuously; loop() pumps it from here.
+                if (!huntLoopBegin(creds)) {
+                    Serial.println("[FATAL] hunt/upload loop failed to start");
+                }
                 return;
             }
         }
@@ -179,6 +186,7 @@ void setup() {
     // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
+    if (uploadProbeBegin()) return;
     if (huntProbeBegin()) return;
     if (rfDiscoverProbeBegin()) return;
     if (rfSniffProbeBegin()) return;
@@ -189,11 +197,16 @@ void setup() {
     if (entry == Phase::Provisioning) {
         startPortal();
     } else {
-        runStationBoot(creds);
+        runStationBoot(creds);  // hunt_loop copies the creds it needs; this local may go out of scope.
     }
 }
 
 void loop() {
+    if (uploadProbeActive()) {  // bench upload verify owns the device; the normal boot loop is skipped.
+        uploadProbePump();
+        delay(5);
+        return;
+    }
     if (huntProbeActive()) {  // bench RF probe owns the device; the normal boot loop is skipped.
         huntProbePump();
         delay(5);
@@ -219,6 +232,8 @@ void loop() {
             delay(500);  // let the HTTP success response flush before the AP drops.
             ESP.restart();
         }
+    } else if (g_phase == Phase::Ready) {
+        huntLoopPump();  // the shipped endless hunt→enqueue→drain→upload loop (ADR-0017 decision #8).
     }
     delay(5);
 }

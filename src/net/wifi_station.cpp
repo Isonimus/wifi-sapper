@@ -7,6 +7,7 @@
 #include "net/wifi_station.h"
 
 #include <WiFi.h>
+#include <esp_sntp.h>
 
 #include <ctime>
 
@@ -52,16 +53,27 @@ bool connectStation(const char* ssid, const char* pass, BootTick tick) {
 }
 
 bool syncClock(BootTick tick) {
-    configTime(kGmtOffsetSec, kDstOffsetSec, kNtpServer);
+    // Idempotent, and it must be: the upload supervisor calls this on every drain (bringUpStation).
+    // Re-running configTime() restarts the SNTP client, whose pending DNS callback then fires during
+    // the upload's own DNS lookup and aborts in lwIP without the TCP/IP core lock held ("Required to
+    // lock TCPIPcore functionality!", sys_untimeout). So once the clock is real, do nothing.
+    if (std::time(nullptr) >= kMinValidEpoch) return true;
 
+    configTime(kGmtOffsetSec, kDstOffsetSec, kNtpServer);
     const uint32_t start = millis();
     while (std::time(nullptr) < kMinValidEpoch) {
         if (millis() - start >= kNtpTimeoutMs) {
+            esp_sntp_stop();  // stop the client so a later DNS lookup never services its callback.
             return false;
         }
         if (tick) tick();
         delay(kPollIntervalMs);
     }
+    // Clock is set. Stop the SNTP service so its background re-sync DNS can never collide with an
+    // upload's DNS on the app task (the crash above). A later deliberate re-sync (slice-6, sharing the
+    // drain's STA session) re-runs configTime itself; for now the RTC free-runs, which is ample for
+    // TLS validity (cert windows are days/months, drift is seconds).
+    esp_sntp_stop();
     return true;
 }
 

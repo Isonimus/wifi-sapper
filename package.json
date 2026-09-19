@@ -12,6 +12,7 @@
     "verify:rf-sniffer": "node scripts/0012-rf-sniffer-verify.mjs",
     "verify:rf-discover": "node scripts/0014-rf-discover-verify.mjs",
     "verify:hunt": "node scripts/0016-hunt-verify.mjs",
+    "verify:upload": "node scripts/0018-upload-verify.mjs",
     "lint": "node scripts/lint-docs.mjs .",
     "index": "node scripts/build-index.mjs ."
   },

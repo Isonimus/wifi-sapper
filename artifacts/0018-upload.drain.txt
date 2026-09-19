@@ -1,0 +1,10 @@
+[UPLOAD] real handshake reconstructed: ssid='<redacted-ssid>' beacon=1 M1=1 M2=1 M3=0 M4=1
+[UPLOAD] waiting elapsed=89012ms drains=12
+[UPLOAD] waiting elapsed=91014ms drains=12
+[UPLOAD] resp uploadBytes=381 respBytes=733
+[UPLOAD] wpa-sec result=rejected bytes=381
+[UPLOAD] resp uploadBytes=782 respBytes=4534
+[UPLOAD] wpa-sec result=accepted bytes=782
+[UPLOAD] drain done associated=1 accepted=1 duplicate=0 rejected=1 storeErrors=0 resumeFailed=0
+[UPLOAD] real handshake reconstructed: ssid='<redacted-ssid>' beacon=1 M1=1 M2=1 M3=0 M4=1
+[UPLOAD] injecting REAL handshake (embedded pcap) through the capture-ready seam

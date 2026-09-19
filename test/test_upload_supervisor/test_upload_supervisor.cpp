@@ -1,0 +1,303 @@
+/**
+ * @file test_upload_supervisor.cpp
+ * @brief Native unit tests for the batched-drain upload arbiter (slice-0018 Scenarios A-D, F;
+ *        ADR-0017 decisions #2, #5, #7).
+ *
+ * Drives the pure UploadSupervisor against a real HuntEngine (over a FakeRadioSniffer, so stop/resume
+ * is observed through the engine's phase), a real CaptureQueue over an in-RAM FakeCaptureStore, a
+ * scripted FakeUploader, a FakeStationControl, and a fake clock (nowMs passed to tick). No radio, no
+ * network. It proves: a capture below threshold is enqueued without pausing the hunt; a threshold
+ * triggers one batched drain that uploads all once and resumes; a rejected upload is retried and the
+ * backoff grows; a duplicate is a terminal success; and the backoff grows on failure and resets on
+ * success.
+ */
+#include <unity.h>
+
+#include <array>
+#include <cstring>
+#include <vector>
+
+#include "net/ap_registry.h"
+#include "net/capture_queue.h"
+#include "net/handshake_collector.h"
+#include "net/hunt_engine.h"
+#include "net/upload_supervisor.h"
+
+#include "../support/fake_capture_store.h"
+#include "../support/fake_radio_sniffer.h"
+#include "../support/fake_station_control.h"
+#include "../support/fake_uploader.h"
+#include "../support/frame_builders.h"
+
+using namespace sapper;
+using sapper_test::buildBeacon;
+using sapper_test::buildEapol;
+using sapper_test::FakeCaptureStore;
+using sapper_test::FakeRadioSniffer;
+using sapper_test::FakeStationControl;
+using sapper_test::FakeUploader;
+
+static const uint8_t kClient[6] = {0x06, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
+static uint8_t kHopChannels[3] = {1, 6, 11};
+static const char* kKey = "test-wpasec-key";
+
+void setUp(void) {}
+void tearDown(void) {}
+
+static CapturedHandshake makeHandshake(const uint8_t bssid[6]) {
+    HandshakeCollector collector(bssid, 6);
+    const std::vector<uint8_t> beacon = buildBeacon(bssid, "Net", 6);
+    collector.ingest(beacon.data(), static_cast<uint16_t>(beacon.size()));
+    const std::vector<uint8_t> m1 = buildEapol(bssid, kClient, sapper_test::kKeyInfoM1, true);
+    collector.ingest(m1.data(), static_cast<uint16_t>(m1.size()));
+    const std::vector<uint8_t> m2 = buildEapol(bssid, kClient, sapper_test::kKeyInfoM2, false);
+    collector.ingest(m2.data(), static_cast<uint16_t>(m2.size()));
+    return collector.handshake();
+}
+
+static std::array<uint8_t, 6> bssidN(uint8_t n) { return {0x02, 0x00, 0x00, 0x00, 0x00, n}; }
+
+static bool isDiscovering(const HuntEngine& engine) {
+    return engine.phase() == HuntEngine::Phase::Discovering;
+}
+static bool isIdle(const HuntEngine& engine) { return engine.phase() == HuntEngine::Phase::Idle; }
+
+/// The wired engine+queue+supervisor, built in the one order that resolves the construction cycle:
+/// relay first, engine observing the relay, supervisor holding the engine, relay aimed at supervisor.
+struct Rig {
+    FakeRadioSniffer sniffer;
+    ApRegistry registry;
+    CaptureReadyRelay relay;
+    HuntEngine engine;
+    FakeCaptureStore store;
+    CaptureQueue queue;
+    FakeUploader uploader;
+    FakeStationControl station;
+    UploadSupervisor supervisor;
+
+    explicit Rig(const UploadSupervisorConfig& config)
+        : engine(sniffer, registry, relay, kHopChannels, 3, HuntConfig{}),
+          queue(store),
+          supervisor(engine, queue, uploader, station, kKey, config) {
+        relay.setTarget(supervisor);
+    }
+
+    /// Bring the appliance to its running steady state: engine hunting, supervisor seeded.
+    void start(uint32_t nowMs) {
+        TEST_ASSERT_TRUE(engine.begin(nowMs));
+        supervisor.begin(nowMs);
+    }
+};
+
+void test_capture_below_threshold_is_enqueued_without_pausing_the_hunt(void) {
+    UploadSupervisorConfig config;
+    config.drainThreshold = 3;
+    config.maxDrainIntervalMs = 1000000;  // keep the time ceiling out of this test.
+    Rig rig(config);
+    rig.start(0);
+
+    const auto ap = bssidN(1);
+    rig.supervisor.onCaptureReady(makeHandshake(ap.data()));  // one capture, below the threshold of 3.
+    rig.supervisor.tick(10);
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.store.size());        // serialized and enqueued,
+    TEST_ASSERT_TRUE(isDiscovering(rig.engine));          // the hunt never paused (stop() not called),
+    TEST_ASSERT_EQUAL_INT(0, rig.station.bringUpCalls);   // no associate,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.uploader.calls.size());  // and no upload.
+}
+
+void test_threshold_triggers_one_batched_drain_that_uploads_all_and_resumes(void) {
+    UploadSupervisorConfig config;
+    config.drainThreshold = 3;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    rig.start(0);
+
+    for (uint8_t i = 0; i < 3; ++i) rig.supervisor.onCaptureReady(makeHandshake(bssidN(i).data()));
+    TEST_ASSERT_EQUAL_UINT32(3, rig.store.size());
+
+    rig.supervisor.tick(100);  // threshold reached -> stop the engine, enter the settle.
+    TEST_ASSERT_TRUE(isIdle(rig.engine));  // the hunt is paused for the drain.
+
+    rig.supervisor.tick(106);  // settle (5ms) elapsed -> one drain cycle runs to completion.
+    TEST_ASSERT_EQUAL_INT(1, rig.station.bringUpCalls);      // a single associate for the whole batch,
+    TEST_ASSERT_EQUAL_INT(1, rig.station.tearDownCalls);
+    TEST_ASSERT_EQUAL_UINT32(3, rig.uploader.calls.size());  // each capture uploaded exactly once,
+    TEST_ASSERT_EQUAL_STRING(kKey, rig.uploader.calls[0].key.c_str());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());           // all deleted on the accepted result,
+    TEST_ASSERT_TRUE(isDiscovering(rig.engine));             // and the hunt resumed.
+}
+
+void test_a_rejected_upload_is_retried_never_dropped_and_backoff_grows(void) {
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;  // a single capture triggers a drain, so we can force two cycles.
+    config.settleMs = 5;
+    config.backoffBaseMs = 100;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.scripted = {UploadResult::Rejected, UploadResult::Accepted};  // fail then succeed.
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));
+
+    // First cycle: the upload is rejected, so the capture stays queued and is not deleted.
+    rig.supervisor.tick(0);
+    rig.supervisor.tick(6);  // past the settle -> cycle runs.
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());
+    TEST_ASSERT_EQUAL_UINT32(1, rig.store.size());   // still pending — never silently dropped.
+    TEST_ASSERT_TRUE(isDiscovering(rig.engine));
+
+    // The backoff now gates the retry: a tick well before it elapses runs no second cycle.
+    rig.supervisor.tick(50);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());  // backoff still holding.
+
+    // Past the backoff (drain at 6 -> next allowed at 6+100=106): the retry runs and succeeds.
+    rig.supervisor.tick(106);
+    rig.supervisor.tick(112);  // past this cycle's settle.
+    TEST_ASSERT_EQUAL_UINT32(2, rig.uploader.calls.size());  // retried,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());           // and deleted only on the accepted result.
+}
+
+void test_a_duplicate_response_is_a_terminal_success(void) {
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Duplicate;  // wpa-sec already holds it.
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));
+    rig.supervisor.tick(0);
+    rig.supervisor.tick(6);
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());  // deleted exactly as for accepted — off our hands.
+    TEST_ASSERT_EQUAL(static_cast<int>(1), static_cast<int>(rig.supervisor.lastDrain().duplicate));
+}
+
+void test_backoff_grows_on_failure_and_resets_on_success(void) {
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.backoffBaseMs = 100;
+    config.backoffCapMs = 100000;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.station.bringUpSucceeds = false;  // offline: every cycle fails to associate.
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));
+
+    // Cycle 1 at t=0 (settle to 5). Failure -> next allowed at 5+100=105, backoff doubles to 200.
+    rig.supervisor.tick(0);
+    rig.supervisor.tick(5);
+    TEST_ASSERT_EQUAL_INT(1, rig.station.bringUpCalls);
+
+    // Backoff = 100ms: no cycle before t=105.
+    rig.supervisor.tick(104);
+    TEST_ASSERT_EQUAL_INT(1, rig.station.bringUpCalls);
+    rig.supervisor.tick(105);  // cycle 2 (settle to 110). Failure -> next allowed 110+200=310.
+    rig.supervisor.tick(110);
+    TEST_ASSERT_EQUAL_INT(2, rig.station.bringUpCalls);
+
+    // Backoff has grown to 200ms: no cycle before t=310 (proving the interval doubled).
+    rig.supervisor.tick(309);
+    TEST_ASSERT_EQUAL_INT(2, rig.station.bringUpCalls);
+    rig.supervisor.tick(310);  // cycle 3 (settle to 315). Failure -> next allowed 315+400=715.
+    rig.supervisor.tick(315);
+    TEST_ASSERT_EQUAL_INT(3, rig.station.bringUpCalls);
+
+    // Now come back online: the next cycle succeeds and must reset the backoff to the base.
+    rig.station.bringUpSucceeds = true;
+    rig.supervisor.tick(715);  // cycle 4 (settle to 720). Success -> backoff resets, queue drains.
+    rig.supervisor.tick(720);
+    TEST_ASSERT_EQUAL_INT(4, rig.station.bringUpCalls);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());
+
+    // Prove the reset: a fresh capture that fails is gated by the base (100ms) again, not the grown
+    // interval. Fail once more, then check the gate is at now+base.
+    rig.station.bringUpSucceeds = false;
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(2).data()));
+    rig.supervisor.tick(800);  // cycle 5 (settle to 805). Failure -> next allowed 805+100=905.
+    rig.supervisor.tick(805);
+    TEST_ASSERT_EQUAL_INT(5, rig.station.bringUpCalls);
+    rig.supervisor.tick(904);
+    TEST_ASSERT_EQUAL_INT(5, rig.station.bringUpCalls);  // still within the base backoff,
+    rig.supervisor.tick(905);
+    rig.supervisor.tick(910);
+    TEST_ASSERT_EQUAL_INT(6, rig.station.bringUpCalls);  // base interval, not the grown one -> reset.
+}
+
+void test_an_unreadable_capture_is_purged_so_the_cycle_stays_clean(void) {
+    // Regression for the backoff wedge: a permanently-unreadable (corrupt) entry must be purged, not
+    // kept, so the cycle can reach "clean" and backoff recovers — otherwise one bad file pins the drain
+    // cadence at the backoff cap forever (ADR-0017 decision #7). The good capture in the same batch must
+    // still upload and delete as normal.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 2;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));  // becomes id 1 (the corrupt one),
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(2).data()));  // becomes id 2 (uploads fine).
+    TEST_ASSERT_EQUAL_UINT32(2, rig.store.size());
+    rig.store.failReadId = rig.store.entries()[0].id;  // the oldest entry is unreadable.
+
+    rig.supervisor.tick(100);  // threshold reached -> stop, settle.
+    rig.supervisor.tick(106);  // settle elapsed -> one drain cycle.
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().purged);       // the corrupt entry purged,
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().accepted);     // the good one uploaded,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.lastDrain().storeErrors);  // purge is not a store error,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());                        // both gone from the queue,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.pendingActivity());        // and the cycle counted CLEAN
+                                                                         // (activity reset -> no wedge).
+}
+
+void test_a_failed_boot_seed_does_not_strand_prior_captures(void) {
+    // Regression: if the begin() seed listing fails, the supervisor must not assume the queue is empty.
+    // Before the fix it left activity_ at 0, and shouldDrain()'s activity_==0 short-circuit suppressed
+    // even the time ceiling, so a capture already on flash from a prior run was stranded until some new
+    // capture happened to arrive. A warm trigger must let the time ceiling drain it.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 8;          // high, so only the time ceiling can trigger here.
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+
+    TEST_ASSERT_TRUE(rig.engine.begin(0));
+    // A capture the prior run left on flash (persisted directly through the queue, no supervisor state).
+    TEST_ASSERT_EQUAL(static_cast<int>(OfferResult::Stored),
+                      static_cast<int>(rig.queue.offer(makeHandshake(bssidN(1).data()))));
+    TEST_ASSERT_EQUAL_UINT32(1, rig.store.size());
+
+    rig.store.failList = true;   // the boot seed cannot read the queue,
+    rig.supervisor.begin(0);
+    rig.store.failList = false;  // listing recovers for the actual drain.
+
+    // No new capture ever arrives. Only the time ceiling can act, and it must.
+    rig.supervisor.tick(1000);   // ceiling reached -> stop, settle,
+    rig.supervisor.tick(1006);   // settle elapsed -> drain runs.
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());  // the stranded capture was drained,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());           // and cleared.
+}
+
+int main(int, char**) {
+    UNITY_BEGIN();
+    RUN_TEST(test_capture_below_threshold_is_enqueued_without_pausing_the_hunt);
+    RUN_TEST(test_threshold_triggers_one_batched_drain_that_uploads_all_and_resumes);
+    RUN_TEST(test_a_rejected_upload_is_retried_never_dropped_and_backoff_grows);
+    RUN_TEST(test_a_duplicate_response_is_a_terminal_success);
+    RUN_TEST(test_backoff_grows_on_failure_and_resets_on_success);
+    RUN_TEST(test_an_unreadable_capture_is_purged_so_the_cycle_stays_clean);
+    RUN_TEST(test_a_failed_boot_seed_does_not_strand_prior_captures);
+    return UNITY_END();
+}

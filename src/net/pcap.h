@@ -45,4 +45,17 @@ constexpr uint16_t kPcapVersionMinor = 4;
 constexpr uint32_t kPcapSnapLen = 65535;
 constexpr uint32_t kPcapLinkTypeIeee80211 = 105;  ///< LINKTYPE_IEEE802_11: raw frames, no radiotap.
 
+// Sizes of the two headers serializeHandshake writes, named so a caller can bound a buffer against
+// the format rather than a magic number. The global header prefixes the file once; a record header
+// prefixes each stored frame.
+constexpr size_t kPcapGlobalHeaderLen = 24;
+constexpr size_t kPcapRecordHeaderLen = 16;
+/// The most frames one wpa-sec upload holds: the beacon plus M1-M4 (CapturedHandshake).
+constexpr size_t kMaxHandshakeFrames = 5;
+/// Upper bound on a serialized handshake pcap: the global header plus every frame at its maximum
+/// length behind a record header. Lets the in-RAM upload buffer and the CaptureStore size a fixed
+/// buffer that can never be overrun by serializeHandshake (quality bar §3 — no silent truncation).
+constexpr size_t kMaxSerializedPcapLen =
+    kPcapGlobalHeaderLen + kMaxHandshakeFrames * (kPcapRecordHeaderLen + kMaxFrameLen);
+
 }  // namespace sapper
