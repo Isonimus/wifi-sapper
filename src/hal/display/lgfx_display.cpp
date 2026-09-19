@@ -33,6 +33,15 @@ void LgfxDisplay::drawPixel(int32_t x, int32_t y, uint16_t color565) {
     m_canvas.drawPixel(x, y, color565);
 }
 
+void LgfxDisplay::drawText(int32_t x, int32_t y, const char* text, uint16_t color565, uint8_t size) {
+    // Top-left datum so (x, y) is the glyph box corner the renderer lays out against; opaque background
+    // is left to the caller's fillScreen/fillRect, so a redraw does not leave stale pixels behind.
+    m_canvas.setTextDatum(textdatum_t::top_left);
+    m_canvas.setTextColor(color565);
+    m_canvas.setTextSize(size);
+    m_canvas.drawString(text, x, y);
+}
+
 void LgfxDisplay::present() { m_canvas.pushSprite(0, 0); }
 
 size_t LgfxDisplay::canvasByteLength() const {

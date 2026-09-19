@@ -24,6 +24,7 @@ public:
     uint16_t height() const override { return m_height; }
     void fillScreen(uint16_t color565) override;
     void drawPixel(int32_t x, int32_t y, uint16_t color565) override;
+    void drawText(int32_t x, int32_t y, const char* text, uint16_t color565, uint8_t size) override;
     void present() override;
     size_t canvasByteLength() const override;
     size_t readCanvas(size_t offset, uint8_t* out, size_t cap) const override;

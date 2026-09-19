@@ -44,6 +44,12 @@ public:
     virtual void fillScreen(uint16_t color565) = 0;
     virtual void drawPixel(int32_t x, int32_t y, uint16_t color565) = 0;
 
+    /// Draw NUL-terminated @p text with its top-left at (@p x, @p y), in @p color565, scaled by the
+    /// integer @p size (1 = the base font). The one text primitive the status-HUD surface needs
+    /// (ADR-0025 decision 3) — the seam grows only when a surface needs more (KISS). A null display
+    /// no-ops it.
+    virtual void drawText(int32_t x, int32_t y, const char* text, uint16_t color565, uint8_t size) = 0;
+
     /// Push the canvas to the physical panel.
     virtual void present() = 0;
 

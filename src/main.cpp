@@ -27,6 +27,7 @@
 #include "webhook_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
+#include "screen_probe.h"
 #include "sync_probe.h"
 #include "upload_probe.h"
 #if SAPPER_BOARD_HAS_DISPLAY
@@ -154,7 +155,7 @@ void runStationBoot(const ProvisioningRecord& creds) {
                 enterPhase(Phase::Ready);  // headless steady state.
                 // Start the shipped hunt→enqueue→drain→upload loop (ADR-0017 decision #8). It releases
                 // the boot association and re-owns the radio promiscuously; loop() pumps it from here.
-                if (!huntLoopBegin(creds)) {
+                if (!huntLoopBegin(creds, {}, &display())) {  // pass the panel so the status HUD renders.
                     Serial.println("[FATAL] hunt/upload loop failed to start");
                 }
                 return;
@@ -192,6 +193,7 @@ void setup() {
     // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
+    if (screenProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (webhookProbeBegin()) return;
     if (ledProbeBegin()) return;
     if (syncProbeBegin()) return;
@@ -211,6 +213,13 @@ void setup() {
 }
 
 void loop() {
+    if (screenProbeActive()) {  // bench screen verify owns the device; the normal boot loop is skipped.
+        g_channel.pump();  // unlike the other probes, this verify needs `dump` answered — pump the channel
+                           // so the serial control commands are dispatched while the probe renders.
+        screenProbePump();
+        delay(5);
+        return;
+    }
     if (webhookProbeActive()) {  // bench webhook verify owns the device; the normal boot loop is skipped.
         webhookProbePump();
         delay(5);

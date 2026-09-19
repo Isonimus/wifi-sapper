@@ -18,6 +18,7 @@
 
 #ifndef UNIT_TEST
 
+#include "hal/display/display_hal.h"  // IDisplay — the optional panel the status HUD renders on.
 #include "net/cracked_sync.h"  // SyncOutcome, for the sync getters below.
 #include "net/provisioning_store.h"
 #include "net/upload_supervisor.h"
@@ -26,8 +27,11 @@ namespace sapper {
 
 /// Build and start the hunt/upload spine for @p creds. Returns false (loud) if the capture store
 /// could not mount or the sniffer could not enter promiscuous mode. @p config tunes the drain
-/// arbitration; the shipped caller takes the defaults, the verify uses a snappier profile.
-bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig& config = {});
+/// arbitration; the shipped caller takes the defaults, the verify uses a snappier profile. @p display
+/// is optional (ADR-0025): when non-null and the active board has a panel, the status-HUD/toast
+/// surface is wired onto it; a null display (the LED/webhook/upload/sync probes) leaves the screen off.
+bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig& config = {},
+                   IDisplay* display = nullptr);
 
 /// Advance the hunt and the drain arbiter once. Call every loop() iteration after huntLoopBegin().
 void huntLoopPump();

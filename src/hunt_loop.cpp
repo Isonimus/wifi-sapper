@@ -28,6 +28,8 @@
 #include "net/uploader_wpasec.h"
 #include "surface/led_driver_esp32.h"
 #include "surface/led_status_surface.h"
+#include "surface/screen_renderer_esp32.h"
+#include "surface/screen_toast_surface.h"
 #include "surface/webhook_notifier.h"
 #include "surface/webhook_transport_esp32.h"
 
@@ -132,6 +134,15 @@ Esp32WebhookTransport g_webhookTransport;
 alignas(WebhookNotifier) uint8_t g_webhookStorage[sizeof(WebhookNotifier)];
 WebhookNotifier* g_webhook = nullptr;
 
+// The status-HUD + cracked-toast display surface (slice-0026, ADR-0025): a passive surface like the
+// LED, but it renders engine facts as text on the panel. Wired only when huntLoopBegin is given a
+// display and the active board has one; the renderer binds the display by reference and the surface
+// binds the renderer by reference, so both are placement-new'd once the display is known.
+alignas(Esp32ScreenRenderer) uint8_t g_screenRendererStorage[sizeof(Esp32ScreenRenderer)];
+alignas(ScreenToastSurface) uint8_t g_screenStorage[sizeof(ScreenToastSurface)];
+Esp32ScreenRenderer* g_screenRenderer = nullptr;
+ScreenToastSurface* g_screen = nullptr;
+
 // CrackedSync and the session bind to the wpa-sec key, so they are placement-new'd once credentials are
 // known, exactly as the station adapter and supervisor are.
 alignas(CrackedSync) uint8_t g_syncStorage[sizeof(CrackedSync)];
@@ -199,7 +210,8 @@ void appendEapol(uint8_t* frame, uint16_t& len, const uint8_t bssid[6], const ui
 
 }  // namespace
 
-bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig& config) {
+bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig& config,
+                   IDisplay* display) {
     if (!g_store.begin()) {
         Serial.println("[FATAL] capture store (LittleFS) mount failed");
         return false;
@@ -247,6 +259,21 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         Serial.println("[WEBHOOK] disabled (no/invalid webhook url)");
     }
 
+    // Wire the status-HUD/toast surface iff a display was passed and the active board has a panel
+    // (ADR-0025). A passive surface like the LED: it subscribes to the bus and renders on its own tick.
+    // A screenless board or a null display leaves it off — the screen is optional, like the webhook.
+    if (display != nullptr && kActiveBoard.hasDisplay) {
+        g_screenRenderer = new (g_screenRendererStorage) Esp32ScreenRenderer(*display);
+        g_screen = new (g_screenStorage) ScreenToastSurface(*g_screenRenderer);
+        if (!g_bus.subscribe(*g_screen)) {
+            Serial.println("[FATAL] event bus subscription failed (screen surface)");
+            return false;
+        }
+        Serial.println("[SCREEN] enabled (status HUD + cracked toast)");
+    } else {
+        Serial.println("[SCREEN] disabled (no display)");
+    }
+
     if (!g_engine.begin(millis())) {
         Serial.println("[FATAL] hunt engine could not begin (promiscuous mode failed)");
         return false;
@@ -254,6 +281,7 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     g_supervisor->begin(millis());  // also seeds the hourly sync cadence (SyncSession::begin).
     g_ledDriver.begin();            // configure the LED GPIO now the Arduino core is up.
     g_ledSurface.begin(millis());   // light the LED in its hunting heartbeat.
+    if (g_screen != nullptr) g_screen->begin(millis());  // draw the initial HUD on the panel.
     g_running = true;
     Serial.println("[HUNT] discovering channels=1,6,11 (shipped hunt+upload+sync loop)");
     return true;
@@ -265,6 +293,7 @@ void huntLoopPump() {
     g_engine.tick(now);
     g_supervisor->tick(now);   // publishes DrainStarted/DrainCompleted (and runs a due sync) onto the bus.
     g_ledSurface.tick(now);    // after the supervisor, so a status published this iteration shows now.
+    if (g_screen != nullptr) g_screen->tick(now);  // likewise: render any status change this iteration.
 }
 
 const DrainOutcome& huntLoopLastDrain() {
