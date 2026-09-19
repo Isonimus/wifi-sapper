@@ -17,6 +17,7 @@
 #include <cstring>
 #include <vector>
 
+#include "core/event_bus.h"
 #include "net/ap_registry.h"
 #include "net/capture_queue.h"
 #include "net/handshake_collector.h"
@@ -29,6 +30,7 @@
 #include "../support/fake_sync_session.h"
 #include "../support/fake_uploader.h"
 #include "../support/frame_builders.h"
+#include "../support/recording_event_sink.h"
 
 using namespace sapper;
 using sapper_test::buildBeacon;
@@ -77,10 +79,11 @@ struct Rig {
     FakeStationControl station;
     UploadSupervisor supervisor;
 
-    explicit Rig(const UploadSupervisorConfig& config, SyncSession* sync = nullptr)
+    explicit Rig(const UploadSupervisorConfig& config, SyncSession* sync = nullptr,
+                 EventBus* bus = nullptr)
         : engine(sniffer, registry, relay, kHopChannels, 3, HuntConfig{}),
           queue(store),
-          supervisor(engine, queue, uploader, station, kKey, config, sync) {
+          supervisor(engine, queue, uploader, station, kKey, config, sync, bus) {
         relay.setTarget(supervisor);
     }
 
@@ -410,6 +413,33 @@ void test_a_sync_not_due_never_forces_a_window(void) {
     TEST_ASSERT_EQUAL_INT(0, sync.runCalls);
 }
 
+void test_a_drain_cycle_publishes_start_and_completion_facts_on_the_bus(void) {
+    // The supervisor is a bus producer (ADR-0021): opening a window publishes DrainStarted, and each
+    // completed cycle publishes DrainCompleted carrying the same outcome lastDrain() exposes. Proven so
+    // a surface (the LED) can be sure it sees both edges of every window.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;  // one capture opens a window.
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    EventBus bus;
+    sapper_test::RecordingEventSink sink;
+    TEST_ASSERT_TRUE(bus.subscribe(sink));
+    Rig rig(config, nullptr, &bus);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));
+    rig.supervisor.tick(100);  // window opens -> DrainStarted; engine stops for the settle.
+    TEST_ASSERT_EQUAL_INT(1, sink.drainStarted);
+    TEST_ASSERT_EQUAL_size_t(0, sink.drainsCompleted.size());  // not completed yet — only started.
+
+    rig.supervisor.tick(106);  // settle elapsed -> the cycle runs to completion -> DrainCompleted.
+    TEST_ASSERT_EQUAL_INT(1, sink.drainStarted);
+    TEST_ASSERT_EQUAL_size_t(1, sink.drainsCompleted.size());
+    TEST_ASSERT_TRUE(sink.drainsCompleted[0].associated);
+    TEST_ASSERT_EQUAL_size_t(1, sink.drainsCompleted[0].accepted);  // the same counted outcome as the snapshot.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_capture_below_threshold_is_enqueued_without_pausing_the_hunt);
@@ -424,5 +454,6 @@ int main(int, char**) {
     RUN_TEST(test_a_due_sync_opens_a_window_independent_of_a_long_upload_ceiling);
     RUN_TEST(test_a_sync_runs_only_inside_a_live_window_and_a_failed_associate_fakes_no_activity);
     RUN_TEST(test_a_sync_not_due_never_forces_a_window);
+    RUN_TEST(test_a_drain_cycle_publishes_start_and_completion_facts_on_the_bus);
     return UNITY_END();
 }

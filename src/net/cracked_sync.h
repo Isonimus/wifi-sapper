@@ -4,9 +4,10 @@
  *
  * Ties the download seam (cracked_fetcher.h), the pure parser (cracked_result_parser.h), and the
  * per-BSSID manifest (cracked_manifest.h) into one operation, runSync(), and emits the appliance's
- * only outputs for this half of the loop through a SyncEventObserver — new-password, first-sync
- * summary, and sync-outcome events (ADR-0019 decision #7; slice-7 subscribes). It owns no hardware and
- * no filesystem, so the whole policy is host-tested on the native lane (ADR-0004 lane 1; slice-0020
+ * only outputs for this half of the loop onto the surface event bus (core/event_bus.h) — new-password,
+ * first-sync summary, and sync-outcome events (ADR-0019 decision #7; ADR-0021 moved the transport from a
+ * bespoke observer to the shared bus; slice-7's surfaces subscribe). It owns no hardware and no
+ * filesystem, so the whole policy is host-tested on the native lane (ADR-0004 lane 1; slice-0020
  * Scenarios E, F, G, I).
  *
  * The order guarantees ADR-0019 decision #7 and Scenario I: the parsed results are buffered as the
@@ -22,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "core/event_bus.h"
 #include "net/cracked_fetcher.h"
 #include "net/cracked_manifest.h"
 #include "net/cracked_result.h"
@@ -42,32 +44,24 @@ struct SyncOutcome {
     bool storeError = false;  ///< The post-apply flush failed — applied in RAM but not persisted (§3).
 };
 
-/// Receives the sync's events. slice-6 only emits; slice-7's surfaces (web/LED/toast/webhook) subscribe
-/// (ADR-0019 decision #7, ADR-0001). Default no-op bodies let a surface override only what it needs.
-class SyncEventObserver {
-public:
-    virtual ~SyncEventObserver() = default;
-    /// A genuinely new or password-changed crack, announced only in steady state (not on a first sync).
-    virtual void onNewPassword(const CrackedResult& result) { (void)result; }
-    /// The first sync of a fresh manifest imported @p importedCount pre-existing results (one summary,
-    /// not @p importedCount alerts — ADR-0019 decision #5).
-    virtual void onFirstSyncSummary(size_t importedCount) { (void)importedCount; }
-    /// Every sync's counted outcome, success or failure.
-    virtual void onSyncOutcome(const SyncOutcome& outcome) { (void)outcome; }
-};
-
 /**
  * @brief Runs one wpa-sec cracked-results sync over injected seams.
  *
- * Construct with the fetcher, the manifest, the wpa-sec key, and the event observer; call runSync(now)
- * when the scheduler marks a sync due and an STA window is up (the UploadSupervisor drives that —
- * ADR-0019 decision #6). Holds a fixed result buffer for the atomic fetch-then-apply; no heap.
+ * Construct with the fetcher, the manifest, the wpa-sec key, and the surface event bus; call
+ * runSync(now) when the scheduler marks a sync due and an STA window is up (the UploadSupervisor
+ * drives that — ADR-0019 decision #6). Holds a fixed result buffer for the atomic fetch-then-apply;
+ * no heap.
+ *
+ * It publishes the three sync facts ADR-0019 decision #7 defined — SyncCompleted, NewPassword, and
+ * FirstSyncSummary — onto the bus (ADR-0021 refined the transport from a bespoke SyncEventObserver to
+ * the shared bus; the facts and their timing are unchanged). slice-6 emits; slice-7's surfaces
+ * subscribe.
  */
 class CrackedSync : private CrackedLineSink {
 public:
     CrackedSync(CrackedResultsFetcher& fetcher, CrackedManifest& manifest, const char* wpaSecKey,
-                SyncEventObserver& observer)
-        : fetcher_(fetcher), manifest_(manifest), wpaSecKey_(wpaSecKey), observer_(observer) {}
+                EventBus& bus)
+        : fetcher_(fetcher), manifest_(manifest), wpaSecKey_(wpaSecKey), bus_(bus) {}
 
     /// Fetch, parse, mirror, and announce, returning the counted outcome. Mutates the manifest only on
     /// a successful fetch with a usable body; leaves it untouched and returns ok=false otherwise.
@@ -80,7 +74,7 @@ private:
     CrackedResultsFetcher& fetcher_;
     CrackedManifest& manifest_;
     const char* wpaSecKey_;
-    SyncEventObserver& observer_;
+    EventBus& bus_;
 
     // Fetch scratch, reset at the start of each runSync(). The parsed account is buffered here so the
     // manifest is touched only after the fetch returns Ok (Scenario I); alertIdx_ records which buffered

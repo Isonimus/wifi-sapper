@@ -23,6 +23,7 @@
 #include "net/wifi_station.h"
 #include "hunt_loop.h"
 #include "hunt_probe.h"
+#include "led_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
 #include "sync_probe.h"
@@ -187,6 +188,7 @@ void setup() {
     // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
+    if (ledProbeBegin()) return;
     if (syncProbeBegin()) return;
     if (uploadProbeBegin()) return;
     if (huntProbeBegin()) return;
@@ -204,6 +206,11 @@ void setup() {
 }
 
 void loop() {
+    if (ledProbeActive()) {  // bench LED verify owns the device; the normal boot loop is skipped.
+        ledProbePump();
+        delay(5);
+        return;
+    }
     if (syncProbeActive()) {  // bench sync verify owns the device; the normal boot loop is skipped.
         syncProbePump();
         delay(5);

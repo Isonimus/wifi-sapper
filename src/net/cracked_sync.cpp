@@ -39,7 +39,7 @@ SyncOutcome CrackedSync::runSync(uint32_t nowMs) {
     // (garbage/truncated), is a failed sync: leave the manifest exactly as it was and announce nothing
     // (ADR-0019 decision #7; Scenario I). An empty account (no results, no malformed) is a success.
     if (outcome.fetch != FetchResult::Ok || (bufferCount_ == 0 && malformed_ > 0)) {
-        observer_.onSyncOutcome(outcome);
+        bus_.publish(AppEvent::syncCompleted(outcome));
         return outcome;
     }
 
@@ -59,19 +59,19 @@ SyncOutcome CrackedSync::runSync(uint32_t nowMs) {
     // Persist before announcing: never announce a crack that was not durably recorded (quality bar §3).
     if (!manifest_.flush()) {
         outcome.storeError = true;
-        observer_.onSyncOutcome(outcome);
+        bus_.publish(AppEvent::syncCompleted(outcome));
         return outcome;
     }
 
     if (wasFresh) {
-        observer_.onFirstSyncSummary(bufferCount_);  // One summary for the seeded backlog (decision #5).
+        bus_.publish(AppEvent::firstSyncSummary(bufferCount_));  // One summary for the seeded backlog (decision #5).
     } else {
-        for (size_t i = 0; i < alertCount; ++i) observer_.onNewPassword(buffer_[alertIdx_[i]]);
+        for (size_t i = 0; i < alertCount; ++i) bus_.publish(AppEvent::newPassword(buffer_[alertIdx_[i]]));
         outcome.newPasswords = alertCount;
     }
 
     outcome.ok = true;
-    observer_.onSyncOutcome(outcome);
+    bus_.publish(AppEvent::syncCompleted(outcome));
     return outcome;
 }
 

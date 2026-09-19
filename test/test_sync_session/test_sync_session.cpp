@@ -11,6 +11,7 @@
  */
 #include <unity.h>
 
+#include "core/event_bus.h"
 #include "net/sync_session.h"
 #include "support/fake_cracked_fetcher.h"
 #include "support/fake_cracked_store.h"
@@ -30,8 +31,8 @@ void test_a_successful_sync_advances_the_hourly_cadence(void) {
     fetcher.lines = {"aabbccddee01:001122334455:Net:pw1"};  // one result -> a successful sync.
     CrackedManifest manifest(store);
     TEST_ASSERT_TRUE(manifest.begin());
-    SyncEventObserver observer;  // base no-op observer: we assert cadence, not events.
-    CrackedSync sync(fetcher, manifest, "K", observer);
+    EventBus bus;  // an empty bus: these tests assert cadence, not events.
+    CrackedSync sync(fetcher, manifest, "K", bus);
     SyncScheduler scheduler(kTestIntervalMs);
     ScheduledSyncSession session(scheduler, sync);
 
@@ -50,8 +51,8 @@ void test_a_failed_sync_leaves_the_cadence_due_for_the_next_window(void) {
     fetcher.result = FetchResult::Transport;  // a transport failure: runSync returns ok=false.
     CrackedManifest manifest(store);
     TEST_ASSERT_TRUE(manifest.begin());
-    SyncEventObserver observer;
-    CrackedSync sync(fetcher, manifest, "K", observer);
+    EventBus bus;  // an empty bus: these tests assert cadence, not events.
+    CrackedSync sync(fetcher, manifest, "K", bus);
     SyncScheduler scheduler(kTestIntervalMs);
     ScheduledSyncSession session(scheduler, sync);
 

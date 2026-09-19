@@ -15,26 +15,16 @@
 #include <string>
 #include <vector>
 
+#include "core/event_bus.h"
 #include "net/cracked_sync.h"
 #include "support/fake_cracked_fetcher.h"
 #include "support/fake_cracked_store.h"
+#include "support/recording_event_sink.h"
 
 using namespace sapper;
 using sapper_test::FakeCrackedFetcher;
 using sapper_test::FakeCrackedStore;
-
-// Records every event the sync emits so a test can assert exactly what was announced.
-class RecordingObserver : public SyncEventObserver {
-public:
-    std::vector<CrackedResult> newPasswords;
-    int summaries = 0;
-    size_t lastSummaryCount = 0;
-    std::vector<SyncOutcome> outcomes;
-
-    void onNewPassword(const CrackedResult& r) override { newPasswords.push_back(r); }
-    void onFirstSyncSummary(size_t n) override { ++summaries; lastSummaryCount = n; }
-    void onSyncOutcome(const SyncOutcome& o) override { outcomes.push_back(o); }
-};
+using sapper_test::RecordingEventSink;
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -64,8 +54,10 @@ void test_first_sync_of_fresh_manifest_seeds_silently_and_summarises(void) {
     fetcher.lines = {lineFor(1, "Alpha", "pw1"), lineFor(2, "Bravo", "pw2"), lineFor(3, "Charlie", "pw3")};
     CrackedManifest manifest(store);
     TEST_ASSERT_TRUE(manifest.begin());
-    RecordingObserver observer;
-    CrackedSync sync(fetcher, manifest, "SECRETKEY", observer);
+    EventBus bus;
+    RecordingEventSink observer;
+    bus.subscribe(observer);
+    CrackedSync sync(fetcher, manifest, "SECRETKEY", bus);
 
     const SyncOutcome out = sync.runSync(1000);
 
@@ -87,8 +79,10 @@ void test_empty_account_first_sync_summarises_zero_and_clears_fresh(void) {
     FakeCrackedFetcher fetcher;  // Ok, no lines.
     CrackedManifest manifest(store);
     TEST_ASSERT_TRUE(manifest.begin());
-    RecordingObserver observer;
-    CrackedSync sync(fetcher, manifest, "K", observer);
+    EventBus bus;
+    RecordingEventSink observer;
+    bus.subscribe(observer);
+    CrackedSync sync(fetcher, manifest, "K", bus);
 
     const SyncOutcome out = sync.runSync(1000);
 
@@ -111,8 +105,10 @@ void test_steady_state_announces_only_new_and_changed(void) {
     CrackedManifest manifest(store);
     TEST_ASSERT_TRUE(manifest.begin());
     TEST_ASSERT_FALSE(manifest.isFresh());
-    RecordingObserver observer;
-    CrackedSync sync(fetcher, manifest, "K", observer);
+    EventBus bus;
+    RecordingEventSink observer;
+    bus.subscribe(observer);
+    CrackedSync sync(fetcher, manifest, "K", bus);
 
     const SyncOutcome out = sync.runSync(5000);
 
@@ -135,8 +131,10 @@ void test_first_real_crack_into_empty_non_fresh_manifest_is_announced(void) {
     TEST_ASSERT_TRUE(manifest.begin());
     TEST_ASSERT_FALSE(manifest.isFresh());
     TEST_ASSERT_EQUAL_size_t(0, manifest.size());
-    RecordingObserver observer;
-    CrackedSync sync(fetcher, manifest, "K", observer);
+    EventBus bus;
+    RecordingEventSink observer;
+    bus.subscribe(observer);
+    CrackedSync sync(fetcher, manifest, "K", bus);
 
     const SyncOutcome out = sync.runSync(7000);
 
@@ -154,8 +152,10 @@ void test_transport_failure_leaves_manifest_untouched_and_silent(void) {
     fetcher.lines = {lineFor(2, "Bravo", "pw2")};  // ignored — a transport failure yields nothing.
     CrackedManifest manifest(store);
     TEST_ASSERT_TRUE(manifest.begin());
-    RecordingObserver observer;
-    CrackedSync sync(fetcher, manifest, "K", observer);
+    EventBus bus;
+    RecordingEventSink observer;
+    bus.subscribe(observer);
+    CrackedSync sync(fetcher, manifest, "K", bus);
 
     const SyncOutcome out = sync.runSync(9000);
 
@@ -177,8 +177,10 @@ void test_garbage_body_is_a_failed_sync_that_changes_nothing(void) {
     fetcher.lines = {"<html>error</html>", "not-a-result", "still-garbage"};
     CrackedManifest manifest(store);
     TEST_ASSERT_TRUE(manifest.begin());
-    RecordingObserver observer;
-    CrackedSync sync(fetcher, manifest, "K", observer);
+    EventBus bus;
+    RecordingEventSink observer;
+    bus.subscribe(observer);
+    CrackedSync sync(fetcher, manifest, "K", bus);
 
     const SyncOutcome out = sync.runSync(9000);
 
@@ -200,8 +202,10 @@ void test_flush_failure_is_reported_and_announces_nothing(void) {
     store.failSave = true;
     CrackedManifest manifest(store);
     TEST_ASSERT_TRUE(manifest.begin());
-    RecordingObserver observer;
-    CrackedSync sync(fetcher, manifest, "K", observer);
+    EventBus bus;
+    RecordingEventSink observer;
+    bus.subscribe(observer);
+    CrackedSync sync(fetcher, manifest, "K", bus);
 
     const SyncOutcome out = sync.runSync(9000);
 

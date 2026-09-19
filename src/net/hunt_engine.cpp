@@ -4,22 +4,14 @@
  */
 #include "net/hunt_engine.h"
 
+#include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
+
 namespace sapper {
 namespace {
 
 /// The collector needs a target at construction; the engine retargets it before the first capture, so
 /// this all-zero placeholder is never actually hunted.
 constexpr uint8_t kNoTarget[6] = {0, 0, 0, 0, 0, 0};
-
-/// Wrap-safe "has @p nowMs reached @p deadlineMs?". A plain `nowMs >= deadlineMs` breaks across the
-/// ~49.7-day millis() wrap — normal operation for an endlessly-running appliance, not a corner case —
-/// cutting a window short or, worse, collapsing the quiesce settle to zero and reopening the sink-reset
-/// race §4 invariant #11 closes. The signed difference is correct while the true interval stays under
-/// 2^31 ms (~24.8 days), which every hunt window is — the same discipline ChannelHopper::tick uses
-/// (ADR-0013). Do not "simplify" this back to a direct comparison.
-bool reached(uint32_t nowMs, uint32_t deadlineMs) {
-    return static_cast<int32_t>(nowMs - deadlineMs) >= 0;
-}
 
 }  // namespace
 

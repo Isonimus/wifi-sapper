@@ -58,6 +58,14 @@ void huntLoopForceSyncDue();
 void huntLoopInjectStimulus();
 #endif
 
+#ifdef SAPPER_TEST_HOOKS
+/// Publish one synthetic new-password fact onto the event bus, exactly as a real steady-state crack
+/// would (§4 invariant #2: the bus is the same seam the sync publishes through) — the LED verify's
+/// stimulus for the "recovered" flash, which a real crack cannot force on demand. Present only in
+/// test-hooks builds (§4 invariant #4).
+void huntLoopInjectCrackedAlert();
+#endif
+
 }  // namespace sapper
 
 #endif  // UNIT_TEST

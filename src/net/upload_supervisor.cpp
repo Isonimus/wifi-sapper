@@ -4,33 +4,24 @@
  */
 #include "net/upload_supervisor.h"
 
+#include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
+#include "core/event_bus.h"
 #include "net/sync_session.h"
 
 namespace sapper {
-namespace {
-
-/// Wrap-safe "has @p nowMs reached @p deadlineMs?" — the same discipline HuntEngine uses, because
-/// this appliance runs across the ~49.7-day millis() wrap as normal operation and a direct
-/// `now >= deadline` would fire a drain (or collapse the settle) at the wrap. Correct while the true
-/// interval stays under 2^31 ms; every drain/backoff/settle window is. This is the second use of the
-/// absolute-deadline form (HuntEngine has the first); a third caller is the point to extract a shared
-/// helper (quality bar §3 rule of three) — two self-contained copies with this comment stay clearer.
-bool reached(uint32_t nowMs, uint32_t deadlineMs) {
-    return static_cast<int32_t>(nowMs - deadlineMs) >= 0;
-}
-
-}  // namespace
 
 UploadSupervisor::UploadSupervisor(HuntEngine& engine, CaptureQueue& queue, Uploader& uploader,
                                    StationControl& station, const char* wpaSecKey,
-                                   const UploadSupervisorConfig& config, SyncSession* sync)
+                                   const UploadSupervisorConfig& config, SyncSession* sync,
+                                   EventBus* bus)
     : engine_(engine),
       queue_(queue),
       uploader_(uploader),
       station_(station),
       wpaSecKey_(wpaSecKey),
       config_(config),
-      sync_(sync) {}
+      sync_(sync),
+      bus_(bus) {}
 
 void UploadSupervisor::begin(uint32_t nowMs) {
     lastDrainMs_ = nowMs;
@@ -94,6 +85,10 @@ void UploadSupervisor::tick(uint32_t nowMs) {
             engine_.stop();
             state_ = State::Settling;
             settleUntilMs_ = nowMs + config_.settleMs;
+            // The appliance is now going off-air to do network work; tell surfaces (ADR-0021). This
+            // fires for a sync-only window too — the LED shows "working" for any STA window, not only
+            // an upload drain.
+            if (bus_ != nullptr) bus_->publish(AppEvent::drainStarted());
             return;
 
         case State::Settling:
@@ -147,6 +142,9 @@ void UploadSupervisor::runDrainCycle(uint32_t nowMs) {
     }
     lastDrain_ = outcome;
     ++drainCount_;
+    // Publish the counted result for surfaces (ADR-0021). Same struct the lastDrain() snapshot exposes
+    // to the on-air verify — one computation, pushed to surfaces and retained for the harness.
+    if (bus_ != nullptr) bus_->publish(AppEvent::drainCompleted(lastDrain_));
 }
 
 bool UploadSupervisor::drainQueue(DrainOutcome& outcome) {

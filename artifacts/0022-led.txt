@@ -1,0 +1,29 @@
+[LED] status=hunting
+[LED] waiting elapsed=27550ms windows=3
+[LED] waiting elapsed=29550ms windows=3
+[LED] waiting elapsed=31551ms windows=3
+[SYNC] download ok bytes=1320 lines=26
+[SYNC] outcome ok=1 first=0 downloaded=26 new=0 malformed=0 overflow=0 storeError=0 fetch=0
+[LED] status=hunting
+[LED] injecting synthetic new-password fact (verify stimulus)
+[SYNC] forced due (verify clock-advance stimulus)
+[LED] waiting elapsed=36282ms windows=4
+[LED] status=recovered
+[LED] waiting elapsed=38283ms windows=4
+[LED] waiting elapsed=40283ms windows=4
+[LED] status=hunting
+[LED] waiting elapsed=42283ms windows=4
+[LED] waiting elapsed=44283ms windows=4
+[LED] waiting elapsed=46284ms windows=4
+[SYNC] download ok bytes=1320 lines=26
+[SYNC] outcome ok=1 first=0 downloaded=26 new=0 malformed=0 overflow=0 storeError=0 fetch=0
+[LED] injecting synthetic new-password fact (verify stimulus)
+[SYNC] forced due (verify clock-advance stimulus)
+[LED] waiting elapsed=52059ms windows=5
+[LED] status=recovered
+[LED] waiting elapsed=54060ms windows=5
+[LED] waiting elapsed=56060ms windows=5
+[LED] status=hunting
+[LED] waiting elapsed=58060ms windows=5
+[LED] waiting elapsed=60060ms windows=5
+[LED] status=working

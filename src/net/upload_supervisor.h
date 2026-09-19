@@ -31,6 +31,8 @@ namespace sapper {
 
 class SyncSession;  // net/sync_session.h — held only as a pointer, so the heavy sync stack it pulls in
                     // (fetcher, manifest, parser) stays out of every translation unit that only uploads.
+class EventBus;     // core/event_bus.h — held as a pointer; the supervisor publishes DrainStarted/
+                    // DrainCompleted facts for surfaces (ADR-0021), no include needed in this header.
 
 /// Forwards the engine's capture-ready event to a target set after construction. It exists to break
 /// a construction cycle: the HuntEngine takes its CaptureReadyObserver at construction, but the
@@ -92,9 +94,13 @@ public:
     /// @param sync Optional cracked-results sync to share each STA window with (ADR-0019 decision #6).
     ///        nullptr on a build with no sync (or in an upload-only test): the supervisor then behaves
     ///        exactly as slice-0018 shipped it.
+    /// @param bus Optional surface event bus (ADR-0021). When set, the supervisor publishes DrainStarted
+    ///        as it opens a window and DrainCompleted after each cycle, for surfaces (the LED) to react
+    ///        to. nullptr in an upload-only test leaves the drain behaviour untouched.
     UploadSupervisor(HuntEngine& engine, CaptureQueue& queue, Uploader& uploader,
                      StationControl& station, const char* wpaSecKey,
-                     const UploadSupervisorConfig& config = {}, SyncSession* sync = nullptr);
+                     const UploadSupervisorConfig& config = {}, SyncSession* sync = nullptr,
+                     EventBus* bus = nullptr);
 
     /// Seed the drain clock and pick up any captures already on flash from a prior run. Call after
     /// the engine has begun and before the first tick().
@@ -132,6 +138,7 @@ private:
     const char* wpaSecKey_;
     UploadSupervisorConfig config_;
     SyncSession* sync_;  ///< Optional; the sync shares the drain's STA window (ADR-0019 decision #6).
+    EventBus* bus_;      ///< Optional; publishes DrainStarted/DrainCompleted facts for surfaces (ADR-0021).
 
     State state_ = State::Hunting;
     size_t activity_ = 0;             ///< Uploadable captures known pending since the last success.

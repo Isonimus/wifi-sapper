@@ -11,6 +11,8 @@
 #include <cstring>
 #include <new>
 
+#include "config/active_board.h"
+#include "core/event_bus.h"
 #include "net/ap_registry.h"
 #include "net/capture_queue.h"
 #include "net/capture_store_littlefs.h"
@@ -24,6 +26,8 @@
 #include "net/sync_scheduler.h"
 #include "net/sync_session.h"
 #include "net/uploader_wpasec.h"
+#include "surface/led_driver_esp32.h"
+#include "surface/led_status_surface.h"
 
 #ifdef SAPPER_TEST_HOOKS
 // The operator's real handshake pcap, embedded by embed_test_pcap.py (empty when none is given). At
@@ -58,30 +62,48 @@ CrackedManifest g_manifest(g_crackedStore);
 WpaSecCrackedFetcher g_fetcher;
 SyncScheduler g_scheduler;
 
-// The slice-6 surface: logs each sync outcome and every new/changed crack to Serial and holds the latest
-// outcome + a monotonic count for a device surface / the on-air verify to read (ADR-0001 — every surface
-// is an event subscriber). It NEVER logs the plaintext password: the recovered PSK is a secret at rest
-// (ADR-0006) and a verify artifact is committed as evidence (ADR-0004), so it prints only essid, BSSID,
-// and password length — the PSK lives in the manifest for slice-7's real surfaces to read through the
-// seam (§4 invariant #12). This log is diagnostic, not the operator's alert channel (that is slice-7).
-class SerialSyncObserver : public SyncEventObserver {
+// The surface event bus (ADR-0021): the sync publishes cracked facts and the supervisor publishes drain
+// facts onto it; the two sinks below subscribe. This is the single mechanism ADR-0001 always intended,
+// realised now that slice-7 has more than one surface reacting to the same facts.
+EventBus g_bus;
+
+// The headless diagnostic sink: logs each sync outcome and every new/changed crack to Serial and holds
+// the latest outcome + a monotonic count for a device surface / the on-air verify to read. It NEVER logs
+// the plaintext password: the recovered PSK is a secret at rest (ADR-0006) and a verify artifact is
+// committed as evidence (ADR-0004), so it prints only essid, BSSID, and password length — the PSK lives
+// in the manifest for the real surfaces to read through the seam (§4 invariant #12). This log is
+// diagnostic; the operator's LED alert channel is g_ledSurface below. It ignores the drain facts (the
+// LED consumes those), keeping its output the exact [SYNC]/[CRACK] lines the sync verify greps for.
+class SerialEventLogger : public EventSink {
 public:
-    void onNewPassword(const CrackedResult& r) override {
-        Serial.printf("[CRACK] recovered essid='%s' bssid=%02x:%02x:%02x:%02x:%02x:%02x pwlen=%u\n",
-                      r.essid, r.bssid[0], r.bssid[1], r.bssid[2], r.bssid[3], r.bssid[4], r.bssid[5],
-                      static_cast<unsigned>(std::strlen(r.password)));
-    }
-    void onFirstSyncSummary(size_t importedCount) override {
-        Serial.printf("[SYNC] first-sync summary imported=%u (seeded silently, not alerted)\n",
-                      static_cast<unsigned>(importedCount));
-    }
-    void onSyncOutcome(const SyncOutcome& o) override {
-        last_ = o;
-        ++count_;
-        Serial.printf("[SYNC] outcome ok=%d first=%d downloaded=%u new=%u malformed=%u overflow=%u "
-                      "storeError=%d fetch=%d\n", o.ok, o.firstSync, static_cast<unsigned>(o.downloaded),
-                      static_cast<unsigned>(o.newPasswords), static_cast<unsigned>(o.malformed),
-                      static_cast<unsigned>(o.overflow), o.storeError, static_cast<int>(o.fetch));
+    void onAppEvent(const AppEvent& e) override {
+        switch (e.type) {
+            case AppEventType::NewPassword: {
+                const CrackedResult& r = *e.password;
+                Serial.printf("[CRACK] recovered essid='%s' bssid=%02x:%02x:%02x:%02x:%02x:%02x pwlen=%u\n",
+                              r.essid, r.bssid[0], r.bssid[1], r.bssid[2], r.bssid[3], r.bssid[4],
+                              r.bssid[5], static_cast<unsigned>(std::strlen(r.password)));
+                break;
+            }
+            case AppEventType::FirstSyncSummary:
+                Serial.printf("[SYNC] first-sync summary imported=%u (seeded silently, not alerted)\n",
+                              static_cast<unsigned>(e.importedCount));
+                break;
+            case AppEventType::SyncCompleted: {
+                const SyncOutcome& o = *e.sync;
+                last_ = o;
+                ++count_;
+                Serial.printf("[SYNC] outcome ok=%d first=%d downloaded=%u new=%u malformed=%u overflow=%u "
+                              "storeError=%d fetch=%d\n", o.ok, o.firstSync,
+                              static_cast<unsigned>(o.downloaded), static_cast<unsigned>(o.newPasswords),
+                              static_cast<unsigned>(o.malformed), static_cast<unsigned>(o.overflow),
+                              o.storeError, static_cast<int>(o.fetch));
+                break;
+            }
+            case AppEventType::DrainStarted:
+            case AppEventType::DrainCompleted:
+                break;  // the LED surface consumes drain facts; this logger stays sync-only.
+        }
     }
     const SyncOutcome& last() const { return last_; }
     uint32_t count() const { return count_; }
@@ -91,7 +113,12 @@ private:
     uint32_t count_ = 0;
 };
 
-SerialSyncObserver g_syncObserver;
+SerialEventLogger g_syncLogger;
+
+// The first real alert surface (slice-0022, ADR-0021): the status LED. Subscribes to the bus and drives
+// the active board's LED through the Esp32 driver behind the LedDriver seam.
+Esp32LedDriver g_ledDriver(kActiveBoard);
+LedStatusSurface g_ledSurface(g_ledDriver);
 
 // CrackedSync and the session bind to the wpa-sec key, so they are placement-new'd once credentials are
 // known, exactly as the station adapter and supervisor are.
@@ -176,12 +203,20 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         Serial.println("[FATAL] cracked manifest load failed");
         return false;
     }
+    // Wire the surfaces onto the bus before anything can publish. A failed subscription is a boot-time
+    // wiring bug (too many surfaces for the bus capacity) and is fatal — never a silently missing
+    // surface (ADR-0021, quality bar §3).
+    if (!g_bus.subscribe(g_syncLogger) || !g_bus.subscribe(g_ledSurface)) {
+        Serial.println("[FATAL] event bus subscription failed (too many surfaces)");
+        return false;
+    }
+
     g_creds = creds;  // own the credentials so the adapter/supervisor pointers never dangle.
     g_station = new (g_stationStorage) Esp32StationControl(g_creds.ssid, g_creds.pass);
-    g_sync = new (g_syncStorage) CrackedSync(g_fetcher, g_manifest, g_creds.key, g_syncObserver);
+    g_sync = new (g_syncStorage) CrackedSync(g_fetcher, g_manifest, g_creds.key, g_bus);
     g_session = new (g_sessionStorage) ScheduledSyncSession(g_scheduler, *g_sync);
     g_supervisor = new (g_supervisorStorage)
-        UploadSupervisor(g_engine, g_queue, g_uploader, *g_station, g_creds.key, config, g_session);
+        UploadSupervisor(g_engine, g_queue, g_uploader, *g_station, g_creds.key, config, g_session, &g_bus);
     g_relay.setTarget(*g_supervisor);
 
     if (!g_engine.begin(millis())) {
@@ -189,6 +224,8 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         return false;
     }
     g_supervisor->begin(millis());  // also seeds the hourly sync cadence (SyncSession::begin).
+    g_ledDriver.begin();            // configure the LED GPIO now the Arduino core is up.
+    g_ledSurface.begin(millis());   // light the LED in its hunting heartbeat.
     g_running = true;
     Serial.println("[HUNT] discovering channels=1,6,11 (shipped hunt+upload+sync loop)");
     return true;
@@ -198,7 +235,8 @@ void huntLoopPump() {
     if (!g_running) return;
     const uint32_t now = millis();
     g_engine.tick(now);
-    g_supervisor->tick(now);
+    g_supervisor->tick(now);   // publishes DrainStarted/DrainCompleted (and runs a due sync) onto the bus.
+    g_ledSurface.tick(now);    // after the supervisor, so a status published this iteration shows now.
 }
 
 const DrainOutcome& huntLoopLastDrain() {
@@ -208,9 +246,25 @@ const DrainOutcome& huntLoopLastDrain() {
 
 uint32_t huntLoopDrainCount() { return g_supervisor != nullptr ? g_supervisor->drainCount() : 0; }
 
-const SyncOutcome& huntLoopLastSync() { return g_syncObserver.last(); }
+const SyncOutcome& huntLoopLastSync() { return g_syncLogger.last(); }
 
-uint32_t huntLoopSyncCount() { return g_syncObserver.count(); }
+uint32_t huntLoopSyncCount() { return g_syncLogger.count(); }
+
+#ifdef SAPPER_TEST_HOOKS
+void huntLoopInjectCrackedAlert() {
+    if (!g_running) return;
+    // A synthetic recovered password, published on the same bus the real sync uses (§4 invariant #2).
+    // The value is not persisted to the manifest — this stimulus proves the surface path (bus → LED
+    // flash), not the store round-trip (Scenario J already proves that).
+    CrackedResult r;
+    const uint8_t bssid[6] = {0x02, 0x53, 0x41, 0x50, 0x50, 0x52};
+    std::memcpy(r.bssid, bssid, 6);
+    std::strncpy(r.essid, "SAPPER-VERIFY", kCrackedEssidCap - 1);
+    std::strncpy(r.password, "led-verify-stimulus", kCrackedPasswordCap - 1);
+    Serial.println("[LED] injecting synthetic new-password fact (verify stimulus)");
+    g_bus.publish(AppEvent::newPassword(r));
+}
+#endif
 
 #ifdef SAPPER_TEST_HOOKS
 void huntLoopForceSyncDue() {
