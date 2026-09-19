@@ -18,6 +18,7 @@
 
 #ifndef UNIT_TEST
 
+#include "net/cracked_sync.h"  // SyncOutcome, for the sync getters below.
 #include "net/provisioning_store.h"
 #include "net/upload_supervisor.h"
 
@@ -36,6 +37,19 @@ const DrainOutcome& huntLoopLastDrain();
 
 /// Monotonic count of drain cycles run, so an observer can detect each new drain.
 uint32_t huntLoopDrainCount();
+
+/// The most recent cracked-results sync outcome, for a device surface / the on-air verify to report.
+const SyncOutcome& huntLoopLastSync();
+
+/// Monotonic count of syncs whose outcome was reported, so an observer can detect each new one.
+uint32_t huntLoopSyncCount();
+
+#ifdef SAPPER_TEST_HOOKS
+/// Re-arm the hourly scheduler so a cracked-results sync is due on the next STA window — the
+/// clock-advance stimulus the on-air sync verify uses instead of waiting a real hour (slice-0020
+/// Scenario J). Present only in test-hooks builds (§4 invariant #4).
+void huntLoopForceSyncDue();
+#endif
 
 #ifdef SAPPER_TEST_HOOKS
 /// Inject one synthetic wpa-sec-valid handshake through the capture-ready seam, exactly as the engine

@@ -1,0 +1,5 @@
+[SYNC] download ok bytes=1320 lines=26
+[SYNC] outcome ok=1 first=0 downloaded=26 new=0 malformed=0 overflow=0 storeError=0 fetch=0
+[SYNC] verify sync ok first=0 downloaded=26 new=0 malformed=0 overflow=0
+[SYNC] forced due (verify clock-advance stimulus)
+[SYNC] waiting elapsed=21183ms syncs=3

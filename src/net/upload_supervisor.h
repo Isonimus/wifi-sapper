@@ -29,6 +29,9 @@
 
 namespace sapper {
 
+class SyncSession;  // net/sync_session.h — held only as a pointer, so the heavy sync stack it pulls in
+                    // (fetcher, manifest, parser) stays out of every translation unit that only uploads.
+
 /// Forwards the engine's capture-ready event to a target set after construction. It exists to break
 /// a construction cycle: the HuntEngine takes its CaptureReadyObserver at construction, but the
 /// UploadSupervisor takes the engine at construction, so neither can be built first. The relay is
@@ -54,6 +57,12 @@ struct UploadSupervisorConfig {
     uint32_t backoffBaseMs = 30000;        ///< Delay before the first retry after a failed cycle.
     uint32_t backoffCapMs = 900000;        ///< Ceiling the backoff grows to; must be >= backoffBaseMs,
                                            ///< or the first delay exceeds the "cap" before it clamps.
+    uint32_t syncRetryIntervalMs = 60000;  ///< Min gap between sync-only STA windows (ADR-0019 decision
+                                           ///< #6). A due sync opens its own window on this cadence — not
+                                           ///< every tick (no radio spin) and NOT coupled to
+                                           ///< maxDrainIntervalMs, so raising the upload ceiling cannot
+                                           ///< starve the hourly sync. A *successful* sync stops being due
+                                           ///< (SyncSession), so this only paces retries of a failing one.
 };
 
 /// The observable result of the most recent drain cycle. The supervisor uploads but does not sync or
@@ -80,9 +89,12 @@ struct DrainOutcome {
  */
 class UploadSupervisor : public CaptureReadyObserver {
 public:
+    /// @param sync Optional cracked-results sync to share each STA window with (ADR-0019 decision #6).
+    ///        nullptr on a build with no sync (or in an upload-only test): the supervisor then behaves
+    ///        exactly as slice-0018 shipped it.
     UploadSupervisor(HuntEngine& engine, CaptureQueue& queue, Uploader& uploader,
                      StationControl& station, const char* wpaSecKey,
-                     const UploadSupervisorConfig& config = {});
+                     const UploadSupervisorConfig& config = {}, SyncSession* sync = nullptr);
 
     /// Seed the drain clock and pick up any captures already on flash from a prior run. Call after
     /// the engine has begun and before the first tick().
@@ -103,7 +115,11 @@ public:
 private:
     enum class State { Hunting, Settling };
 
-    bool shouldDrain(uint32_t nowMs) const;
+    /// Whether to open an STA window now: an upload drain is warranted (threshold or time ceiling, past
+    /// the backoff) or a cracked-results sync has come due (ADR-0019 decision #6). A sync opens a window
+    /// on its own only when nothing else would, rate-limited by the same time ceiling so a persistently
+    /// failing sync retries on a cadence, not every tick.
+    bool shouldOpenWindow(uint32_t nowMs) const;
     void runDrainCycle(uint32_t nowMs);
     /// Upload every pending capture once, recording counts in @p outcome; return whether the cycle
     /// fully succeeded (every upload terminal, no store error).
@@ -115,12 +131,14 @@ private:
     StationControl& station_;
     const char* wpaSecKey_;
     UploadSupervisorConfig config_;
+    SyncSession* sync_;  ///< Optional; the sync shares the drain's STA window (ADR-0019 decision #6).
 
     State state_ = State::Hunting;
     size_t activity_ = 0;             ///< Uploadable captures known pending since the last success.
     uint32_t settleUntilMs_ = 0;      ///< When the post-stop() settle elapses (Settling → drain).
     uint32_t lastDrainMs_ = 0;        ///< When the last cycle ran, for the time ceiling.
     uint32_t nextDrainAllowedMs_ = 0; ///< Backoff gate: no cycle before this (decision #7).
+    uint32_t nextSyncWindowMs_ = 0;   ///< Earliest a sync-only window may open again (ADR-0019 decision #6).
     uint32_t backoffMs_ = 0;          ///< Current backoff delay; grows on failure, resets on success.
     uint32_t drainCount_ = 0;         ///< Monotonic count of cycles run (drainCount()).
     DrainOutcome lastDrain_;

@@ -26,6 +26,7 @@
 #include "../support/fake_capture_store.h"
 #include "../support/fake_radio_sniffer.h"
 #include "../support/fake_station_control.h"
+#include "../support/fake_sync_session.h"
 #include "../support/fake_uploader.h"
 #include "../support/frame_builders.h"
 
@@ -35,6 +36,7 @@ using sapper_test::buildEapol;
 using sapper_test::FakeCaptureStore;
 using sapper_test::FakeRadioSniffer;
 using sapper_test::FakeStationControl;
+using sapper_test::FakeSyncSession;
 using sapper_test::FakeUploader;
 
 static const uint8_t kClient[6] = {0x06, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
@@ -75,10 +77,10 @@ struct Rig {
     FakeStationControl station;
     UploadSupervisor supervisor;
 
-    explicit Rig(const UploadSupervisorConfig& config)
+    explicit Rig(const UploadSupervisorConfig& config, SyncSession* sync = nullptr)
         : engine(sniffer, registry, relay, kHopChannels, 3, HuntConfig{}),
           queue(store),
-          supervisor(engine, queue, uploader, station, kKey, config) {
+          supervisor(engine, queue, uploader, station, kKey, config, sync) {
         relay.setTarget(supervisor);
     }
 
@@ -290,6 +292,124 @@ void test_a_failed_boot_seed_does_not_strand_prior_captures(void) {
     TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());           // and cleared.
 }
 
+// --- Window sharing with the cracked-results sync (slice-0020 Scenario H, integration half) ---------
+
+void test_a_due_sync_piggybacks_the_drain_window_with_one_associate(void) {
+    // A drain triggered by the upload threshold also runs a due sync inside the SAME STA window — one
+    // associate for the whole batch and the sync, never a second concurrent STA path (ADR-0019 #6).
+    UploadSupervisorConfig config;
+    config.drainThreshold = 3;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    FakeSyncSession sync;
+    sync.dueFlag = true;
+    Rig rig(config, &sync);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    rig.start(0);
+    TEST_ASSERT_EQUAL_INT(1, sync.beginCalls);  // the cadence was seeded exactly once, at begin().
+
+    for (uint8_t i = 0; i < 3; ++i) rig.supervisor.onCaptureReady(makeHandshake(bssidN(i).data()));
+    rig.supervisor.tick(100);  // threshold reached -> stop, settle.
+    rig.supervisor.tick(106);  // settle elapsed -> one cycle: drain + sync.
+
+    TEST_ASSERT_EQUAL_INT(1, rig.station.bringUpCalls);       // a single associate,
+    TEST_ASSERT_EQUAL_UINT32(3, rig.uploader.calls.size());   // all three uploaded,
+    TEST_ASSERT_EQUAL_INT(1, sync.runCalls);                  // and the sync ran once in that window,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());
+    TEST_ASSERT_TRUE(isDiscovering(rig.engine));              // and the hunt resumed.
+}
+
+void test_a_due_sync_forces_one_window_with_an_empty_queue_rate_limited(void) {
+    // The queue stays empty but the hour comes due: the supervisor opens ONE window for the sync alone,
+    // promptly, then paces retries by syncRetryIntervalMs (not every tick) — ADR-0019 decision #6.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 8;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;  // upload trickle ceiling well out of the way.
+    config.syncRetryIntervalMs = 5000;    // the sync-only window's own retry cadence.
+    FakeSyncSession sync;
+    sync.dueFlag = true;  // due and latched (models a sync owed until it succeeds).
+    Rig rig(config, &sync);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    rig.start(0);  // empty queue -> activity_ == 0; the sync window is armed to open at once.
+
+    rig.supervisor.tick(10);  // due sync -> a window opens promptly (not waiting the upload ceiling).
+    rig.supervisor.tick(20);  // cycle: associate, empty drain, sync runs, teardown.
+    TEST_ASSERT_EQUAL_INT(1, rig.station.bringUpCalls);
+    TEST_ASSERT_EQUAL_INT(1, sync.runCalls);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.uploader.calls.size());  // nothing uploaded — a sync-only window,
+    TEST_ASSERT_TRUE(isDiscovering(rig.engine));
+
+    rig.supervisor.tick(21);  // immediately after: still due, but the retry interval gates it -> no thrash.
+    TEST_ASSERT_EQUAL_INT(1, rig.station.bringUpCalls);
+
+    rig.supervisor.tick(5020);  // past the retry interval (ran at 20 -> next at 20+5000) -> retry.
+    rig.supervisor.tick(5030);
+    TEST_ASSERT_EQUAL_INT(2, rig.station.bringUpCalls);
+    TEST_ASSERT_EQUAL_INT(2, sync.runCalls);
+}
+
+void test_a_due_sync_opens_a_window_independent_of_a_long_upload_ceiling(void) {
+    // Regression (adversarial finding): the forced sync-only window must follow the sync cadence, not the
+    // upload trickle ceiling. With maxDrainIntervalMs raised far above an hour (a legitimate low-activity
+    // tuning), a due sync must still open its window promptly (ADR-0019 decision #6) — before the fix it
+    // waited for that ceiling and the hourly sync silently degraded to the upload interval.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 8;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 7200000;  // 2h — longer than the 1h sync interval.
+    FakeSyncSession sync;
+    sync.dueFlag = true;
+    Rig rig(config, &sync);
+    rig.start(0);
+
+    rig.supervisor.tick(1000);  // far below the 2h ceiling, but a sync is due -> a window must open.
+    rig.supervisor.tick(1010);  // past the settle -> the cycle runs the sync.
+    TEST_ASSERT_EQUAL_INT(1, rig.station.bringUpCalls);
+    TEST_ASSERT_EQUAL_INT(1, sync.runCalls);
+}
+
+void test_a_sync_runs_only_inside_a_live_window_and_a_failed_associate_fakes_no_activity(void) {
+    // Offline: a forced sync window that cannot associate must NOT run the sync (it needs a live STA
+    // session), and must NOT invent upload activity — the old defensive `activity_=1` would open a
+    // needless empty drain later; the sync's own due() drives its retry instead.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 8;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000;
+    config.backoffBaseMs = 100;
+    FakeSyncSession sync;
+    sync.dueFlag = true;
+    Rig rig(config, &sync);
+    rig.station.bringUpSucceeds = false;  // offline.
+    rig.start(0);
+
+    rig.supervisor.tick(1000);  // ceiling -> forced sync window: stop, settle.
+    rig.supervisor.tick(1006);  // cycle: bring-up fails.
+
+    TEST_ASSERT_EQUAL_INT(1, rig.station.bringUpCalls);
+    TEST_ASSERT_EQUAL_INT(0, sync.runCalls);                    // never run without a live window,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.pendingActivity());  // and no faked upload activity.
+    TEST_ASSERT_TRUE(isDiscovering(rig.engine));
+}
+
+void test_a_sync_not_due_never_forces_a_window(void) {
+    // An idle appliance with an empty queue and no sync owed never associates — the forced window is
+    // strictly sync-gated, so it cannot become a spurious periodic associate.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 8;
+    config.maxDrainIntervalMs = 1000;
+    FakeSyncSession sync;
+    sync.dueFlag = false;  // nothing owed.
+    Rig rig(config, &sync);
+    rig.start(0);
+
+    rig.supervisor.tick(1000);  // past the ceiling, but nothing to send and nothing due.
+    rig.supervisor.tick(5000);
+    TEST_ASSERT_EQUAL_INT(0, rig.station.bringUpCalls);
+    TEST_ASSERT_EQUAL_INT(0, sync.runCalls);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_capture_below_threshold_is_enqueued_without_pausing_the_hunt);
@@ -299,5 +419,10 @@ int main(int, char**) {
     RUN_TEST(test_backoff_grows_on_failure_and_resets_on_success);
     RUN_TEST(test_an_unreadable_capture_is_purged_so_the_cycle_stays_clean);
     RUN_TEST(test_a_failed_boot_seed_does_not_strand_prior_captures);
+    RUN_TEST(test_a_due_sync_piggybacks_the_drain_window_with_one_associate);
+    RUN_TEST(test_a_due_sync_forces_one_window_with_an_empty_queue_rate_limited);
+    RUN_TEST(test_a_due_sync_opens_a_window_independent_of_a_long_upload_ceiling);
+    RUN_TEST(test_a_sync_runs_only_inside_a_live_window_and_a_failed_associate_fakes_no_activity);
+    RUN_TEST(test_a_sync_not_due_never_forces_a_window);
     return UNITY_END();
 }

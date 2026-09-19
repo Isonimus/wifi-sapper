@@ -150,6 +150,7 @@ actually wired (R11), so a row cannot claim a check that runs nowhere.
 | 9 | Capture artifacts (pcap bytes) are emitted only through the `CaptureSink` seam — no module opens or writes a capture file directly. | ADR-0009 | review-only |
 | 10 | The promiscuous RX callback forwards raw frame bytes to the pure core and does nothing else — no allocation, blocking, or protocol interpretation in the Wi-Fi-driver callback context. | ADR-0011 | review-only |
 | 11 | A consumer is switched under a live `RadioSniffer` only via the atomic router the engine holds as the sniffer's single consumer for its started lifetime; a sink is reset or destroyed only after a quiesce settle with the router aimed away from it — never by a `stop()`/`begin()` re-attach, which cannot hard-join an in-flight callback. | ADR-0015 | review-only |
+| 12 | Cracked passwords are read and written only through the `CrackedManifest`/`CrackedStore` seam — no surface parses a results file or the download body directly. Mirrors #9 (captures via `CaptureSink`) and #6 (secrets via the provisioning seam), so slice-7's several surfaces cannot each grow their own store parse. | ADR-0019 | review-only |
 
 When an ADR's consequences create a rule that all *future* work must follow, add the row
 in the same commit as the ADR.

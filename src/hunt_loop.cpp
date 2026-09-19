@@ -14,9 +14,15 @@
 #include "net/ap_registry.h"
 #include "net/capture_queue.h"
 #include "net/capture_store_littlefs.h"
+#include "net/cracked_fetcher_wpasec.h"
+#include "net/cracked_manifest.h"
+#include "net/cracked_store_littlefs.h"
+#include "net/cracked_sync.h"
 #include "net/hunt_engine.h"
 #include "net/radio_sniffer_esp32.h"
 #include "net/station_control_esp32.h"
+#include "net/sync_scheduler.h"
+#include "net/sync_session.h"
 #include "net/uploader_wpasec.h"
 
 #ifdef SAPPER_TEST_HOOKS
@@ -42,6 +48,57 @@ HuntEngine g_engine(g_sniffer, g_registry, g_relay, g_hopChannels, 3, HuntConfig
 LittleFsCaptureStore g_store;
 CaptureQueue g_queue(g_store);
 WpaSecUploader g_uploader;
+
+// The cracked-results sync half of the loop (slice-0020, ADR-0019): the account mirror on LittleFS, the
+// pure per-BSSID manifest over it, the pinned-TLS download seam, the hourly cadence, and the headless
+// Serial "surface" that reports each sync. The manifest and the sync each hold a ~27KB fixed buffer at
+// file scope (the RAM the LEDGER's bound item tracks); comparable to the upload path's pcap buffers.
+LittleFsCrackedStore g_crackedStore;
+CrackedManifest g_manifest(g_crackedStore);
+WpaSecCrackedFetcher g_fetcher;
+SyncScheduler g_scheduler;
+
+// The slice-6 surface: logs each sync outcome and every new/changed crack to Serial and holds the latest
+// outcome + a monotonic count for a device surface / the on-air verify to read (ADR-0001 — every surface
+// is an event subscriber). It NEVER logs the plaintext password: the recovered PSK is a secret at rest
+// (ADR-0006) and a verify artifact is committed as evidence (ADR-0004), so it prints only essid, BSSID,
+// and password length — the PSK lives in the manifest for slice-7's real surfaces to read through the
+// seam (§4 invariant #12). This log is diagnostic, not the operator's alert channel (that is slice-7).
+class SerialSyncObserver : public SyncEventObserver {
+public:
+    void onNewPassword(const CrackedResult& r) override {
+        Serial.printf("[CRACK] recovered essid='%s' bssid=%02x:%02x:%02x:%02x:%02x:%02x pwlen=%u\n",
+                      r.essid, r.bssid[0], r.bssid[1], r.bssid[2], r.bssid[3], r.bssid[4], r.bssid[5],
+                      static_cast<unsigned>(std::strlen(r.password)));
+    }
+    void onFirstSyncSummary(size_t importedCount) override {
+        Serial.printf("[SYNC] first-sync summary imported=%u (seeded silently, not alerted)\n",
+                      static_cast<unsigned>(importedCount));
+    }
+    void onSyncOutcome(const SyncOutcome& o) override {
+        last_ = o;
+        ++count_;
+        Serial.printf("[SYNC] outcome ok=%d first=%d downloaded=%u new=%u malformed=%u overflow=%u "
+                      "storeError=%d fetch=%d\n", o.ok, o.firstSync, static_cast<unsigned>(o.downloaded),
+                      static_cast<unsigned>(o.newPasswords), static_cast<unsigned>(o.malformed),
+                      static_cast<unsigned>(o.overflow), o.storeError, static_cast<int>(o.fetch));
+    }
+    const SyncOutcome& last() const { return last_; }
+    uint32_t count() const { return count_; }
+
+private:
+    SyncOutcome last_;
+    uint32_t count_ = 0;
+};
+
+SerialSyncObserver g_syncObserver;
+
+// CrackedSync and the session bind to the wpa-sec key, so they are placement-new'd once credentials are
+// known, exactly as the station adapter and supervisor are.
+alignas(CrackedSync) uint8_t g_syncStorage[sizeof(CrackedSync)];
+alignas(ScheduledSyncSession) uint8_t g_sessionStorage[sizeof(ScheduledSyncSession)];
+CrackedSync* g_sync = nullptr;
+ScheduledSyncSession* g_session = nullptr;
 
 // Our own copy of the credentials, at file scope so the station adapter's ssid/pass pointers and the
 // supervisor's key pointer stay valid for the device's whole run. Copying here (rather than holding
@@ -108,19 +165,32 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         Serial.println("[FATAL] capture store (LittleFS) mount failed");
         return false;
     }
+    if (!g_crackedStore.begin()) {
+        Serial.println("[FATAL] cracked store (LittleFS) mount failed");
+        return false;
+    }
+    // Load the account mirror into the manifest now, at boot, so the first sync's fresh-vs-known decision
+    // reflects flash, not an empty map. A real load failure is fatal (fail loud, §3); a *missing* file is
+    // success (a fresh, empty manifest — the first-boot state), so this only trips on genuine corruption.
+    if (!g_manifest.begin()) {
+        Serial.println("[FATAL] cracked manifest load failed");
+        return false;
+    }
     g_creds = creds;  // own the credentials so the adapter/supervisor pointers never dangle.
     g_station = new (g_stationStorage) Esp32StationControl(g_creds.ssid, g_creds.pass);
+    g_sync = new (g_syncStorage) CrackedSync(g_fetcher, g_manifest, g_creds.key, g_syncObserver);
+    g_session = new (g_sessionStorage) ScheduledSyncSession(g_scheduler, *g_sync);
     g_supervisor = new (g_supervisorStorage)
-        UploadSupervisor(g_engine, g_queue, g_uploader, *g_station, g_creds.key, config);
+        UploadSupervisor(g_engine, g_queue, g_uploader, *g_station, g_creds.key, config, g_session);
     g_relay.setTarget(*g_supervisor);
 
     if (!g_engine.begin(millis())) {
         Serial.println("[FATAL] hunt engine could not begin (promiscuous mode failed)");
         return false;
     }
-    g_supervisor->begin(millis());
+    g_supervisor->begin(millis());  // also seeds the hourly sync cadence (SyncSession::begin).
     g_running = true;
-    Serial.println("[HUNT] discovering channels=1,6,11 (shipped hunt+upload loop)");
+    Serial.println("[HUNT] discovering channels=1,6,11 (shipped hunt+upload+sync loop)");
     return true;
 }
 
@@ -137,6 +207,21 @@ const DrainOutcome& huntLoopLastDrain() {
 }
 
 uint32_t huntLoopDrainCount() { return g_supervisor != nullptr ? g_supervisor->drainCount() : 0; }
+
+const SyncOutcome& huntLoopLastSync() { return g_syncObserver.last(); }
+
+uint32_t huntLoopSyncCount() { return g_syncObserver.count(); }
+
+#ifdef SAPPER_TEST_HOOKS
+void huntLoopForceSyncDue() {
+    if (!g_running) return;
+    // begin() sets the scheduler's deadline to now, so isDue() is immediately true — the next STA window
+    // runs the sync without waiting a real hour. This re-arms it even after a prior successful sync pushed
+    // the deadline an hour out. Test-hooks only, so no shipped binary can force a sync (§4 invariant #4).
+    g_scheduler.begin(millis());
+    Serial.println("[SYNC] forced due (verify clock-advance stimulus)");
+}
+#endif
 
 #ifdef SAPPER_TEST_HOOKS
 namespace {

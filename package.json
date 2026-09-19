@@ -13,6 +13,7 @@
     "verify:rf-discover": "node scripts/0014-rf-discover-verify.mjs",
     "verify:hunt": "node scripts/0016-hunt-verify.mjs",
     "verify:upload": "node scripts/0018-upload-verify.mjs",
+    "verify:sync": "node scripts/0020-sync-verify.mjs",
     "lint": "node scripts/lint-docs.mjs .",
     "index": "node scripts/build-index.mjs ."
   },

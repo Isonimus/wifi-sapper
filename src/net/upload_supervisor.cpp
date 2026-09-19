@@ -4,6 +4,8 @@
  */
 #include "net/upload_supervisor.h"
 
+#include "net/sync_session.h"
+
 namespace sapper {
 namespace {
 
@@ -21,19 +23,22 @@ bool reached(uint32_t nowMs, uint32_t deadlineMs) {
 
 UploadSupervisor::UploadSupervisor(HuntEngine& engine, CaptureQueue& queue, Uploader& uploader,
                                    StationControl& station, const char* wpaSecKey,
-                                   const UploadSupervisorConfig& config)
+                                   const UploadSupervisorConfig& config, SyncSession* sync)
     : engine_(engine),
       queue_(queue),
       uploader_(uploader),
       station_(station),
       wpaSecKey_(wpaSecKey),
-      config_(config) {}
+      config_(config),
+      sync_(sync) {}
 
 void UploadSupervisor::begin(uint32_t nowMs) {
     lastDrainMs_ = nowMs;
     nextDrainAllowedMs_ = nowMs;
+    nextSyncWindowMs_ = nowMs;  // a due sync may open its first window at once, not an upload-ceiling later.
     backoffMs_ = config_.backoffBaseMs;
     state_ = State::Hunting;
+    if (sync_ != nullptr) sync_->begin(nowMs);  // seed the hourly cadence so an early window catches up.
 
     // Pick up captures a prior run left on flash so a reboot does not strand them below the count
     // threshold; the time ceiling would eventually drain them, but seeding lets a full queue drain at
@@ -64,17 +69,25 @@ void UploadSupervisor::onCaptureReady(const CapturedHandshake& handshake) {
     }
 }
 
-bool UploadSupervisor::shouldDrain(uint32_t nowMs) const {
-    if (activity_ == 0) return false;                       // nothing to send.
-    if (!reached(nowMs, nextDrainAllowedMs_)) return false; // still inside a backoff (decision #7).
-    if (activity_ >= config_.drainThreshold) return true;   // enough accumulated to amortize an associate.
-    return reached(nowMs, lastDrainMs_ + config_.maxDrainIntervalMs);  // else drain on the time ceiling.
+bool UploadSupervisor::shouldOpenWindow(uint32_t nowMs) const {
+    if (!reached(nowMs, nextDrainAllowedMs_)) return false;  // inside a backoff — no associate at all.
+    if (activity_ >= config_.drainThreshold) return true;    // enough queued to amortize an associate.
+    const bool timeCeilingReached = reached(nowMs, lastDrainMs_ + config_.maxDrainIntervalMs);
+    if (activity_ > 0 && timeCeilingReached) return true;    // else drain the trickle on the time ceiling.
+    // A due cracked-results sync opens one window on its own when nothing else would (ADR-0019 decision
+    // #6: the hour comes due while the upload queue stays empty). It is gated by its OWN retry cadence
+    // (nextSyncWindowMs_, advanced after each sync), not the upload time ceiling: a persistently-failing
+    // sync retries on syncRetryIntervalMs rather than every tick (decision #7 wants "the next window", not
+    // a spin), and raising maxDrainIntervalMs for a low-activity deployment cannot starve the hourly sync.
+    // When a drain opens a window for its own reason, runDrainCycle piggybacks a due sync into it for free,
+    // so this clause only handles the sync-alone case.
+    return sync_ != nullptr && sync_->due(nowMs) && reached(nowMs, nextSyncWindowMs_);
 }
 
 void UploadSupervisor::tick(uint32_t nowMs) {
     switch (state_) {
         case State::Hunting:
-            if (!shouldDrain(nowMs)) return;
+            if (!shouldOpenWindow(nowMs)) return;
             // Stop the engine (atomic router → nullptr, sniffer stopped — §4 invariant #11), then let
             // the settle elapse before touching the radio mode, so no promiscuous callback is still in
             // flight when the STA associate changes Wi-Fi state (ADR-0015 decision #4 / decision #5b).
@@ -100,7 +113,17 @@ void UploadSupervisor::runDrainCycle(uint32_t nowMs) {
     bool cycleSucceeded = false;
     if (station_.bringUpStation()) {
         outcome.associated = true;
-        cycleSucceeded = drainQueue(outcome);
+        cycleSucceeded = drainQueue(outcome);   // no-op success when the queue is empty (a sync-only window).
+        // Share this live STA window with a due cracked-results sync before teardown (ADR-0019 decision
+        // #6). The session owns its own cadence and its outcome is deliberately NOT folded into
+        // cycleSucceeded: a wpa-sec download outage must not drag the upload backoff out — a failed sync
+        // simply stays due and retries on the next window (decision #7).
+        if (sync_ != nullptr && sync_->due(nowMs)) {
+            sync_->runInWindow(nowMs);
+            // Pace the next sync-only window from here: a sync that failed stays due, and this gap keeps it
+            // off the radio every tick; a sync that succeeded is no longer due, so the gate is moot.
+            nextSyncWindowMs_ = nowMs + config_.syncRetryIntervalMs;
+        }
         station_.tearDownStation();
     }
 
@@ -117,7 +140,10 @@ void UploadSupervisor::runDrainCycle(uint32_t nowMs) {
         nextDrainAllowedMs_ = nowMs + backoffMs_;                          // penalise the failure,
         backoffMs_ = backoffMs_ >= config_.backoffCapMs / 2 ? config_.backoffCapMs
                                                             : backoffMs_ * 2;  // then grow, capped.
-        if (activity_ == 0) activity_ = 1;     // keep the trigger hot so the retry fires at backoff end.
+        // A failed upload drain leaves activity_ as it was (it is only ever reset to 0 on success), so the
+        // trigger stays hot on its own — no need to fake activity here. A failed *sync-only* window has
+        // activity_ == 0 and must stay that way: faking an upload would open a needless empty drain after
+        // the sync eventually succeeds; the sync's own due() drives its retry (gated by the ceiling above).
     }
     lastDrain_ = outcome;
     ++drainCount_;

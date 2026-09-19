@@ -25,6 +25,7 @@
 #include "hunt_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
+#include "sync_probe.h"
 #include "upload_probe.h"
 #if SAPPER_BOARD_HAS_DISPLAY
 #include "hal/display/lgfx_display.h"
@@ -186,6 +187,7 @@ void setup() {
     // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
+    if (syncProbeBegin()) return;
     if (uploadProbeBegin()) return;
     if (huntProbeBegin()) return;
     if (rfDiscoverProbeBegin()) return;
@@ -202,6 +204,11 @@ void setup() {
 }
 
 void loop() {
+    if (syncProbeActive()) {  // bench sync verify owns the device; the normal boot loop is skipped.
+        syncProbePump();
+        delay(5);
+        return;
+    }
     if (uploadProbeActive()) {  // bench upload verify owns the device; the normal boot loop is skipped.
         uploadProbePump();
         delay(5);
