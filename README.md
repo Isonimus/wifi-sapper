@@ -23,7 +23,12 @@ portal** instead of trying to hunt (ADR-0006):
 4. Enter the network the appliance should join (SSID + passphrase; leave the passphrase blank for
    an open network) and your **wpa-sec API key** (from your wpa-sec.stanev.org account — the
    appliance cannot upload captures without it).
-5. Save. The device stores the credentials and reboots to join the network.
+5. Optionally, a **push webhook URL** (ADR-0023): an [ntfy](https://ntfy.sh) topic URL
+   (`https://ntfy.sh/your-topic`, or a self-hosted instance) or a Discord webhook URL. When set, the
+   appliance pushes a notification naming the network (ESSID + BSSID) each time a password comes back
+   cracked. The URL must be `https://`; leave it blank to disable push. The plaintext password is
+   **never** sent — only which network was cracked.
+6. Save. The device stores the credentials and reboots to join the network.
 
 On a screenless board the AP name is your only cue, which is why it is a documented, predictable
 pattern rather than a random string.
@@ -54,4 +59,5 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run verify:upload` | Serial-driven wpa-sec upload verify on an attached board (slice-0018, lane 3). Flash the `cardputer_testhooks` build with real `SAPPER_TEST_WIFI_SSID`/`SAPPER_TEST_WIFI_PASS`/`SAPPER_TEST_WPASEC_KEY` and `SAPPER_TEST_UPLOAD=1`; proves the TLS connection validates against the pinned GTS Root R4, the pcap POSTs, the response parses, and the hunt resumes. See the script header. |
 | `npm run verify:sync` | Serial-driven wpa-sec cracked-sync verify on an attached board (slice-0020, lane 3). Flash the `cardputer_testhooks` build with the same real credentials and `SAPPER_TEST_SYNC=1`; proves the pinned-TLS `GET /?api&dl=1` download de-chunks, parses with its malformed count, seeds the LittleFS manifest, and the hunt resumes. See the script header. |
 | `npm run verify:led` | Serial-driven status-LED verify on an attached board (slice-0022, lane 3). Flash the `cardputer_testhooks` build with the same real credentials and `SAPPER_TEST_LED=1`; proves the event bus drives the LED through working/hunting/recovered over the real spine. Confirm the physical colours (blue / green heartbeat / white flash) against the artifact. See the script header. |
+| `npm run verify:webhook` | Serial-driven push-webhook verify on an attached board (slice-0024, lane 3). Flash the `cardputer_testhooks` build with the same real credentials, a real `SAPPER_TEST_WEBHOOK_URL` (an https ntfy/Discord endpoint), and `SAPPER_TEST_WEBHOOK=1`; proves a new-password fact travels the bus into an STA window and the transport POSTs it to the live endpoint (2xx) over TLS validated against the system CA bundle. Confirm the notification actually arrived. See the script header. |
 | `npm run lint` / `npm run index` | Documentation linter and generated ADR index. |

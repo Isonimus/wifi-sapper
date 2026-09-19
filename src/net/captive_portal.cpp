@@ -29,6 +29,8 @@ constexpr char kFormHtml[] =
     "<p>Network name (SSID)<br><input name='ssid' maxlength='32' required></p>"
     "<p>Passphrase (blank for open)<br><input name='pass' type='password' maxlength='63'></p>"
     "<p>wpa-sec API key<br><input name='key' maxlength='64' required></p>"
+    "<p>Push webhook URL (optional; ntfy or Discord, https)<br>"
+    "<input name='webhook' type='url' maxlength='160' placeholder='https://ntfy.sh/your-topic'></p>"
     "<p><button type='submit'>Save &amp; reboot</button></p>"
     "</form></body></html>";
 
@@ -86,13 +88,22 @@ void CaptivePortal::handleSave() {
     // Over-length any field -> reject as a bad submission rather than store a truncated value.
     if (!copyBounded(record.ssid, sizeof(record.ssid), m_http.arg("ssid")) ||
         !copyBounded(record.pass, sizeof(record.pass), m_http.arg("pass")) ||
-        !copyBounded(record.key, sizeof(record.key), m_http.arg("key"))) {
+        !copyBounded(record.key, sizeof(record.key), m_http.arg("key")) ||
+        !copyBounded(record.webhookUrl, sizeof(record.webhookUrl), m_http.arg("webhook"))) {
         m_http.send(400, "text/html", "<h2>A field is too long.</h2><p><a href='/'>Back</a></p>");
         return;
     }
 
     if (validateCredentials(record.ssid, record.pass, record.key) != CredentialError::None) {
         m_http.send(400, "text/html", "<h2>Invalid credentials.</h2><p><a href='/'>Back</a></p>");
+        return;
+    }
+    // The webhook is optional (ADR-0023): blank stores as disabled. But a non-blank value that is not a
+    // usable https endpoint is rejected loudly rather than silently saved-and-ignored — a mistyped http://
+    // URL should tell the operator, not quietly leave push off.
+    if (record.webhookUrl[0] != '\0' && !isUsableWebhookUrl(record.webhookUrl)) {
+        m_http.send(400, "text/html",
+                    "<h2>Webhook URL must be an https:// address.</h2><p><a href='/'>Back</a></p>");
         return;
     }
     if (!persistProvisioning(record)) {

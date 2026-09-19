@@ -10,6 +10,7 @@
 #include <unity.h>
 
 #include <cstdint>
+#include <cstring>
 
 #include "net/provisioning.h"
 
@@ -84,6 +85,44 @@ void test_accepts_boundary_lengths(void) {
                           static_cast<int>(validateCredentials("net", "12345678", "k")));
 }
 
+// --- isUsableWebhookUrl: the optional push endpoint (ADR-0023) ---------------
+
+void test_webhook_url_empty_or_null_is_unusable(void) {
+    // Empty/absent means push is simply off — unusable, but NOT a failure that gates boot.
+    TEST_ASSERT_FALSE(isUsableWebhookUrl(""));
+    TEST_ASSERT_FALSE(isUsableWebhookUrl(nullptr));
+}
+
+void test_webhook_url_requires_https(void) {
+    // A plaintext http:// endpoint is refused so an alert is never sent unencrypted (§3).
+    TEST_ASSERT_FALSE(isUsableWebhookUrl("http://ntfy.sh/topic"));
+    TEST_ASSERT_FALSE(isUsableWebhookUrl("ntfy.sh/topic"));
+}
+
+void test_webhook_url_rejects_overlong(void) {
+    char url[kMaxWebhookUrlLen + 10];
+    const char* prefix = "https://ntfy.sh/";
+    const size_t plen = strlen(prefix);
+    memcpy(url, prefix, plen);
+    for (size_t i = plen; i < sizeof(url) - 1; ++i) url[i] = 'x';  // past kMaxWebhookUrlLen.
+    url[sizeof(url) - 1] = '\0';
+    TEST_ASSERT_FALSE(isUsableWebhookUrl(url));
+}
+
+void test_webhook_url_accepts_well_formed_https(void) {
+    TEST_ASSERT_TRUE(isUsableWebhookUrl("https://ntfy.sh/my-sapper"));
+    TEST_ASSERT_TRUE(isUsableWebhookUrl("https://discord.com/api/webhooks/1/abc"));
+}
+
+void test_webhook_url_does_not_gate_the_triad(void) {
+    // The webhook is validated separately: a bad webhook URL must never turn a good WiFi/wpa-sec triad
+    // unusable (which would send the device to the portal). validateCredentials ignores it entirely.
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(CredentialError::None),
+                          static_cast<int>(validateCredentials("home-net", "correcthorse", "abc123")));
+    TEST_ASSERT_FALSE(isUsableWebhookUrl("http://not-tls/hook"));  // the URL is bad,
+    // but the triad above still validated — the two checks are independent.
+}
+
 // --- decideBootPhase: every branch ------------------------------------------
 
 void test_gate_valid_creds_go_to_station(void) {
@@ -148,6 +187,11 @@ int main(int, char**) {
     RUN_TEST(test_accepts_wpa2_triad);
     RUN_TEST(test_accepts_open_network_empty_passphrase);
     RUN_TEST(test_accepts_boundary_lengths);
+    RUN_TEST(test_webhook_url_empty_or_null_is_unusable);
+    RUN_TEST(test_webhook_url_requires_https);
+    RUN_TEST(test_webhook_url_rejects_overlong);
+    RUN_TEST(test_webhook_url_accepts_well_formed_https);
+    RUN_TEST(test_webhook_url_does_not_gate_the_triad);
     RUN_TEST(test_gate_valid_creds_go_to_station);
     RUN_TEST(test_gate_absent_or_invalid_creds_open_portal);
     RUN_TEST(test_gate_reprovision_request_opens_portal);

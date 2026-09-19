@@ -33,6 +33,8 @@ class SyncSession;  // net/sync_session.h — held only as a pointer, so the hea
                     // (fetcher, manifest, parser) stays out of every translation unit that only uploads.
 class EventBus;     // core/event_bus.h — held as a pointer; the supervisor publishes DrainStarted/
                     // DrainCompleted facts for surfaces (ADR-0021), no include needed in this header.
+class WindowNotifier;  // net/window_notifier.h — an optional window-sharer flushed inside each STA
+                       // window (the push webhook transmits there); held by pointer, wired post-ctor.
 
 /// Forwards the engine's capture-ready event to a target set after construction. It exists to break
 /// a construction cycle: the HuntEngine takes its CaptureReadyObserver at construction, but the
@@ -102,6 +104,12 @@ public:
                      const UploadSupervisorConfig& config = {}, SyncSession* sync = nullptr,
                      EventBus* bus = nullptr);
 
+    /// Wire an optional window-sharer flushed inside every STA window (ADR-0023): a transmitting
+    /// surface (the push webhook) that needs connectivity. Set post-construction, mirroring the
+    /// CaptureReadyRelay wiring, so the constructor does not grow a ninth argument. Unset → no flush,
+    /// and the drain behaves exactly as slice-0018/0022 shipped it.
+    void setNotifier(WindowNotifier& notifier) { notifier_ = &notifier; }
+
     /// Seed the drain clock and pick up any captures already on flash from a prior run. Call after
     /// the engine has begun and before the first tick().
     void begin(uint32_t nowMs);
@@ -139,6 +147,7 @@ private:
     UploadSupervisorConfig config_;
     SyncSession* sync_;  ///< Optional; the sync shares the drain's STA window (ADR-0019 decision #6).
     EventBus* bus_;      ///< Optional; publishes DrainStarted/DrainCompleted facts for surfaces (ADR-0021).
+    WindowNotifier* notifier_ = nullptr;  ///< Optional; flushed inside each STA window (ADR-0023).
 
     State state_ = State::Hunting;
     size_t activity_ = 0;             ///< Uploadable captures known pending since the last success.

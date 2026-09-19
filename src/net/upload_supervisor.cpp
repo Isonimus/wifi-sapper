@@ -7,6 +7,7 @@
 #include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
 #include "core/event_bus.h"
 #include "net/sync_session.h"
+#include "net/window_notifier.h"
 
 namespace sapper {
 
@@ -119,6 +120,11 @@ void UploadSupervisor::runDrainCycle(uint32_t nowMs) {
             // off the radio every tick; a sync that succeeded is no longer due, so the gate is moot.
             nextSyncWindowMs_ = nowMs + config_.syncRetryIntervalMs;
         }
+        // Give a transmitting surface (the push webhook) this live window before tear-down (ADR-0023):
+        // a password cracked by the sync moments ago is pushed the same window, and any send that
+        // failed a previous window retries now. After the sync, so this window's fresh cracks are
+        // already enqueued; before tear-down, so the station is still associated.
+        if (notifier_ != nullptr) notifier_->flushInWindow();
         station_.tearDownStation();
     }
 

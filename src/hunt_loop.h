@@ -44,6 +44,10 @@ const SyncOutcome& huntLoopLastSync();
 /// Monotonic count of syncs whose outcome was reported, so an observer can detect each new one.
 uint32_t huntLoopSyncCount();
 
+/// Monotonic count of webhook notifications successfully POSTed (ADR-0023), so the on-air webhook
+/// verify can detect each send. Zero when no webhook URL is provisioned (the surface is disabled).
+uint32_t huntLoopWebhookSentCount();
+
 #ifdef SAPPER_TEST_HOOKS
 /// Re-arm the hourly scheduler so a cracked-results sync is due on the next STA window — the
 /// clock-advance stimulus the on-air sync verify uses instead of waiting a real hour (slice-0020

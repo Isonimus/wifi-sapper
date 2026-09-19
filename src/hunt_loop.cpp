@@ -28,6 +28,8 @@
 #include "net/uploader_wpasec.h"
 #include "surface/led_driver_esp32.h"
 #include "surface/led_status_surface.h"
+#include "surface/webhook_notifier.h"
+#include "surface/webhook_transport_esp32.h"
 
 #ifdef SAPPER_TEST_HOOKS
 // The operator's real handshake pcap, embedded by embed_test_pcap.py (empty when none is given). At
@@ -119,6 +121,16 @@ SerialEventLogger g_syncLogger;
 // the active board's LED through the Esp32 driver behind the LedDriver seam.
 Esp32LedDriver g_ledDriver(kActiveBoard);
 LedStatusSurface g_ledSurface(g_ledDriver);
+
+// The push-notification surface (slice-0024, ADR-0023): a transmitting surface. It subscribes to the
+// bus like the LED, but POSTs inside an STA window (it is set on the supervisor as its WindowNotifier),
+// so a recovered password reaches the operator's phone via ntfy/Discord. Enabled only when a usable
+// webhook URL is provisioned; the transport is a WS-client-secure POST verified against the system CA
+// bundle. Placement-new'd once the URL is known (it binds the URL + transport by reference), like the
+// station adapter and supervisor below.
+Esp32WebhookTransport g_webhookTransport;
+alignas(WebhookNotifier) uint8_t g_webhookStorage[sizeof(WebhookNotifier)];
+WebhookNotifier* g_webhook = nullptr;
 
 // CrackedSync and the session bind to the wpa-sec key, so they are placement-new'd once credentials are
 // known, exactly as the station adapter and supervisor are.
@@ -219,6 +231,22 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         UploadSupervisor(g_engine, g_queue, g_uploader, *g_station, g_creds.key, config, g_session, &g_bus);
     g_relay.setTarget(*g_supervisor);
 
+    // Wire the push-notification surface iff a usable webhook URL is provisioned (ADR-0023). A bad or
+    // absent URL disables push loudly and never blocks the hunt — the webhook is optional. When enabled,
+    // it subscribes to the bus (fatal if the bus is full, like the other surfaces) and is set as the
+    // supervisor's WindowNotifier so it transmits inside each STA window.
+    if (isUsableWebhookUrl(g_creds.webhookUrl)) {
+        g_webhook = new (g_webhookStorage) WebhookNotifier(g_creds.webhookUrl, g_webhookTransport);
+        if (!g_bus.subscribe(*g_webhook)) {
+            Serial.println("[FATAL] event bus subscription failed (webhook surface)");
+            return false;
+        }
+        g_supervisor->setNotifier(*g_webhook);
+        Serial.println("[WEBHOOK] enabled (push on new password)");
+    } else {
+        Serial.println("[WEBHOOK] disabled (no/invalid webhook url)");
+    }
+
     if (!g_engine.begin(millis())) {
         Serial.println("[FATAL] hunt engine could not begin (promiscuous mode failed)");
         return false;
@@ -249,6 +277,8 @@ uint32_t huntLoopDrainCount() { return g_supervisor != nullptr ? g_supervisor->d
 const SyncOutcome& huntLoopLastSync() { return g_syncLogger.last(); }
 
 uint32_t huntLoopSyncCount() { return g_syncLogger.count(); }
+
+uint32_t huntLoopWebhookSentCount() { return g_webhook != nullptr ? g_webhook->sentCount() : 0; }
 
 #ifdef SAPPER_TEST_HOOKS
 void huntLoopInjectCrackedAlert() {

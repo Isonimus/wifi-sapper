@@ -29,6 +29,7 @@
 #include "../support/fake_station_control.h"
 #include "../support/fake_sync_session.h"
 #include "../support/fake_uploader.h"
+#include "../support/fake_window_notifier.h"
 #include "../support/frame_builders.h"
 #include "../support/recording_event_sink.h"
 
@@ -440,6 +441,38 @@ void test_a_drain_cycle_publishes_start_and_completion_facts_on_the_bus(void) {
     TEST_ASSERT_EQUAL_size_t(1, sink.drainsCompleted[0].accepted);  // the same counted outcome as the snapshot.
 }
 
+// --- Window sharing with a transmitting surface (slice-0024 Scenario J; ADR-0023) ------------------
+
+void test_a_live_window_flushes_the_notifier_and_an_offline_cycle_does_not(void) {
+    // The webhook transmits inside the STA window: the supervisor must flush its WindowNotifier once per
+    // live cycle (so a fresh crack is pushed that window), and must NOT flush an offline cycle (there is
+    // no association to POST over). Fail-before: without the runDrainCycle flush call, flushCalls stays 0.
+    using sapper_test::FakeWindowNotifier;
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    FakeWindowNotifier notifier;
+    rig.supervisor.setNotifier(notifier);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));
+    rig.supervisor.tick(100);  // window opens -> stop, settle.
+    rig.supervisor.tick(106);  // settle elapsed -> one live cycle: drain + flush inside the window.
+    TEST_ASSERT_EQUAL_INT(1, notifier.flushCalls);       // flushed once, in the live window,
+    TEST_ASSERT_EQUAL_INT(1, rig.station.tearDownCalls);  // which was then torn down.
+
+    // An offline cycle: the associate fails, so there is no window and the notifier is not flushed.
+    rig.station.bringUpSucceeds = false;
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(2).data()));
+    rig.supervisor.tick(200);
+    rig.supervisor.tick(206);
+    TEST_ASSERT_EQUAL_INT(2, rig.station.bringUpCalls);  // a second cycle was attempted,
+    TEST_ASSERT_EQUAL_INT(1, notifier.flushCalls);       // but no flush — it never associated.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_capture_below_threshold_is_enqueued_without_pausing_the_hunt);
@@ -455,5 +488,6 @@ int main(int, char**) {
     RUN_TEST(test_a_sync_runs_only_inside_a_live_window_and_a_failed_associate_fakes_no_activity);
     RUN_TEST(test_a_sync_not_due_never_forces_a_window);
     RUN_TEST(test_a_drain_cycle_publishes_start_and_completion_facts_on_the_bus);
+    RUN_TEST(test_a_live_window_flushes_the_notifier_and_an_offline_cycle_does_not);
     return UNITY_END();
 }

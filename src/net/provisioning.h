@@ -22,6 +22,8 @@ constexpr size_t kMaxSsidLen = 32;   ///< 802.11 SSID: 32 octets.
 constexpr size_t kMinPassLen = 8;    ///< WPA2 PSK passphrase minimum.
 constexpr size_t kMaxPassLen = 63;   ///< WPA2 PSK passphrase maximum (64 = a raw 256-bit PSK).
 constexpr size_t kMaxKeyLen = 64;    ///< wpa-sec API key; generous upper bound.
+constexpr size_t kMaxWebhookUrlLen = 160;  ///< Optional push webhook URL (ADR-0023). A Discord webhook
+                                           ///< URL is ~120 chars; 160 leaves margin. Empty = disabled.
 
 /// Buffer size for a SoftAP SSID "Sapper-XXXX": 7 + 4 hex + NUL. A compile-time size so
 /// formatSoftApSsid() cannot be handed a too-small buffer (no runtime cap, no silent truncation).
@@ -66,6 +68,18 @@ enum class CredentialError : uint8_t {
  * fit a buffer.
  */
 CredentialError validateCredentials(const char* ssid, const char* pass, const char* key);
+
+/**
+ * @brief Whether @p url is a usable push webhook endpoint (ADR-0023). Pure.
+ *
+ * The webhook is OPTIONAL and validated *separately* from the association triad, never folded into
+ * validateCredentials(): a bad webhook URL must disable push, not send a good WiFi/wpa-sec triad to
+ * the portal. Empty → unusable (push simply off). A non-empty URL must begin with "https://" — plain
+ * http is refused so an alert is never sent unencrypted (fail loud, no silent downgrade) — and must
+ * fit kMaxWebhookUrlLen. Deliberately not a full URL parse: the TLS handshake and the target host are
+ * the real validators on device; this only gates the obvious unusable cases before wiring the surface.
+ */
+bool isUsableWebhookUrl(const char* url);
 
 // Bounded STA-association attempts before a provisioned device falls back to the portal. A
 // device that cannot reach its configured network re-opens for reconfiguration rather than

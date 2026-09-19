@@ -24,6 +24,7 @@
 #include "hunt_loop.h"
 #include "hunt_probe.h"
 #include "led_probe.h"
+#include "webhook_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
 #include "sync_probe.h"
@@ -115,6 +116,9 @@ void seedTestCredentials() {
     std::snprintf(seed.ssid, sizeof(seed.ssid), "%s", SAPPER_TEST_WIFI_SSID);
     std::snprintf(seed.pass, sizeof(seed.pass), "%s", SAPPER_TEST_WIFI_PASS);
     std::snprintf(seed.key, sizeof(seed.key), "%s", SAPPER_TEST_WPASEC_KEY);
+    // Optional push webhook URL (ADR-0023): unset expands to "" → the webhook stays disabled, exactly
+    // as an unset credential routes to the portal. Set SAPPER_TEST_WEBHOOK_URL to run verify:webhook.
+    std::snprintf(seed.webhookUrl, sizeof(seed.webhookUrl), "%s", SAPPER_TEST_WEBHOOK_URL);
     // seedProvisioning() persists a valid seed or clears any stale triad on an invalid one, so a
     // hooks build with no credential flags routes to the portal instead of inheriting a prior
     // flash's creds (ADR-0008). Host-tested; not a serial path (invariant #7).
@@ -188,6 +192,7 @@ void setup() {
     // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
+    if (webhookProbeBegin()) return;
     if (ledProbeBegin()) return;
     if (syncProbeBegin()) return;
     if (uploadProbeBegin()) return;
@@ -206,6 +211,11 @@ void setup() {
 }
 
 void loop() {
+    if (webhookProbeActive()) {  // bench webhook verify owns the device; the normal boot loop is skipped.
+        webhookProbePump();
+        delay(5);
+        return;
+    }
     if (ledProbeActive()) {  // bench LED verify owns the device; the normal boot loop is skipped.
         ledProbePump();
         delay(5);

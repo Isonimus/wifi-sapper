@@ -28,6 +28,17 @@ CredentialError validateCredentials(const char* ssid, const char* pass, const ch
     return CredentialError::None;
 }
 
+bool isUsableWebhookUrl(const char* url) {
+    if (url == nullptr) return false;
+    // Bounded scan (one past the max): an over-length URL is unusable, never measured further or
+    // trusted to be terminated — the same discipline validateCredentials() uses on the triad.
+    const size_t len = strnlen(url, kMaxWebhookUrlLen + 1);
+    if (len == 0 || len > kMaxWebhookUrlLen) return false;
+    // Require TLS: a plaintext http:// webhook would send the alert unencrypted (§3, no silent
+    // downgrade). strncmp, not a parse — the device TLS handshake is the real endpoint validator.
+    return std::strncmp(url, "https://", 8) == 0;
+}
+
 Phase decideBootPhase(bool hasValidStoredCreds, uint8_t staFailCount, bool reprovisionRequested) {
     if (hasValidStoredCreds && !reprovisionRequested && staFailCount < kStaRetryBudget) {
         return Phase::StationConnect;

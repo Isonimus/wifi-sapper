@@ -18,6 +18,7 @@ constexpr char kNamespace[] = "sapper";
 constexpr char kKeySsid[] = "wifi_ssid";
 constexpr char kKeyPass[] = "wifi_pass";
 constexpr char kKeyKey[] = "wpasec_key";
+constexpr char kKeyWebhook[] = "webhook_url";  // 11 chars, within NVS's 15-char key limit.
 
 }  // namespace
 
@@ -34,6 +35,10 @@ bool loadProvisioning(ProvisioningRecord& out) {
     prefs.getString(kKeySsid, out.ssid, sizeof(out.ssid));
     prefs.getString(kKeyPass, out.pass, sizeof(out.pass));
     prefs.getString(kKeyKey, out.key, sizeof(out.key));
+    // Optional (ADR-0023): absent on a device provisioned before webhooks existed, which getString
+    // leaves as the zeroed default — an empty URL means "push disabled", not a load failure, so it
+    // never affects the validity gate below.
+    prefs.getString(kKeyWebhook, out.webhookUrl, sizeof(out.webhookUrl));
     prefs.end();
 
     // A half-written or corrupt triad reads as "not provisioned" so the boot gate opens the
@@ -63,7 +68,12 @@ bool persistProvisioning(const ProvisioningRecord& record) {
     const bool wrotePass = prefs.putString(kKeyPass, record.pass) == std::strlen(record.pass);
     const bool wroteKey = prefs.putString(kKeyKey, record.key) == std::strlen(record.key);
     const bool wroteSsid = prefs.putString(kKeySsid, record.ssid) == std::strlen(record.ssid);
-    const bool wrote = wrotePass && wroteKey && wroteSsid;
+    // The webhook URL is optional (ADR-0023): an empty value stores 0 bytes, which equals its strlen,
+    // so it counts as written and an unconfigured push does not fail the persist. It rides the same
+    // all-or-nothing clear() below, so a partial write never leaves a webhook beside a stale triad.
+    const bool wroteWebhook =
+        prefs.putString(kKeyWebhook, record.webhookUrl) == std::strlen(record.webhookUrl);
+    const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook;
     if (!wrote) {
         prefs.clear();  // partial write — wipe so no mixed triad can survive to the next boot.
     }

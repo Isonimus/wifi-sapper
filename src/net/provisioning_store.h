@@ -30,6 +30,9 @@ struct ProvisioningRecord {
     char ssid[kMaxSsidLen + 1];
     char pass[kMaxPassLen + 1];
     char key[kMaxKeyLen + 1];
+    /// Optional push-notification endpoint (ADR-0023). Empty when push is not configured; validated
+    /// separately by isUsableWebhookUrl(), so a bad value disables push without gating the boot triad.
+    char webhookUrl[kMaxWebhookUrlLen + 1];
 };
 
 /**

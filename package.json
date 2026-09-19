@@ -15,6 +15,7 @@
     "verify:upload": "node scripts/0018-upload-verify.mjs",
     "verify:sync": "node scripts/0020-sync-verify.mjs",
     "verify:led": "node scripts/0022-led-verify.mjs",
+    "verify:webhook": "node scripts/0024-webhook-verify.mjs",
     "lint": "node scripts/lint-docs.mjs .",
     "index": "node scripts/build-index.mjs ."
   },
