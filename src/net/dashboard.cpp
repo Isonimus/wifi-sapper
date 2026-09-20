@@ -104,7 +104,19 @@ size_t appendCrackedRow(const CrackedResult& result, char* out, size_t outSize) 
     return static_cast<size_t>(written);
 }
 
-const char kDashboardFoot[] = "</table></body></html>";
+// Closes the results table, then the two reboot-scoped controls (ADR-0043 §4 #23). Resume is a POST
+// *form* (not an <a> link) so a prefetch/OS-captive-check GET cannot reboot the device (decision 3);
+// re-provision is a plain GET link to the setup form (a read — safe to prefetch). Both actions the
+// server honours only after the response flushes, by rebooting into Station.
+const char kDashboardControls[] =
+    "</table>"
+    "<hr>"
+    "<form method='POST' action='/resume' style='margin:.6rem 0'>"
+    "<button type='submit'>Resume &amp; hunt</button>"
+    "</form>"
+    "<p><a href='/config'>Re-provision / re-arm&hellip;</a></p>";
+
+const char kDashboardFoot[] = "</body></html>";
 
 bool maintenanceBackstopDue(uint32_t lastActivityMs, uint32_t nowMs) {
     // Unsigned wrap-safe: the elapsed interval is always < the 30-min bound << the ~49-day millis wrap.

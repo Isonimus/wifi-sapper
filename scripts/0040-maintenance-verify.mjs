@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 /**
- * scripts/0040-maintenance-verify.mjs — device verify for slice-0040 (ADR-0039, ADR-0004 lane 3).
+ * scripts/0040-maintenance-verify.mjs — device verify for slice-0040 + slice-0044 (ADR-0039, ADR-0043,
+ * ADR-0004 lane 3).
  *
  * Proves the runtime Maintenance-mode claims a unit test cannot: that a BOOT-held boot lands in the
  * Maintenance phase, raises the hardened SoftAP, and serves the results dashboard — while the pure
  * halves (boot-gate precedence, passphrase validation, dashboard rendering, backstop arithmetic) are
  * lane 1 (test/test_provisioning, test/test_provisioning_store, test/test_dashboard). Runs on a
  * workstation with the board attached, never in cloud CI (ADR-0004 invariant #5). Requires `npm install`.
+ *
+ * slice-0044 (ADR-0043) adds the write controls to the same served surface, so this one script proves
+ * them too (no new verify — the rule of three, §3): the dashboard renders a POST `/resume` form and a
+ * `GET /config` link, `GET /config` serves the setup form (no secret echoed), and — opt-in, because it
+ * reboots the device — `POST /resume` makes the device log its resume-and-reboot line. The POST-only
+ * gating of the mutating controls (§4 #23) is host-tested (test/test_dashboard).
  *
  * Precondition: flash the `cardputer_testhooks` build built with
  *   SAPPER_TEST_MAINT=1                 (forces maintenanceRequested() true — the physical BOOT-hold
@@ -170,9 +177,58 @@ async function verifyDashboardHttp(url, observed) {
   if (expectedPsk && !body.includes(expectedPsk)) {
     fail(`dashboard did not render the seeded PSK "${expectedPsk}" (ADR-0039 decision 5)`);
   }
+  // slice-0044 (ADR-0043 §4 #23): the two controls are present, and resume is a POST form (not a GET
+  // link, which a prefetch could fire). host-tested too (test_dashboard), asserted here end-to-end.
+  if (!/action=['"]\/resume['"]/.test(body) || !/method=['"]POST['"]/i.test(body)) {
+    fail('dashboard is missing the POST /resume control (slice-0044)');
+  }
+  if (!/href=['"]\/config['"]/.test(body)) fail('dashboard is missing the /config re-provision link');
   observed.push(`GET ${url} -> ${res.status}, ${body.length} bytes`);
   writeFileSync(`${ARTIFACT_DIR}/0040-maintenance.dashboard.html`, body);
   console.log(`wrote ${ARTIFACT_DIR}/0040-maintenance.dashboard.html`);
+
+  // GET /config serves the setup form (a read; safe to fetch). Assert the form posts to /save and does
+  // not echo a stored secret back as an input value (§4 #20 — the form model carries no secret string).
+  const origin = new URL(url).origin;
+  let cfg;
+  try {
+    cfg = await fetch(`${origin}/config`, { signal: AbortSignal.timeout(REPLY_TIMEOUT_MS) });
+  } catch (e) {
+    fail(`could not fetch /config (slice-0044): ${e.message}`);
+    return;
+  }
+  const cfgBody = cfg.ok ? await cfg.text() : '';
+  if (!cfg.ok || !/action=['"]\/save['"]/.test(cfgBody)) {
+    fail(`GET /config did not serve the setup form (HTTP ${cfg.status})`);
+  }
+  const secret = process.env.SAPPER_MAINT_EXPECT_NO_ECHO;  // a stored secret that must NOT appear.
+  if (secret && cfgBody.includes(secret)) {
+    fail(`/config echoed a stored secret back into the form (§4 #20 violation)`);
+  }
+  observed.push(`GET ${origin}/config -> ${cfg.status}, ${cfgBody.length} bytes`);
+}
+
+/**
+ * Opt-in (SAPPER_MAINT_DRIVE_RESUME=1): POST /resume and assert the device logs its resume-and-reboot
+ * line, proving the mutating control fires end-to-end. Destructive (it reboots the board), so it is not
+ * part of the default run and comes last. The POST-only gating itself is host-tested (test_dashboard).
+ */
+async function verifyResumeControl(channel, url, observed) {
+  const origin = new URL(url).origin;
+  const rebootP = channel.waitForLine(/^\[MAINT\] control requested resume/, BANNER_TIMEOUT_MS);
+  console.log(`POST ${origin}/resume (this reboots the board)...`);
+  try {
+    await fetch(`${origin}/resume`, { method: 'POST', signal: AbortSignal.timeout(REPLY_TIMEOUT_MS) });
+  } catch (e) {
+    // The device may reboot before it finishes the HTTP response, so a fetch abort here is not itself a
+    // failure — the serial line below is the authoritative proof the control fired.
+    console.log(`note: /resume fetch did not complete cleanly (expected on reboot): ${e.message}`);
+  }
+  const line = await rebootP.catch((e) => {
+    fail(`POST /resume did not trigger a reboot into Station (slice-0044): ${e.message}`);
+    return null;
+  });
+  if (line) observed.push(line);
 }
 
 async function main() {
@@ -190,8 +246,13 @@ async function main() {
   try {
     await verifyMaintenanceSerial(channel, observed);
     const url = process.env.SAPPER_MAINT_DASHBOARD_URL;
-    if (url) await verifyDashboardHttp(url, observed);
-    else console.log('note: set SAPPER_MAINT_DASHBOARD_URL (joined to the AP) to verify the served page');
+    if (url) {
+      await verifyDashboardHttp(url, observed);
+      // Opt-in and last: it reboots the board, ending this session (slice-0044).
+      if (process.env.SAPPER_MAINT_DRIVE_RESUME === '1') await verifyResumeControl(channel, url, observed);
+    } else {
+      console.log('note: set SAPPER_MAINT_DASHBOARD_URL (joined to the AP) to verify the served page');
+    }
     if (channel.fatalLine) fail(`device reported: ${channel.fatalLine}`);
   } finally {
     port.close();

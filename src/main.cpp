@@ -188,7 +188,7 @@ void runMaintenance(const ProvisioningRecord& creds) {
         if (captureStore.listPending(pending, kCaptureStoreScanCapacity, count)) queueDepth = count;
     }
 
-    MaintenancePortal portal(manifest, creds.deauthEnabled, queueDepth, creds.maintenancePass);
+    MaintenancePortal portal(manifest, creds, queueDepth);
     if (!portal.begin()) {
         Serial.println("[FATAL] maintenance: SoftAP failed to start");
         return;
@@ -211,6 +211,14 @@ void runMaintenance(const ProvisioningRecord& creds) {
         portal.handle();
         g_channel.pump();  // keep `state`/`ping` answered while parked in Maintenance (§4 #3).
         if (portal.consumeActivity()) lastActivity = millis();
+        // A control (resume, or a persisted re-provision) asked to reboot into Station. The handler
+        // already sent its acknowledgement; reboot here, after handle() flushed it, never inside the
+        // handler (ADR-0043 decision 3, §4 #23) — a reboot-scoped intent, not a live engine action.
+        if (portal.rebootRequested()) {
+            Serial.println("[MAINT] control requested resume — rebooting into Station");
+            delay(500);  // let the HTTP response flush before the AP drops.
+            ESP.restart();
+        }
         if (maintenanceBackstopDue(lastActivity, millis())) {
             Serial.println("[MAINT] no-activity backstop reached — rebooting into Station");
             delay(50);  // let the line flush before the reset.

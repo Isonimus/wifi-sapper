@@ -82,6 +82,22 @@ void test_row_html_escapes_a_crafted_essid(void) {
     TEST_ASSERT_NOT_NULL(std::strstr(out, "&#39;"));
 }
 
+// --- slice-0044 Scenario C: the controls are POST-gated for mutation -------------------------------
+
+void test_controls_expose_a_post_resume_and_a_config_link(void) {
+    // ADR-0043 decision 3 / §4 #23: resume must be a POST *form* (a GET link would fire on an OS
+    // captive-check or a browser prefetch, rebooting the device unbidden), and re-provision is reached
+    // at /config. A regression turning resume into a GET link — or dropping either control — fails here.
+    TEST_ASSERT_NOT_NULL(std::strstr(kDashboardControls, "method='POST'"));
+    TEST_ASSERT_NOT_NULL(std::strstr(kDashboardControls, "action='/resume'"));
+    TEST_ASSERT_NOT_NULL(std::strstr(kDashboardControls, "href='/config'"));
+    // The results table is closed before the controls render (a <form> must not sit inside the table).
+    TEST_ASSERT_NOT_NULL(std::strstr(kDashboardControls, "</table>"));
+    // The footer no longer closes the table (the controls chunk now does); it only closes the document.
+    TEST_ASSERT_NULL(std::strstr(kDashboardFoot, "</table>"));
+    TEST_ASSERT_NOT_NULL(std::strstr(kDashboardFoot, "</body></html>"));
+}
+
 // --- Scenario E: fail loud rather than truncate ----------------------------------------------------
 
 void test_head_fails_loud_when_it_does_not_fit(void) {
@@ -131,6 +147,7 @@ int main(int, char**) {
     RUN_TEST(test_head_renders_disarmed_and_never_synced);
     RUN_TEST(test_row_renders_essid_and_plaintext_psk);
     RUN_TEST(test_row_html_escapes_a_crafted_essid);
+    RUN_TEST(test_controls_expose_a_post_resume_and_a_config_link);
     RUN_TEST(test_head_fails_loud_when_it_does_not_fit);
     RUN_TEST(test_row_fails_loud_when_it_does_not_fit);
     RUN_TEST(test_backstop_due_only_at_or_after_the_bound);

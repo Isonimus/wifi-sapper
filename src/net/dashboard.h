@@ -71,8 +71,17 @@ size_t buildDashboardHead(const DashboardStats& stats, char* out, size_t outSize
  */
 size_t appendCrackedRow(const CrackedResult& result, char* out, size_t outSize);
 
-/// The dashboard footer: closes the table and the document. A fixed string (no formatting, so no
-/// overflow risk), streamed last after the head and every row.
+/// The dashboard controls: closes the results table, then renders the two reboot-scoped action
+/// controls (ADR-0043) — a `POST /resume` form and a `GET /config` re-provision link. Streamed after
+/// the last row and before the footer. A fixed string (no formatting, so no overflow risk).
+///
+/// WHY the resume control is a POST *form*, not a link: the Maintenance server answers any GET path
+/// with a page (its onNotFound serves the dashboard, ADR-0039), and OS captive-check probes and browser
+/// prefetch fire GETs — so a GET-triggered reboot would fire unbidden. A POST is unreachable that way
+/// (ADR-0043 decision 3, §4 #23). Do NOT turn resume into an <a> link (stele:ADR-0012).
+extern const char kDashboardControls[];
+
+/// The dashboard footer: closes the document. A fixed string, streamed last after the controls.
 extern const char kDashboardFoot[];
 
 // The no-activity auto-resume backstop (ADR-0039 decision 7): a walked-away Maintenance unit reboots

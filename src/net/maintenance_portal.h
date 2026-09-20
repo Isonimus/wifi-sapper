@@ -20,29 +20,28 @@
 #include <DNSServer.h>
 #include <WebServer.h>
 
-#include "net/cracked_manifest.h"  // CrackedManifest — the §12 read seam the dashboard enumerates.
-#include "net/provisioning.h"      // kSoftApSsidBufSize, formatSoftApSsid, isUsableMaintenancePass
+#include "net/cracked_manifest.h"    // CrackedManifest — the §12 read seam the dashboard enumerates.
+#include "net/provisioning.h"        // kSoftApSsidBufSize, formatSoftApSsid, isUsableMaintenancePass
+#include "net/provisioning_store.h"  // ProvisioningRecord — the record the config form renders/merges.
 
 namespace sapper {
 
 class MaintenancePortal {
 public:
     /**
-     * @brief Construct the Maintenance server over the (already begun) manifest and the persisted stats.
+     * @brief Construct the Maintenance server over the (already begun) manifest and the loaded record.
      * @param manifest         The loaded results mirror; enumerated read-only for the dashboard rows.
-     * @param deauthArmed      Persisted arm state (ADR-0029), shown in the summary.
+     * @param creds            Caller-owned, outlives the portal (runMaintenance never returns). Its
+     *                         deauth arm feeds the summary, its maintenancePass hardens the AP, and its
+     *                         stored fields drive the config form (ADR-0043) — the loadProvisioning()
+     *                         result injected once (§4 #6), not re-read per request.
      * @param captureQueueDepth Handshakes persisted awaiting upload, shown in the summary.
-     * @param maintenancePass  Caller-owned; the hardened AP passphrase. Empty or invalid (per
-     *                         isUsableMaintenancePass) → the AP falls back to the published default.
      */
-    MaintenancePortal(const CrackedManifest& manifest, bool deauthArmed, size_t captureQueueDepth,
-                      const char* maintenancePass)
-        : m_manifest(manifest),
-          m_deauthArmed(deauthArmed),
-          m_queueDepth(captureQueueDepth),
-          m_maintenancePass(maintenancePass) {}
+    MaintenancePortal(const CrackedManifest& manifest, const ProvisioningRecord& creds,
+                      size_t captureQueueDepth)
+        : m_manifest(manifest), m_creds(creds), m_queueDepth(captureQueueDepth) {}
 
-    /// Bring up the hardened SoftAP, DNS hijack, and dashboard server.
+    /// Bring up the hardened SoftAP, DNS hijack, and dashboard + control server.
     /// @return true once the AP and server are listening; false if the SoftAP failed to start.
     bool begin();
 
@@ -53,17 +52,25 @@ public:
     /// push the no-activity backstop forward (ADR-0039 decision 7) so an in-use dashboard stays up.
     bool consumeActivity();
 
+    /// True once a control (resume or a persisted re-provision) has asked to reboot into Station. The
+    /// caller reboots *after* the HTTP response has flushed, never inside the handler (ADR-0043 #23), so
+    /// the operator sees the acknowledgement before the AP drops.
+    bool rebootRequested() const { return m_pendingReboot; }
+
     /// The SoftAP SSID being broadcast ("Sapper-XXXX"), for the boot banner and the panel screen.
     const char* apSsid() const { return m_ssid; }
 
 private:
     void handleRoot();
+    void handleConfig();   // GET /config — the setup form, rendered from the stored record (no echo, §4 #20).
+    void handleSave();     // POST /save — merge + persist (§4 #6), then request a reboot into Station.
+    void handleResume();   // POST /resume — request a reboot into Station (which syncs on its first window).
 
     const CrackedManifest& m_manifest;
-    bool m_deauthArmed;
+    const ProvisioningRecord& m_creds;
     size_t m_queueDepth;
-    const char* m_maintenancePass;
     bool m_activity = false;
+    bool m_pendingReboot = false;
 
     DNSServer m_dns;
     WebServer m_http{80};
