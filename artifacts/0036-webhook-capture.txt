@@ -1,0 +1,7 @@
+[WEBHOOK-CAPTURE] pushed count=1
+[WEBHOOK] injecting synthetic capture fact (verify stimulus)
+[SYNC] forced due (verify clock-advance stimulus)
+[WEBHOOK-CAPTURE] waiting elapsed=10274ms sent=1
+[SYNC] download ok bytes=1320 lines=26
+[SYNC] outcome ok=1 first=0 downloaded=26 new=0 malformed=0 overflow=0 storeError=0 fetch=0
+[WEBHOOK] sent code=204 bytes=95

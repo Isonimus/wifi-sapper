@@ -25,9 +25,15 @@ portal** instead of trying to hunt (ADR-0006):
    appliance cannot upload captures without it).
 5. Optionally, a **push webhook URL** (ADR-0023): an [ntfy](https://ntfy.sh) topic URL
    (`https://ntfy.sh/your-topic`, or a self-hosted instance) or a Discord webhook URL. When set, the
-   appliance pushes a notification naming the network (ESSID + BSSID) each time a password comes back
-   cracked. The URL must be `https://`; leave it blank to disable push. The plaintext password is
-   **never** sent — only which network was cracked.
+   appliance pushes a notification naming the network (ESSID + BSSID). The URL must be `https://`; leave
+   it blank to disable push. The plaintext password is **never** sent — only which network is involved.
+   Choose *what* gets pushed with the **Push these** checkboxes (ADR-0035): **Cracked passwords** (on by
+   default — a recovered password came back), **Handshake captures** (off by default — a fresh handshake
+   landed, one push per network per run), and **Sync errors** (off by default — the hourly
+   cracked-results sync ran but failed, e.g. wpa-sec unreachable or erroring, while the device is
+   otherwise associated; a *total* loss of connectivity raises no push, since with no network there is no
+   window to send one — that is what the on-device LED/screen are for). These gate the off-device push
+   only; the on-device screen, LED, and serial log always show every event.
 6. Optionally, **Enable deauth (arm)** (ADR-0029): when checked, the hunt loop broadcasts deauth
    frames at every AP it discovers, knocking clients off so they re-associate and their handshake can
    be captured — the appliance's active industrial-pentest mode. It is **off by default**: a fresh or
@@ -71,4 +77,5 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run verify:deauth-loop` | Serial-driven autonomous-deauth verify on an attached board (slice-0030, lane 3). **Authorized environments only.** Drives the **shipped** `cardputer` binary, provisioned via the portal with **Enable deauth** checked and an authorized AP on air; proves an armed *shipped* loop transmits real deauth during its hunt (`[DEAUTH] ARMED`, repeating `txOk>0`). Logs to `artifacts/0030-deauth-loop-tx.txt`. See the script header. |
 | `npm run verify:capture-notify` | Serial-driven capture-notification verify on an attached board with a panel (slice-0032, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_CAPTURE=1` (no network or credentials needed — a capture is announced at enqueue); proves a real board emits a repeating `[CAPTURE] essid=…` line and dumps the panel to `artifacts/0032-capture-notify.png`. Confirm the CAPTURED banner names the injected network against the artifact. See the script header. |
 | `npm run verify:hunt-hud` | Serial-driven live-hunt-HUD verify on an attached board with a panel (slice-0034, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_HUNT_HUD=1` (no network needed), on a quiet channel; injects a synthetic AP + handshake through the engine's `onFrame` seam so the panel shows the live-hunt line, and dumps it to `artifacts/0034-hunt-hud.png`. Confirm the target + Beacon/M1/M2 indicators + progress bar render against the artifact. See the script header. |
+| `npm run verify:webhook-capture` | Serial-driven capture-push webhook verify on an attached board (slice-0036, lane 3). Flash the `cardputer_testhooks` build with the same real credentials, a real `SAPPER_TEST_WEBHOOK_URL`, and `SAPPER_TEST_WEBHOOK_CAPTURE=1`; forces capture-push on, injects a synthetic capture fact, and proves the transport POSTs a "captured" notification (ESSID/BSSID, no PSK) to the live endpoint (2xx). Confirm it arrived. See the script header. |
 | `npm run lint` / `npm run index` | Documentation linter and generated ADR index. |

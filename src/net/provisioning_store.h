@@ -38,6 +38,15 @@ struct ProvisioningRecord {
     /// a fresh, upgraded, or unarmed device never jams. Set from the captive-portal checkbox; absent
     /// from NVS on a device provisioned before it existed, where getBool() reads it back as false.
     bool deauthEnabled;
+    /// Per-type off-device push selector (ADR-0035, §4 #19). Each gates whether that notification kind
+    /// reaches the webhook; the local LED/screen/serial surfaces render every fact regardless. Set from
+    /// the captive-portal checkboxes and read back with behaviour-preserving defaults for a device
+    /// provisioned before they existed: notifyCracked absent → **true** (preserves the ADR-0023 crack
+    /// push), the two new ones absent → **false** (opt-in; captures/sync-errors are high-volume, never a
+    /// surprise flood after an upgrade). Moot unless webhookUrl is also set.
+    bool notifyCaptured;
+    bool notifyCracked;
+    bool notifySyncError;
 };
 
 /**

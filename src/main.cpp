@@ -26,6 +26,7 @@
 #include "hunt_probe.h"
 #include "led_probe.h"
 #include "webhook_probe.h"
+#include "webhook_capture_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
 #include "capture_probe.h"
@@ -200,6 +201,7 @@ void setup() {
     if (huntHudProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (screenProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (webhookProbeBegin()) return;
+    if (webhookCaptureProbeBegin()) return;
     if (ledProbeBegin()) return;
     if (syncProbeBegin()) return;
     if (uploadProbeBegin()) return;
@@ -241,6 +243,11 @@ void loop() {
     }
     if (webhookProbeActive()) {  // bench webhook verify owns the device; the normal boot loop is skipped.
         webhookProbePump();
+        delay(5);
+        return;
+    }
+    if (webhookCaptureProbeActive()) {  // bench capture-push verify owns the device; normal boot skipped.
+        webhookCaptureProbePump();
         delay(5);
         return;
     }

@@ -20,6 +20,11 @@ constexpr char kKeyPass[] = "wifi_pass";
 constexpr char kKeyKey[] = "wpasec_key";
 constexpr char kKeyWebhook[] = "webhook_url";  // 11 chars, within NVS's 15-char key limit.
 constexpr char kKeyDeauth[] = "deauth_arm";    // 10 chars; the default-off deauth arm flag (ADR-0029).
+// Per-type push selector (ADR-0035, §4 #19); each within NVS's 15-char key limit. notify_crk defaults
+// TRUE on read to preserve the pre-0035 crack push; the other two default FALSE (opt-in, high-volume).
+constexpr char kKeyNotifyCap[] = "notify_cap";
+constexpr char kKeyNotifyCrk[] = "notify_crk";
+constexpr char kKeyNotifyErr[] = "notify_err";
 
 }  // namespace
 
@@ -44,6 +49,12 @@ bool loadProvisioning(ProvisioningRecord& out) {
     // left the box unchecked, reads back disarmed — arming is never silent. Not part of the validity
     // gate below (deauth is optional, like the webhook).
     out.deauthEnabled = prefs.getBool(kKeyDeauth, /*defaultValue=*/false);
+    // Per-type push selector (ADR-0035 decision 5). notifyCracked defaults TRUE so a device provisioned
+    // before this slice keeps its ADR-0023 crack push; the two new, high-volume types default FALSE so an
+    // upgrade never starts a surprise flood. Optional, like the webhook — not part of the validity gate.
+    out.notifyCaptured = prefs.getBool(kKeyNotifyCap, /*defaultValue=*/false);
+    out.notifyCracked = prefs.getBool(kKeyNotifyCrk, /*defaultValue=*/true);
+    out.notifySyncError = prefs.getBool(kKeyNotifyErr, /*defaultValue=*/false);
     prefs.end();
 
     // A half-written or corrupt triad reads as "not provisioned" so the boot gate opens the
@@ -82,7 +93,13 @@ bool persistProvisioning(const ProvisioningRecord& record) {
     // all-or-nothing clear() below, so a partial write never leaves a stale arm state beside a fresh
     // triad — a re-provision that fails mid-way disarms rather than silently keeping deauth on.
     const bool wroteDeauth = prefs.putBool(kKeyDeauth, record.deauthEnabled) == sizeof(uint8_t);
-    const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook && wroteDeauth;
+    // The per-type push selector (ADR-0035): three one-byte flags, riding the same all-or-nothing clear()
+    // below so a partial write never leaves a stale selector beside a fresh triad.
+    const bool wroteNotifyCap = prefs.putBool(kKeyNotifyCap, record.notifyCaptured) == sizeof(uint8_t);
+    const bool wroteNotifyCrk = prefs.putBool(kKeyNotifyCrk, record.notifyCracked) == sizeof(uint8_t);
+    const bool wroteNotifyErr = prefs.putBool(kKeyNotifyErr, record.notifySyncError) == sizeof(uint8_t);
+    const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook && wroteDeauth &&
+                       wroteNotifyCap && wroteNotifyCrk && wroteNotifyErr;
     if (!wrote) {
         prefs.clear();  // partial write — wipe so no mixed triad can survive to the next boot.
     }

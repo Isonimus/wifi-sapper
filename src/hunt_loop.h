@@ -93,6 +93,12 @@ void huntLoopInjectHudStimulus();
 /// stimulus for the "recovered" flash, which a real crack cannot force on demand. Present only in
 /// test-hooks builds (§4 invariant #4).
 void huntLoopInjectCrackedAlert();
+
+/// Publish one synthetic HandshakeCaptured fact onto the event bus, exactly as the supervisor does after
+/// a real enqueue (§4 invariant #2) — the webhook-capture verify's stimulus for the capture push
+/// (ADR-0035), which a real capture cannot force on demand. Identity-only (§4 #17). Present only in
+/// test-hooks builds (§4 invariant #4).
+void huntLoopInjectCaptureAlert();
 #endif
 
 }  // namespace sapper

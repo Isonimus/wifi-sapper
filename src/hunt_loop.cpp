@@ -276,13 +276,19 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     // it subscribes to the bus (fatal if the bus is full, like the other surfaces) and is set as the
     // supervisor's WindowNotifier so it transmits inside each STA window.
     if (isUsableWebhookUrl(g_creds.webhookUrl)) {
-        g_webhook = new (g_webhookStorage) WebhookNotifier(g_creds.webhookUrl, g_webhookTransport);
+        // Map the provisioned per-type selector into the notifier's policy (ADR-0035, §4 #19): the
+        // enable-set gates this transmitting surface only; the LED/screen/serial render every fact.
+        const WebhookNotifyPolicy policy{g_creds.notifyCaptured, g_creds.notifyCracked,
+                                         g_creds.notifySyncError};
+        g_webhook = new (g_webhookStorage)
+            WebhookNotifier(g_creds.webhookUrl, g_webhookTransport, policy);
         if (!g_bus.subscribe(*g_webhook)) {
             Serial.println("[FATAL] event bus subscription failed (webhook surface)");
             return false;
         }
         g_supervisor->setNotifier(*g_webhook);
-        Serial.println("[WEBHOOK] enabled (push on new password)");
+        Serial.printf("[WEBHOOK] enabled (push: captured=%d cracked=%d sync-error=%d)\n",
+                      policy.onCaptured, policy.onCracked, policy.onSyncError);
     } else {
         Serial.println("[WEBHOOK] disabled (no/invalid webhook url)");
     }
@@ -367,6 +373,26 @@ void huntLoopInjectCrackedAlert() {
     std::strncpy(r.password, "led-verify-stimulus", kCrackedPasswordCap - 1);
     Serial.println("[LED] injecting synthetic new-password fact (verify stimulus)");
     g_bus.publish(AppEvent::newPassword(r));
+}
+#endif
+
+#ifdef SAPPER_TEST_HOOKS
+void huntLoopInjectCaptureAlert() {
+    if (!g_running) return;
+    // A synthetic capture fact, published on the same bus the supervisor uses (§4 invariant #2). Identity
+    // only — CaptureFact has no frame member (§4 #17) — so it proves the capture→webhook push path
+    // (ADR-0035), not the pcap store. The webhook enqueues it only if capture-push is enabled in the
+    // policy (the probe sets creds.notifyCaptured before huntLoopBegin) and the BSSID is new this run.
+    // The last BSSID byte increments per call so a re-driving verify (which re-injects to give a
+    // late-attaching monitor a fresh POST to witness) presents a DISTINCT network each time — the
+    // one-push-per-BSSID dedup would otherwise suppress every re-injection after the first.
+    static uint8_t seq = 0;
+    CaptureFact c;
+    const uint8_t bssid[6] = {0x02, 0x53, 0x41, 0x50, 0x50, seq++};
+    std::memcpy(c.bssid, bssid, 6);
+    std::strncpy(c.ssid, "SAPPER-VERIFY", sizeof(c.ssid) - 1);
+    Serial.println("[WEBHOOK] injecting synthetic capture fact (verify stimulus)");
+    g_bus.publish(AppEvent::handshakeCaptured(c));
 }
 #endif
 

@@ -133,6 +133,44 @@ void test_deauth_absent_key_loads_disarmed(void) {
     TEST_ASSERT_FALSE(out.deauthEnabled);
 }
 
+// --- slice-0036: the per-type push selector round-trips, with migration defaults (ADR-0035) ---------
+
+void test_notify_selector_roundtrips(void) {
+    // Explicitly set all three, with cracked OFF *despite* its true default: persist writes each key, so
+    // load reads the stored value back — an explicit false must not be overridden by the migration default.
+    ProvisioningRecord in = makeRecord("net-n", "passNNNNNNNN", "keyNNNNNNNN");
+    in.notifyCaptured = true;
+    in.notifyCracked = false;
+    in.notifySyncError = true;
+    TEST_ASSERT_TRUE(persistProvisioning(in));
+
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_TRUE(out.notifyCaptured);
+    TEST_ASSERT_FALSE(out.notifyCracked);
+    TEST_ASSERT_TRUE(out.notifySyncError);
+}
+
+void test_notify_absent_keys_load_with_migration_defaults(void) {
+    // A device provisioned before the selector existed: a valid triad in NVS, no notify keys. Seeded raw
+    // (the store's wire names) to reproduce the upgrade. loadProvisioning must apply the
+    // behaviour-preserving defaults (ADR-0035 decision 5): cracked ON (keeps the ADR-0023 push),
+    // captured/sync-error OFF (opt-in, no surprise flood on upgrade). Guards the getBool(key, default)
+    // arguments — a swapped default here re-introduces exactly that regression.
+    Preferences prefs;
+    TEST_ASSERT_TRUE(prefs.begin("sapper", /*readOnly=*/false));
+    prefs.putString("wifi_ssid", "legacy-net");
+    prefs.putString("wifi_pass", "legacypass1");
+    prefs.putString("wpasec_key", "legacykey01");
+    prefs.end();
+
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_TRUE(out.notifyCracked);
+    TEST_ASSERT_FALSE(out.notifyCaptured);
+    TEST_ASSERT_FALSE(out.notifySyncError);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_persist_then_load_roundtrips);
@@ -142,5 +180,7 @@ int main(int, char**) {
     RUN_TEST(test_seed_valid_replaces_triad);
     RUN_TEST(test_deauth_arm_roundtrips_and_defaults_off);
     RUN_TEST(test_deauth_absent_key_loads_disarmed);
+    RUN_TEST(test_notify_selector_roundtrips);
+    RUN_TEST(test_notify_absent_keys_load_with_migration_defaults);
     return UNITY_END();
 }

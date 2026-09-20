@@ -21,6 +21,7 @@
     "verify:deauth-loop": "node scripts/0030-deauth-loop-verify.mjs",
     "verify:capture-notify": "node scripts/0032-capture-notify-verify.mjs",
     "verify:hunt-hud": "node scripts/0034-hunt-hud-verify.mjs",
+    "verify:webhook-capture": "node scripts/0036-webhook-capture-verify.mjs",
     "lint": "node scripts/lint-docs.mjs .",
     "index": "node scripts/build-index.mjs ."
   },

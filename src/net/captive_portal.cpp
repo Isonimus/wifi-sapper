@@ -31,6 +31,10 @@ constexpr char kFormHtml[] =
     "<p>wpa-sec API key<br><input name='key' maxlength='64' required></p>"
     "<p>Push webhook URL (optional; ntfy or Discord, https)<br>"
     "<input name='webhook' type='url' maxlength='160' placeholder='https://ntfy.sh/your-topic'></p>"
+    "<fieldset><legend>Push these (only if a webhook is set)</legend>"
+    "<label><input name='nCracked' type='checkbox' checked> Cracked passwords</label><br>"
+    "<label><input name='nCaptured' type='checkbox'> Handshake captures (one per network)</label><br>"
+    "<label><input name='nSyncErr' type='checkbox'> Sync errors (appliance off-air)</label></fieldset>"
     "<p><label><input name='deauth' type='checkbox'> Enable deauth (arm)</label><br>"
     "<small>Only on networks you are authorized to test. Knocks clients off discovered APs to force "
     "handshakes. Off by default.</small></p>"
@@ -104,6 +108,13 @@ void CaptivePortal::handleSave() {
     // Arm deauth only if the operator actively checked the box (ADR-0029): an HTML checkbox posts
     // "on" when checked and is absent otherwise, so an unset field is the default-off disarmed state.
     record.deauthEnabled = (m_http.arg("deauth") == "on");
+    // Per-type push selector (ADR-0035, §4 #19): each box posts "on" when checked, absent otherwise, so
+    // an unchecked box is that type disabled. The form ships "cracked" checked (the common case) and the
+    // two new types unchecked, matching the NVS read-defaults. Like deauth, this is fail-safe-but-silent
+    // on a stateless-form re-save (the LEDGER portal-statelessness defect), not widened here.
+    record.notifyCaptured = (m_http.arg("nCaptured") == "on");
+    record.notifyCracked = (m_http.arg("nCracked") == "on");
+    record.notifySyncError = (m_http.arg("nSyncErr") == "on");
     // The webhook is optional (ADR-0023): blank stores as disabled. But a non-blank value that is not a
     // usable https endpoint is rejected loudly rather than silently saved-and-ignored — a mistyped http://
     // URL should tell the operator, not quietly leave push off.
