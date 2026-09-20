@@ -51,6 +51,15 @@ If a provisioned device cannot reach its configured network after three attempts
 to the setup portal automatically, so a moved or reconfigured appliance can be pointed at a new
 network without a reflash.
 
+The re-opened form shows your **stored settings** so a re-save does not silently undo them (ADR-0037):
+the **Push these** and **Enable deauth** checkboxes come up reflecting how the device is currently set,
+and the wpa-sec key and webhook URL fields carry a *"leave blank to keep"* hint. Secret values are never
+displayed — only the fact that one is stored — so nothing sensitive is exposed to anyone on the setup AP.
+Re-enter the **network SSID + passphrase** (the pair you came to fix), and **leave the key and webhook
+blank to keep them** unchanged, or type a new value to replace one. To turn push off, uncheck all three
+**Push these** boxes (you do not need to clear the URL). Switching an already-configured webhook back to
+*none* through the portal is not supported (a documented limitation, [`LEDGER.md`](LEDGER.md), ADR-0037).
+
 > **Secrets at rest.** Credentials are stored in plaintext NVS. Anyone with physical access and a
 > flash dump can read them; flash encryption is a tracked follow-up ([`LEDGER.md`](LEDGER.md),
 > ADR-0006). Treat a provisioned device as holding its network passphrase in the clear.

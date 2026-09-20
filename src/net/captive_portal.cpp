@@ -11,6 +11,8 @@
 
 #include <cstring>
 
+#include "net/provisioning_form.h"  // SetupFormModel, buildSetupForm, resolveProvisioningUpdate
+
 namespace sapper {
 namespace {
 
@@ -18,28 +20,6 @@ namespace {
 // form, which is what triggers the OS captive-portal check (ADR-0006 #1).
 constexpr uint8_t kDnsPort = 53;
 constexpr char kDnsWildcard[] = "*";
-
-// The one config form. Static and value-free: it carries no device state, so it needs no
-// per-request rendering. Empty passphrase = an open network (validateCredentials allows it).
-constexpr char kFormHtml[] =
-    "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>WiFi Sapper setup</title></head><body>"
-    "<h2>WiFi Sapper setup</h2>"
-    "<form method='POST' action='/save'>"
-    "<p>Network name (SSID)<br><input name='ssid' maxlength='32' required></p>"
-    "<p>Passphrase (blank for open)<br><input name='pass' type='password' maxlength='63'></p>"
-    "<p>wpa-sec API key<br><input name='key' maxlength='64' required></p>"
-    "<p>Push webhook URL (optional; ntfy or Discord, https)<br>"
-    "<input name='webhook' type='url' maxlength='160' placeholder='https://ntfy.sh/your-topic'></p>"
-    "<fieldset><legend>Push these (only if a webhook is set)</legend>"
-    "<label><input name='nCracked' type='checkbox' checked> Cracked passwords</label><br>"
-    "<label><input name='nCaptured' type='checkbox'> Handshake captures (one per network)</label><br>"
-    "<label><input name='nSyncErr' type='checkbox'> Sync errors (appliance off-air)</label></fieldset>"
-    "<p><label><input name='deauth' type='checkbox'> Enable deauth (arm)</label><br>"
-    "<small>Only on networks you are authorized to test. Knocks clients off discovered APs to force "
-    "handshakes. Off by default.</small></p>"
-    "<p><button type='submit'>Save &amp; reboot</button></p>"
-    "</form></body></html>";
 
 constexpr char kSuccessHtml[] =
     "<!DOCTYPE html><html><body><h2>Saved.</h2>"
@@ -88,33 +68,66 @@ void CaptivePortal::handle() {
     m_http.handleClient();
 }
 
-void CaptivePortal::handleRoot() { m_http.send(200, "text/html", kFormHtml); }
+void CaptivePortal::handleRoot() {
+    // Render the form from the *stored* state so a re-save (the STA-fail fallback) shows the armed
+    // deauth / push-selector toggles rather than silently resetting them (ADR-0037). The model carries
+    // no secret string, so no provisioned secret can reach the served HTML (§4 #20) — only the fact
+    // that a key/webhook is stored, to invite "leave blank to keep".
+    ProvisioningRecord stored = {};
+    SetupFormModel model = {};
+    if (loadProvisioning(stored)) {
+        model.deauthArmed = stored.deauthEnabled;
+        model.notifyCaptured = stored.notifyCaptured;
+        model.notifyCracked = stored.notifyCracked;
+        model.notifySyncError = stored.notifySyncError;
+        model.hasStoredKey = stored.key[0] != '\0';
+        model.hasStoredWebhook = stored.webhookUrl[0] != '\0';
+    } else {
+        // First boot (or a corrupt/half-written record): fresh defaults — "cracked" pre-checked to match
+        // the ADR-0035 NVS read-default, everything else off and no secret stored.
+        model.notifyCracked = true;
+    }
+
+    char html[kSetupFormBufSize];
+    if (buildSetupForm(model, html, sizeof(html)) == 0) {
+        // The form outgrew its buffer: serve an error, never a truncated half-form (§3, fail loud).
+        m_http.send(500, "text/html", "<h2>Could not render the setup form.</h2>");
+        return;
+    }
+    m_http.send(200, "text/html", html);
+}
 
 void CaptivePortal::handleSave() {
-    ProvisioningRecord record = {};
+    ProvisioningRecord submitted = {};
     // Over-length any field -> reject as a bad submission rather than store a truncated value.
-    if (!copyBounded(record.ssid, sizeof(record.ssid), m_http.arg("ssid")) ||
-        !copyBounded(record.pass, sizeof(record.pass), m_http.arg("pass")) ||
-        !copyBounded(record.key, sizeof(record.key), m_http.arg("key")) ||
-        !copyBounded(record.webhookUrl, sizeof(record.webhookUrl), m_http.arg("webhook"))) {
+    if (!copyBounded(submitted.ssid, sizeof(submitted.ssid), m_http.arg("ssid")) ||
+        !copyBounded(submitted.pass, sizeof(submitted.pass), m_http.arg("pass")) ||
+        !copyBounded(submitted.key, sizeof(submitted.key), m_http.arg("key")) ||
+        !copyBounded(submitted.webhookUrl, sizeof(submitted.webhookUrl), m_http.arg("webhook"))) {
         m_http.send(400, "text/html", "<h2>A field is too long.</h2><p><a href='/'>Back</a></p>");
         return;
     }
+    // Arm deauth only if the operator actively checked the box (ADR-0029): an HTML checkbox posts
+    // "on" when checked and is absent otherwise, so an unset field is the default-off disarmed state.
+    // The form now renders the stored state (ADR-0037), so an unchecked box is a deliberate disarm.
+    submitted.deauthEnabled = (m_http.arg("deauth") == "on");
+    // Per-type push selector (ADR-0035, §4 #19): each box posts "on" when checked, absent otherwise.
+    submitted.notifyCaptured = (m_http.arg("nCaptured") == "on");
+    submitted.notifyCracked = (m_http.arg("nCracked") == "on");
+    submitted.notifySyncError = (m_http.arg("nSyncErr") == "on");
+
+    // Merge over the stored record (ADR-0037): a blank key/webhook keeps its stored value, so a re-save
+    // to fix WiFi does not silently wipe the secret the operator did not retype; the pair and the
+    // toggles always come from this submission. First boot (no stored record) is a verbatim copy.
+    ProvisioningRecord stored = {};
+    const bool hasStored = loadProvisioning(stored);
+    ProvisioningRecord record = {};
+    resolveProvisioningUpdate(submitted, stored, hasStored, record);
 
     if (validateCredentials(record.ssid, record.pass, record.key) != CredentialError::None) {
         m_http.send(400, "text/html", "<h2>Invalid credentials.</h2><p><a href='/'>Back</a></p>");
         return;
     }
-    // Arm deauth only if the operator actively checked the box (ADR-0029): an HTML checkbox posts
-    // "on" when checked and is absent otherwise, so an unset field is the default-off disarmed state.
-    record.deauthEnabled = (m_http.arg("deauth") == "on");
-    // Per-type push selector (ADR-0035, §4 #19): each box posts "on" when checked, absent otherwise, so
-    // an unchecked box is that type disabled. The form ships "cracked" checked (the common case) and the
-    // two new types unchecked, matching the NVS read-defaults. Like deauth, this is fail-safe-but-silent
-    // on a stateless-form re-save (the LEDGER portal-statelessness defect), not widened here.
-    record.notifyCaptured = (m_http.arg("nCaptured") == "on");
-    record.notifyCracked = (m_http.arg("nCracked") == "on");
-    record.notifySyncError = (m_http.arg("nSyncErr") == "on");
     // The webhook is optional (ADR-0023): blank stores as disabled. But a non-blank value that is not a
     // usable https endpoint is rejected loudly rather than silently saved-and-ignored — a mistyped http://
     // URL should tell the operator, not quietly leave push off.
