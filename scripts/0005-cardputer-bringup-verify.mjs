@@ -6,6 +6,13 @@
  * proves the runtime claims a unit test cannot: the panel came up and the channel answers
  * without mutating state (slice-0005 Scenarios C, D). It has two halves, per docs/quality-bar
  * §3:
+ *
+ * Since slice-0042 (ADR-0041) this one script proves BOTH boot faces, by which build is flashed:
+ *   - a NORMAL build dumps the product SPLASH (name + version + tagline) — slice-0042 Scenario A;
+ *   - a `cardputer_testhooks` build with SAPPER_TEST_PANEL=1 dumps the PANEL PROOF (the RGB/border/
+ *     diagonal diagnostic that was the boot face through slice-0005) — slice-0042 Scenario B.
+ * The assertions below are identical for both: dump the canvas, reconstruct a PNG, fail on any
+ * fatal/malformed reply or a non-read-only channel. Which face the PNG shows is the human half.
  *   - error-check (pass/fail, machine-checkable): fails on any [FATAL]/[ERROR] line, on a
  *     missing or malformed reply, or on the free heap moving between two `state` reads;
  *   - artifact (human-reviewed): reconstructs the canvas `dump` into a PNG so a human can

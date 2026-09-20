@@ -14,6 +14,7 @@
 #include <cstdio>
 
 #include "config/active_board.h"
+#include "config/firmware_version.h"
 #include "hal/display/display_hal.h"
 #include "hal/display/null_display.h"
 #include "hal/serial/serial_channel.h"
@@ -37,6 +38,7 @@
 #include "rf_sniff_probe.h"
 #include "capture_probe.h"
 #include "hunt_hud_probe.h"
+#include "panel_probe.h"
 #include "screen_probe.h"
 #include "sync_probe.h"
 #include "upload_probe.h"
@@ -58,47 +60,24 @@ IDisplay& display() {
     return instance;
 }
 
-// RGB565 primaries. The R/G/B blocks make a colour-order or byte-order error obvious in the
-// dump artifact; the border makes an offset or clipping error obvious; the diagonal makes a
-// mirror or rotation error obvious. Together they confirm the ADR-0002 §5 panel parameters.
+// RGB565 colours the boot splash and the Maintenance panel draw with. The panel-parameter proof
+// (the RGB/border/diagonal diagnostic that was the boot face through slice-0005) moved to panel_probe
+// with ADR-0041, so its extra primaries live there now, not here.
 constexpr uint16_t kBlack = 0x0000;
 constexpr uint16_t kWhite = 0xFFFF;
-constexpr uint16_t kRed = 0xF800;
 constexpr uint16_t kGreen = 0x07E0;
-constexpr uint16_t kBlue = 0x001F;
 
-void fillRect(IDisplay& d, int x0, int y0, int w, int h, uint16_t color) {
-    for (int y = y0; y < y0 + h; ++y) {
-        for (int x = x0; x < x0 + w; ++x) {
-            d.drawPixel(x, y, color);
-        }
-    }
-}
-
-// Boot self-test / splash. It doubles as the ADR-0002 §5 panel proof; a real status surface is
-// slice-7 (alert surfaces). A screenless board's NullDisplay makes every call a no-op.
-void drawBringupFrame(IDisplay& d) {
-    const int w = d.width();
-    const int h = d.height();
+// The shipped boot face (ADR-0041): a product splash, not a diagnostic. Name, firmware version, and a
+// one-line tagline, drawn with the drawText primitive slice-0026's HUD already proved on this panel.
+// A screenless board's NullDisplay makes every call a no-op. The panel-parameter proof it replaced is
+// now a bench probe (panel_probe, SAPPER_TEST_PANEL) so no shipped build renders the test pattern.
+void drawSplashFrame(IDisplay& d) {
     d.fillScreen(kBlack);
-
-    fillRect(d, 3, 3, 20, 20, kRed);
-    fillRect(d, 25, 3, 20, 20, kGreen);
-    fillRect(d, 47, 3, 20, 20, kBlue);
-
-    for (int x = 0; x < w; ++x) {
-        d.drawPixel(x, 0, kWhite);
-        d.drawPixel(x, h - 1, kWhite);
-    }
-    for (int y = 0; y < h; ++y) {
-        d.drawPixel(0, y, kWhite);
-        d.drawPixel(w - 1, y, kWhite);
-    }
-
-    const int span = w < h ? w : h;
-    for (int i = 0; i < span; ++i) {
-        d.drawPixel(i * (w - 1) / (span - 1), i * (h - 1) / (span - 1), kWhite);
-    }
+    d.drawText(8, 40, "WiFi Sapper", kGreen, 3);
+    char versionLine[24];
+    std::snprintf(versionLine, sizeof(versionLine), "v%s", kFirmwareVersion);
+    d.drawText(8, 78, versionLine, kWhite, 1);
+    d.drawText(8, 96, "autonomous handshake hunter", kWhite, 1);
 }
 
 // The live boot phase. main.cpp owns it; SerialChannel reads it by reference so `[STATE]` always
@@ -276,7 +255,7 @@ void setup() {
     if (!d.begin()) {
         Serial.println("[FATAL] display init failed");
     }
-    drawBringupFrame(d);
+    drawSplashFrame(d);
     d.present();
 
 #ifdef SAPPER_TEST_HOOKS
@@ -288,6 +267,7 @@ void setup() {
     // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
+    if (panelProbeBegin(d)) return;    // renders the ADR-0002 §5 panel proof over the splash (ADR-0041).
     if (captureProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (huntHudProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (screenProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
@@ -324,6 +304,13 @@ void loop() {
     if (huntHudProbeActive()) {  // bench live-hunt-HUD verify owns the device; normal boot is skipped.
         g_channel.pump();  // answers `dump` — pump the channel so serial commands run while it renders.
         huntHudProbePump();
+        delay(5);
+        return;
+    }
+    if (panelProbeActive()) {  // bench panel proof owns the device; the normal boot loop is skipped.
+        g_channel.pump();  // like the screen verify, this one needs `dump` answered — pump the channel so
+                           // serial commands run while the device parks on the diagnostic frame.
+        panelProbePump();
         delay(5);
         return;
     }

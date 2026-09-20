@@ -96,7 +96,7 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 |---|---|
 | `npm run test:native` | Host unit tests — the pure logic (ADR-0004 lane 1). |
 | `npm run build:boards` | Compile the reference `cardputer` firmware (lane 2). |
-| `npm run verify:device` | Serial-driven bring-up verify on an attached board (slice-0005, lane 3). |
+| `npm run verify:device` | Serial-driven boot-face verify on an attached board (slice-0005/0042, lane 3). Proves **both** faces by which build is flashed: a normal `cardputer` build dumps the product **splash** (name + version + tagline); a `cardputer_testhooks` build with `SAPPER_TEST_PANEL=1` dumps the **panel proof** (the RGB/border/diagonal diagnostic — colour order, offset, mirror/rotation; ADR-0002 §5). PNG to `artifacts/0005-cardputer-bringup.png`. See the script header. |
 | `npm run verify:provisioning` | Serial-driven provisioning verify on an attached board (slice-0007, lane 3). See the script header for the two scenarios and their preconditions. |
 | `npm run verify:rf-sniffer` | Serial-driven RF sniffer verify on an attached board (slice-0012, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_RF_BSSID`/`SAPPER_TEST_RF_CHANNEL` set to a nearby AP; see the script header. |
 | `npm run verify:rf-discover` | Serial-driven RF channel-hopping + AP-discovery verify on an attached board (slice-0014, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_RF_HOP` set to a channel list (e.g. `1,6,11`) near live APs; see the script header. |
