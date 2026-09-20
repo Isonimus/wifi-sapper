@@ -1,8 +1,10 @@
 """PlatformIO pre-build hook: weaken ieee80211_raw_frame_sanity_check.
 
-The raw transmitter (src/net/raw_transmitter_esp32.cpp, SAPPER_TEST_HOOKS-gated)
-provides its own strong definition of ieee80211_raw_frame_sanity_check to allow
-management-frame TX (ADR-0027). For that override to link cleanly, the matching
+The raw transmitter (src/net/raw_transmitter_esp32.cpp) provides its own strong
+definition of ieee80211_raw_frame_sanity_check to allow management-frame TX
+(ADR-0027). Since ADR-0029 it compiles into every device build (not just the
+SAPPER_TEST_HOOKS bench build), so this override has a shipped consumer and must
+link in env:cardputer too. For that override to link cleanly, the matching
 symbol inside the precompiled libnet80211.a must be *weak*. A framework-libs reinstall/update can silently
 restore it to strong, which breaks the link with a "multiple definition" error.
 

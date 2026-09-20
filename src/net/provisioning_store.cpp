@@ -19,6 +19,7 @@ constexpr char kKeySsid[] = "wifi_ssid";
 constexpr char kKeyPass[] = "wifi_pass";
 constexpr char kKeyKey[] = "wpasec_key";
 constexpr char kKeyWebhook[] = "webhook_url";  // 11 chars, within NVS's 15-char key limit.
+constexpr char kKeyDeauth[] = "deauth_arm";    // 10 chars; the default-off deauth arm flag (ADR-0029).
 
 }  // namespace
 
@@ -39,6 +40,10 @@ bool loadProvisioning(ProvisioningRecord& out) {
     // leaves as the zeroed default — an empty URL means "push disabled", not a load failure, so it
     // never affects the validity gate below.
     prefs.getString(kKeyWebhook, out.webhookUrl, sizeof(out.webhookUrl));
+    // Default-off (ADR-0029): a device provisioned before this flag existed, or one whose operator
+    // left the box unchecked, reads back disarmed — arming is never silent. Not part of the validity
+    // gate below (deauth is optional, like the webhook).
+    out.deauthEnabled = prefs.getBool(kKeyDeauth, /*defaultValue=*/false);
     prefs.end();
 
     // A half-written or corrupt triad reads as "not provisioned" so the boot gate opens the
@@ -73,7 +78,11 @@ bool persistProvisioning(const ProvisioningRecord& record) {
     // all-or-nothing clear() below, so a partial write never leaves a webhook beside a stale triad.
     const bool wroteWebhook =
         prefs.putString(kKeyWebhook, record.webhookUrl) == std::strlen(record.webhookUrl);
-    const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook;
+    // The arm flag (ADR-0029): putBool stores one byte and returns 1 on success. It rides the same
+    // all-or-nothing clear() below, so a partial write never leaves a stale arm state beside a fresh
+    // triad — a re-provision that fails mid-way disarms rather than silently keeping deauth on.
+    const bool wroteDeauth = prefs.putBool(kKeyDeauth, record.deauthEnabled) == sizeof(uint8_t);
+    const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook && wroteDeauth;
     if (!wrote) {
         prefs.clear();  // partial write — wipe so no mixed triad can survive to the next boot.
     }

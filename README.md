@@ -28,7 +28,13 @@ portal** instead of trying to hunt (ADR-0006):
    appliance pushes a notification naming the network (ESSID + BSSID) each time a password comes back
    cracked. The URL must be `https://`; leave it blank to disable push. The plaintext password is
    **never** sent — only which network was cracked.
-6. Save. The device stores the credentials and reboots to join the network.
+6. Optionally, **Enable deauth (arm)** (ADR-0029): when checked, the hunt loop broadcasts deauth
+   frames at every AP it discovers, knocking clients off so they re-associate and their handshake can
+   be captured — the appliance's active industrial-pentest mode. It is **off by default**: a fresh or
+   unchecked device hunts passively and transmits nothing. **Arm it only where every network in radio
+   range is one you own or are explicitly authorized to test** — deauthing networks you are not
+   authorized to test is illegal in most jurisdictions.
+7. Save. The device stores the credentials and reboots to join the network.
 
 On a screenless board the AP name is your only cue, which is why it is a documented, predictable
 pattern rather than a random string.
@@ -62,4 +68,5 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run verify:webhook` | Serial-driven push-webhook verify on an attached board (slice-0024, lane 3). Flash the `cardputer_testhooks` build with the same real credentials, a real `SAPPER_TEST_WEBHOOK_URL` (an https ntfy/Discord endpoint), and `SAPPER_TEST_WEBHOOK=1`; proves a new-password fact travels the bus into an STA window and the transport POSTs it to the live endpoint (2xx) over TLS validated against the system CA bundle. Confirm the notification actually arrived. See the script header. |
 | `npm run verify:screen` | Serial-driven status-HUD/toast verify on an attached board with a panel (slice-0026, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_SCREEN=1` (no network or credentials needed — rendering is local); dumps the canvas to `artifacts/0026-screen-toast.png`. Fails if the panel is blank; confirm the HUD (status, counters, sync line) and the CRACKED banner render legibly against the artifact. See the script header. |
 | `npm run verify:deauth` | Serial-driven deauth-TX verify on an attached board (slice-0028, lane 3). **Authorized targets only.** Flash the `cardputer_testhooks` build with `SAPPER_TEST_DEAUTH_BSSID` + `SAPPER_TEST_DEAUTH_CHANNEL` set to a network you own; proves the device puts real deauth/disassoc frames on air (the SDK bypass is active and `txOk>0`). Logs to `artifacts/0028-deauth-tx.txt`; if a client on the target reconnects during the run, the forced handshake is saved as `artifacts/0028-deauth-forced-handshake.pcap`. See the script header. |
+| `npm run verify:deauth-loop` | Serial-driven autonomous-deauth verify on an attached board (slice-0030, lane 3). **Authorized environments only.** Drives the **shipped** `cardputer` binary, provisioned via the portal with **Enable deauth** checked and an authorized AP on air; proves an armed *shipped* loop transmits real deauth during its hunt (`[DEAUTH] ARMED`, repeating `txOk>0`). Logs to `artifacts/0030-deauth-loop-tx.txt`. See the script header. |
 | `npm run lint` / `npm run index` | Documentation linter and generated ADR index. |

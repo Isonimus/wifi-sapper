@@ -1,17 +1,18 @@
 /**
  * @file raw_transmitter_esp32.h
- * @brief ESP-IDF raw-TX implementation of the RawTransmitter seam (ADR-0027). Device-only AND
- *        SAPPER_TEST_HOOKS-gated — the raw-TX capability is absent from any shipped binary.
+ * @brief ESP-IDF raw-TX implementation of the RawTransmitter seam (ADR-0027, ADR-0029). Device-only.
  *
  * Wraps esp_wifi_80211_tx behind the pure RawTransmitter interface (raw_transmitter.h). It carries
  * no frame-building logic — it transmits the bytes the pure deauth builder produced (§4 invariant
- * #15). The whole class, and the SDK sanity-check bypass it depends on, compile only under
- * SAPPER_TEST_HOOKS (ADR-0027 decision 3): a non-hooks build cannot transmit a deauth frame at all.
- * Until the allowlist-gated unattended-deauth operating mode ships (LEDGER), this gate stands.
+ * #15). This compiles into every device build (ADR-0029 superseded ADR-0027 decision 3's
+ * SAPPER_TEST_HOOKS gate): the raw-TX capability now ships, but a frame is transmitted only when the
+ * operator has *armed* deauth through the default-off provisioning toggle — `hunt_loop` injects this
+ * transmitter into the HuntEngine only when armed, and a disarmed device transmits nothing
+ * (§4 invariant #16). It is excluded only from the native lane (no esp_wifi there).
  */
 #pragma once
 
-#if !defined(UNIT_TEST) && defined(SAPPER_TEST_HOOKS)
+#if !defined(UNIT_TEST)
 
 #include "net/raw_transmitter.h"
 
@@ -30,4 +31,4 @@ public:
 
 }  // namespace sapper
 
-#endif  // !UNIT_TEST && SAPPER_TEST_HOOKS
+#endif  // !UNIT_TEST

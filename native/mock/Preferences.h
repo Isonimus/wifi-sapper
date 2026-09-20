@@ -4,7 +4,7 @@
  *
  * Device builds resolve <Preferences.h> to the real ESP-IDF header; this file is on the include
  * path of env:native ONLY (`-I native/mock`), so `net/provisioning_store.cpp` compiles unchanged on
- * the host. It models just the surface that file uses — begin/getString/putString/clear/end — plus
+ * the host. It models just the surface that file uses — begin/getString/putString/getBool/putBool/clear/end — plus
  * a fault-injection knob so a partial NVS write (a real hardware failure mode) can be reproduced on
  * the host, which the hardware lane cannot induce on demand. It is not a general NVS emulator; it
  * grows a call only when the store gains a real one (ADR-0008, rule of three).
@@ -16,6 +16,7 @@
 #endif
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <string>
@@ -73,6 +74,26 @@ public:
         }
         sapper_test::nvsStore()[m_name][key] = value;
         return std::strlen(value);
+    }
+
+    /// One-byte bool store (ADR-0029's deauth arm flag). Rides the same fault-injection knob as
+    /// putString so a mid-triad failure can be reproduced, and returns 1 on success like real NVS.
+    size_t putBool(const char* key, bool value) {
+        if (!m_open) return 0;
+        if (!sapper_test::failPutKey().empty() && sapper_test::failPutKey() == key) {
+            return 0;  // injected fault: short write, nothing stored.
+        }
+        sapper_test::nvsStore()[m_name][key] = value ? "1" : "0";
+        return sizeof(uint8_t);  // real Preferences::putBool stores one byte.
+    }
+
+    bool getBool(const char* key, bool defaultValue) {
+        if (!m_open) return defaultValue;
+        const auto ns = sapper_test::nvsStore().find(m_name);
+        if (ns == sapper_test::nvsStore().end()) return defaultValue;
+        const auto entry = ns->second.find(key);
+        if (entry == ns->second.end()) return defaultValue;  // key absent -> the default (default-off).
+        return entry->second != "0";
     }
 
     size_t getString(const char* key, char* out, size_t maxLen) {

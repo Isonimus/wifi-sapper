@@ -27,9 +27,11 @@
 
 #include "net/ap_registry.h"
 #include "net/channel_hopper.h"
+#include "net/deauth.h"  // ManagementSubtype, for the armed-deauth burst (ADR-0029).
 #include "net/handshake_collector.h"
 #include "net/handshake_consumer.h"
 #include "net/radio_sniffer.h"
+#include "net/raw_transmitter.h"
 
 namespace sapper {
 
@@ -50,6 +52,11 @@ struct HuntConfig {
     uint32_t discoverWindowMs = 4000;  ///< How long one discovery sweep runs before selecting targets.
     uint32_t captureWindowMs = 8000;   ///< How long to sit on one target before advancing.
     uint32_t settleMs = 20;            ///< Quiesce settle before a sink is reset/re-targeted.
+    /// Cadence of the broadcast deauth burst during Capturing when a transmitter is injected
+    /// (ADR-0029). Deliberately coarse: a deauthed client re-associates on a seconds scale and the
+    /// 4-way handshake we want only completes *after* it does, so this leaves a listen gap rather
+    /// than deauthing continuously. Architecture-derived, not yet a measurement (LEDGER, like dwell).
+    uint32_t deauthIntervalMs = 2000;
 };
 
 /**
@@ -65,8 +72,14 @@ class HuntEngine : public FrameConsumer {
 public:
     enum class Phase { Idle, Discovering, Capturing, Quiescing };
 
+    /// @param transmitter Optional raw-TX seam (ADR-0029). When non-null the engine *arms*: during
+    ///        Capturing it broadcasts deauth/disassoc at the current target on the parked channel, to
+    ///        force handshakes. `nullptr` (the default) is a purely passive hunt — the pre-0029
+    ///        behaviour, and the disarmed state a shipped appliance holds until the operator arms it
+    ///        (invariant #16). The engine still *builds* frames only through the pure `buildDeauthFrame`.
     HuntEngine(RadioSniffer& sniffer, ApRegistry& registry, CaptureReadyObserver& observer,
-               const uint8_t* channels, size_t channelCount, const HuntConfig& config = {});
+               const uint8_t* channels, size_t channelCount, const HuntConfig& config = {},
+               RawTransmitter* transmitter = nullptr);
 
     /// Install the engine as the sniffer's consumer on the first hop channel and enter Discovering.
     /// Returns false (and stays Idle) if the sniffer could not enter promiscuous mode.
@@ -87,6 +100,10 @@ public:
     size_t discoveredCount() const { return registry_.count(); }
     /// The BSSID being captured, or nullptr when not in Capturing.
     const uint8_t* capturingBssid() const;
+    /// Monotonic counts of deauth/disassoc frames the raw-TX seam accepted / rejected (ADR-0029), for
+    /// a surface and the on-air verify. Both stay 0 on a disarmed (nullptr-transmitter) engine.
+    uint32_t deauthTxOk() const { return deauthTxOk_; }
+    uint32_t deauthTxFail() const { return deauthTxFail_; }
 
 private:
     /// Post-settle action a Quiescing phase completes into.
@@ -101,10 +118,16 @@ private:
     /// Retune the radio to @p channel and, only on success, record it as the parked channel and the
     /// registry's fallback (ADR-0013 decision #3). Returns whether the radio accepted the channel.
     bool retuneTo(uint8_t channel);
+    /// While Capturing and armed, transmit one broadcast deauth+disassoc burst at the current target
+    /// once the cadence is due (ADR-0029 #1). A no-op when the transmitter is null (disarmed).
+    void maybeTransmitDeauth(uint32_t nowMs);
+    /// Build (pure) and transmit one broadcast frame of @p subtype at @p bssid; tally the outcome.
+    void transmitDeauthFrame(ManagementSubtype subtype, const uint8_t bssid[6]);
 
     RadioSniffer& sniffer_;
     ApRegistry& registry_;
     CaptureReadyObserver& observer_;
+    RawTransmitter* transmitter_;  // null = disarmed (passive hunt); the default (invariant #16).
     HandshakeCollector collector_;         // owned; re-targeted across the round-robin.
     HandshakeConsumer handshakeConsumer_;  // wraps collector_ — must follow it in declaration order.
     ChannelHopper hopper_;
@@ -118,6 +141,9 @@ private:
     size_t targetCount_ = 0;        // snapshot of registry.count() at discovery's end.
     size_t targetIndex_ = 0;        // round-robin cursor into the snapshot.
     uint8_t parkedChannel_ = 0;     // the channel the radio last accepted.
+    uint32_t deauthDueMs_ = 0;      // next-burst deadline while Capturing (armed); wrap-safe via reached().
+    uint32_t deauthTxOk_ = 0;       // deauth/disassoc frames the seam accepted.
+    uint32_t deauthTxFail_ = 0;     // deauth/disassoc frames the seam rejected.
 };
 
 }  // namespace sapper

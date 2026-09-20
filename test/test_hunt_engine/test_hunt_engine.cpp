@@ -15,15 +15,18 @@
 #include <vector>
 
 #include "net/ap_registry.h"
+#include "net/deauth.h"
 #include "net/hunt_engine.h"
 
 #include "../support/fake_radio_sniffer.h"
+#include "../support/fake_raw_transmitter.h"
 #include "../support/frame_builders.h"
 
 using namespace sapper;
 using sapper_test::buildBeacon;
 using sapper_test::buildEapol;
 using sapper_test::FakeRadioSniffer;
+using sapper_test::FakeRawTransmitter;
 
 static const uint8_t kApA[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
 static const uint8_t kApB[6] = {0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
@@ -39,6 +42,7 @@ static HuntConfig testConfig() {
     c.discoverWindowMs = 30;
     c.captureWindowMs = 30;
     c.settleMs = 5;
+    c.deauthIntervalMs = 10;  // short cadence so a burst-then-gap is visible within a capture window.
     return c;
 }
 
@@ -254,6 +258,140 @@ void test_quiesce_settle_is_wraparound_safe(void) {
     TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Discovering), static_cast<int>(engine.phase()));
 }
 
+// --- slice-0030: autonomous in-loop deauth, armed by an injected transmitter (ADR-0029) -----------
+
+// Drive an armed engine to the point of capturing kApA on channel 1, then one Capturing tick so the
+// first deauth burst has fired. Returns with phase == Capturing. Mirrors the discover→capture walk
+// the other tests use, so the deauth behaviour is exercised through the real state machine, not a
+// shortcut.
+static void driveToCapturingWithFirstBurst(HuntEngine& engine, FakeRadioSniffer& sniffer) {
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    engine.tick(30);  // discovery window ends -> quiesce toward capture.
+    engine.tick(35);  // settle elapsed -> capture kApA on channel 1 (arms the deauth cadence at t=35).
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+    engine.tick(36);  // first Capturing tick: cadence due -> one deauth + disassoc burst.
+}
+
+void test_armed_engine_deauths_current_target_broadcast_during_capturing(void) {
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+
+    driveToCapturingWithFirstBurst(engine, sniffer);
+
+    // One burst = a deauth AND a disassoc frame, both broadcast at the AP being captured.
+    TEST_ASSERT_EQUAL_UINT32(2, tx.count());
+    TEST_ASSERT_EQUAL_UINT32(2, engine.deauthTxOk());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxFail());
+
+    const std::vector<uint8_t>& deauth = tx.frames[0];
+    TEST_ASSERT_EQUAL_UINT32(kDeauthFrameLen, deauth.size());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ManagementSubtype::Deauth), deauth[0]);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kBroadcastMac, &deauth[4], 6);   // Addr1 destination = broadcast.
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, &deauth[10], 6);           // Addr2 source = the target BSSID.
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, &deauth[16], 6);           // Addr3 BSSID = the target BSSID.
+}
+
+void test_each_burst_is_a_deauth_and_a_disassoc(void) {
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+
+    driveToCapturingWithFirstBurst(engine, sniffer);
+
+    TEST_ASSERT_EQUAL_UINT32(2, tx.count());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ManagementSubtype::Deauth), tx.frames[0][0]);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ManagementSubtype::Disassoc), tx.frames[1][0]);
+    // The disassoc is broadcast at the same target — differs from the deauth only in the subtype.
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kBroadcastMac, &tx.frames[1][4], 6);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, &tx.frames[1][10], 6);
+}
+
+void test_deauth_respects_the_cadence_not_one_per_tick(void) {
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+
+    driveToCapturingWithFirstBurst(engine, sniffer);  // first burst at t=36; next due at 36+10=46.
+    TEST_ASSERT_EQUAL_UINT32(2, tx.count());
+
+    engine.tick(40);  // within the cadence gap (<46): no new burst — the listen gap for reassociation.
+    TEST_ASSERT_EQUAL_UINT32(2, tx.count());
+    engine.tick(46);  // cadence elapsed: exactly one more burst (two frames), not one per tick.
+    TEST_ASSERT_EQUAL_UINT32(4, tx.count());
+}
+
+void test_disarmed_engine_never_transmits(void) {
+    // The default-off safety gate (invariant #16): a nullptr transmitter (the ctor default) is a
+    // purely passive hunt. This is the property a lost or unarmed shipped unit depends on.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());  // no transmitter.
+
+    driveToCapturingWithFirstBurst(engine, sniffer);
+    // Run the rest of the capture window too, so a full Capturing phase is exercised.
+    engine.tick(46);
+    engine.tick(56);
+
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxOk());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxFail());
+}
+
+void test_rejected_frames_count_as_txfail_not_txok(void) {
+    // The radio rejecting a raw frame (bypass inactive, interface down) must land in deauthTxFail, not
+    // txOk — the on-air verify's heartbeat reads both, and a swapped/dropped fail branch would let a
+    // device that transmits nothing report success. FakeRawTransmitter.nextResult=false is that reject.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    tx.nextResult = false;  // the radio refuses every frame.
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+
+    driveToCapturingWithFirstBurst(engine, sniffer);  // one burst attempted = deauth + disassoc.
+
+    TEST_ASSERT_EQUAL_UINT32(2, tx.count());          // both frames were handed to the seam,
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxOk()); // but neither counted as a success,
+    TEST_ASSERT_EQUAL_UINT32(2, engine.deauthTxFail()); // both counted as failures.
+}
+
+void test_deauth_only_while_capturing_and_stops_once_captured(void) {
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    engine.tick(10);  // Discovering — the radio is not yet on a target.
+    engine.tick(20);
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxOk());  // no deauth outside Capturing.
+
+    engine.tick(30);  // -> quiesce toward capture.
+    engine.tick(35);  // -> Capturing kApA.
+    engine.tick(36);  // first burst.
+    TEST_ASSERT_GREATER_THAN_UINT32(0, engine.deauthTxOk());
+
+    // The handshake arrives: the engine must stop deauthing the instant the capture succeeds.
+    deliverHandshake(sniffer, kApA, 1);
+    engine.tick(37);  // isWpaSecValid -> quiesce (ReportThenAdvance), no deauth.
+    const uint32_t okAtCapture = engine.deauthTxOk();
+    engine.tick(42);  // settle -> report + advance; one AP, so back to Discovering.
+    engine.tick(43);  // Discovering again — no further deauth.
+    engine.tick(44);
+    TEST_ASSERT_EQUAL_UINT32(okAtCapture, engine.deauthTxOk());
+    TEST_ASSERT_EQUAL_UINT32(1, observer.captured.size());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_discovers_then_captures_then_advances);
@@ -263,5 +401,11 @@ int main(int, char**) {
     RUN_TEST(test_target_with_rejected_channel_is_skipped);
     RUN_TEST(test_sink_is_cleared_only_after_the_quiesce_settle);
     RUN_TEST(test_begin_fails_when_sniffer_cannot_start);
+    RUN_TEST(test_armed_engine_deauths_current_target_broadcast_during_capturing);
+    RUN_TEST(test_each_burst_is_a_deauth_and_a_disassoc);
+    RUN_TEST(test_deauth_respects_the_cadence_not_one_per_tick);
+    RUN_TEST(test_disarmed_engine_never_transmits);
+    RUN_TEST(test_rejected_frames_count_as_txfail_not_txok);
+    RUN_TEST(test_deauth_only_while_capturing_and_stops_once_captured);
     return UNITY_END();
 }

@@ -18,6 +18,7 @@
     "verify:webhook": "node scripts/0024-webhook-verify.mjs",
     "verify:screen": "node scripts/0026-screen-verify.mjs",
     "verify:deauth": "node scripts/0028-deauth-verify.mjs",
+    "verify:deauth-loop": "node scripts/0030-deauth-loop-verify.mjs",
     "lint": "node scripts/lint-docs.mjs .",
     "index": "node scripts/build-index.mjs ."
   },

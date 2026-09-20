@@ -31,6 +31,9 @@ constexpr char kFormHtml[] =
     "<p>wpa-sec API key<br><input name='key' maxlength='64' required></p>"
     "<p>Push webhook URL (optional; ntfy or Discord, https)<br>"
     "<input name='webhook' type='url' maxlength='160' placeholder='https://ntfy.sh/your-topic'></p>"
+    "<p><label><input name='deauth' type='checkbox'> Enable deauth (arm)</label><br>"
+    "<small>Only on networks you are authorized to test. Knocks clients off discovered APs to force "
+    "handshakes. Off by default.</small></p>"
     "<p><button type='submit'>Save &amp; reboot</button></p>"
     "</form></body></html>";
 
@@ -98,6 +101,9 @@ void CaptivePortal::handleSave() {
         m_http.send(400, "text/html", "<h2>Invalid credentials.</h2><p><a href='/'>Back</a></p>");
         return;
     }
+    // Arm deauth only if the operator actively checked the box (ADR-0029): an HTML checkbox posts
+    // "on" when checked and is absent otherwise, so an unset field is the default-off disarmed state.
+    record.deauthEnabled = (m_http.arg("deauth") == "on");
     // The webhook is optional (ADR-0023): blank stores as disabled. But a non-blank value that is not a
     // usable https endpoint is rejected loudly rather than silently saved-and-ignored — a mistyped http://
     // URL should tell the operator, not quietly leave push off.

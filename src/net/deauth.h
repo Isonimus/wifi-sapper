@@ -7,8 +7,9 @@
  * frame a raw-TX seam then transmits. It is the write-side analogue of eapol.h's read-side parsing
  * (§4 invariant #8, #15): all frame *construction* lives here on the native lane, host-unit-tested
  * (ADR-0004 lane 1), so the byte layout is proved with no radio. The raw-TX capability that puts
- * these bytes on the air is a separate, `SAPPER_TEST_HOOKS`-gated device seam (raw_transmitter.h,
- * raw_transmitter_esp32.h; ADR-0027 decision 3).
+ * these bytes on the air is a separate device seam (raw_transmitter.h, raw_transmitter_esp32.h); it
+ * ships in every device build and is gated at runtime by the operator's default-off deauth arm toggle
+ * (ADR-0029 superseded ADR-0027 decision 3's `SAPPER_TEST_HOOKS` compile-gate; §4 invariant #16).
  */
 #pragma once
 

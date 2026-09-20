@@ -96,6 +96,43 @@ void test_seed_valid_replaces_triad(void) {
     TEST_ASSERT_EQUAL_STRING("keySeedCCC", out.key);
 }
 
+// --- slice-0030: the deauth arm flag round-trips, and defaults OFF (ADR-0029) ------------------
+
+void test_deauth_arm_roundtrips_and_defaults_off(void) {
+    // A default record (makeRecord zeroes the struct) is disarmed, and stays disarmed across a
+    // round-trip — arming is never a side effect of provisioning credentials.
+    ProvisioningRecord disarmed = makeRecord("net-a", "passAAAAAAAA", "keyAAAAAAAA");
+    TEST_ASSERT_FALSE(disarmed.deauthEnabled);
+    TEST_ASSERT_TRUE(persistProvisioning(disarmed));
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_FALSE(out.deauthEnabled);
+
+    // Explicitly armed: the flag persists and loads back armed.
+    ProvisioningRecord armed = makeRecord("net-b", "passBBBBBBBB", "keyBBBBBBBB");
+    armed.deauthEnabled = true;
+    TEST_ASSERT_TRUE(persistProvisioning(armed));
+    ProvisioningRecord out2 = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out2));
+    TEST_ASSERT_TRUE(out2.deauthEnabled);
+}
+
+void test_deauth_absent_key_loads_disarmed(void) {
+    // A device provisioned before the arm flag existed: a valid triad in NVS but no deauth key. The
+    // NVS names are the store's wire format (provisioning_store.cpp), seeded raw here to reproduce the
+    // upgrade. loadProvisioning must read the missing key as false — an upgrade never silently arms.
+    Preferences prefs;
+    TEST_ASSERT_TRUE(prefs.begin("sapper", /*readOnly=*/false));
+    prefs.putString("wifi_ssid", "legacy-net");
+    prefs.putString("wifi_pass", "legacypass1");
+    prefs.putString("wpasec_key", "legacykey01");
+    prefs.end();
+
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_FALSE(out.deauthEnabled);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_persist_then_load_roundtrips);
@@ -103,5 +140,7 @@ int main(int, char**) {
     RUN_TEST(test_partial_write_on_reprovision_wipes_instead_of_mixing);
     RUN_TEST(test_seed_invalid_clears_stale_triad);
     RUN_TEST(test_seed_valid_replaces_triad);
+    RUN_TEST(test_deauth_arm_roundtrips_and_defaults_off);
+    RUN_TEST(test_deauth_absent_key_loads_disarmed);
     return UNITY_END();
 }

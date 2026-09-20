@@ -1,0 +1,4 @@
+[DEAUTH] txOk=282 txFail=0 capturing=1
+[DEAUTH] txOk=284 txFail=0 capturing=0
+[DEAUTH] txOk=286 txFail=0 capturing=1
+[DEAUTH] txOk=288 txFail=0 capturing=1

@@ -33,6 +33,11 @@ struct ProvisioningRecord {
     /// Optional push-notification endpoint (ADR-0023). Empty when push is not configured; validated
     /// separately by isUsableWebhookUrl(), so a bad value disables push without gating the boot triad.
     char webhookUrl[kMaxWebhookUrlLen + 1];
+    /// Whether the operator has *armed* autonomous deauth (ADR-0029). Default **false**: the raw-TX
+    /// capability ships in every binary, but the hunt loop transmits deauth only when this is set, so
+    /// a fresh, upgraded, or unarmed device never jams. Set from the captive-portal checkbox; absent
+    /// from NVS on a device provisioned before it existed, where getBool() reads it back as false.
+    bool deauthEnabled;
 };
 
 /**

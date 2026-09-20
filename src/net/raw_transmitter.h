@@ -7,8 +7,9 @@
  * and transmits them; it carries no frame-building or protocol logic — raw bytes only (§4 invariant
  * #15). This header is pure so the abstract seam compiles on the native lane and a host test drives
  * the builder into a fake transmitter through the same transmit() the device path uses (§4 invariant
- * #2). The ESP-IDF implementation is device-only AND gated behind SAPPER_TEST_HOOKS
- * (raw_transmitter_esp32.h): the raw-TX capability is absent from any shipped binary (ADR-0027 #3).
+ * #2). The ESP-IDF implementation is device-only (raw_transmitter_esp32.h) and ships in every device
+ * build; transmitting is gated at runtime by the operator's default-off deauth arm toggle, not at
+ * compile time (ADR-0029 superseded ADR-0027 #3's SAPPER_TEST_HOOKS gate; §4 invariant #16).
  */
 #pragma once
 
