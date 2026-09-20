@@ -23,6 +23,9 @@ public:
 
 private:
     void drawHud(const ScreenView& view);
+    /// The live-hunt line (ADR-0033): a SCAN line while Discovering, or the target + a Beacon/M1–M4
+    /// indicator row + a progress bar while Capturing. Drawn only when a hunt source is wired.
+    void drawHuntLine(const ScreenView& view);
     void drawBanner(const ScreenView& view);
     /// Fill an axis-aligned rect via the pixel primitive — the seam has no fillRect (it grows only when
     /// needed, ADR-0025 decision 3), and render() runs only on a change, so the cost is negligible.

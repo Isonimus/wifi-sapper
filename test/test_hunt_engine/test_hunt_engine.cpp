@@ -392,6 +392,78 @@ void test_deauth_only_while_capturing_and_stops_once_captured(void) {
     TEST_ASSERT_EQUAL_UINT32(1, observer.captured.size());
 }
 
+// --- Live-hunt pull snapshot (slice-0034 Scenarios A, B; ADR-0033) ---------------------------------
+
+void test_snapshot_reflects_discovering(void) {
+    // While Discovering, the snapshot reports the sweep: phase, the parked channel, and the AP count the
+    // HUD's SCAN line shows. Fail-before: without huntSnapshot() this does not compile/return.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    engine.tick(10);
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6));
+    engine.tick(20);
+
+    const HuntSnapshot snap = engine.huntSnapshot();
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntPhase::Discovering), static_cast<int>(snap.phase));
+    TEST_ASSERT_EQUAL_UINT32(2, snap.discovered);
+    TEST_ASSERT_EQUAL_UINT8(engine.parkedChannel(), snap.channel);
+}
+
+void test_snapshot_reflects_populated_capturing(void) {
+    // While Capturing, the snapshot names the target and reports which handshake pieces the collector
+    // holds — the HUD's indicator row. Read before the wpa-sec-valid tick so the phase is still Capturing.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    engine.tick(30);  // discovery ends -> quiesce.
+    engine.tick(35);  // settle elapsed -> Capturing kApA.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+
+    deliverHandshake(sniffer, kApA, 1);  // beacon "Net" + M1 + M2 for the captured target.
+
+    const HuntSnapshot snap = engine.huntSnapshot();
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntPhase::Capturing), static_cast<int>(snap.phase));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, snap.bssid, 6);
+    TEST_ASSERT_EQUAL_STRING("Net", snap.ssid);
+    TEST_ASSERT_TRUE(snap.hasBeacon && snap.hasM1 && snap.hasM2);
+    TEST_ASSERT_FALSE(snap.hasM3 || snap.hasM4);
+    TEST_ASSERT_EQUAL_UINT8(3, snap.collectedCount());
+}
+
+void test_snapshot_hides_target_when_not_capturing(void) {
+    // Once the engine leaves Capturing, the snapshot must NOT report a stale target — the phase guard
+    // restricts the target/flag fields to the Capturing phase. Guards against dropping that guard: the
+    // collector still physically holds the just-captured handshake here, so an unguarded read would leak it.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    engine.tick(30);  // discovery ends -> quiesce.
+    engine.tick(35);  // Capturing kApA.
+    deliverHandshake(sniffer, kApA, 1);  // collector now holds kApA + "Net" + M1 + M2.
+    engine.tick(36);  // wpa-sec valid -> enterQuiesce(ReportThenAdvance): phase leaves Capturing.
+    TEST_ASSERT_NOT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+
+    const HuntSnapshot snap = engine.huntSnapshot();
+    const uint8_t zero[6] = {0};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(zero, snap.bssid, 6);        // no stale target,
+    TEST_ASSERT_EQUAL_STRING("", snap.ssid);                    // no stale name,
+    TEST_ASSERT_FALSE(snap.hasBeacon || snap.hasM1 || snap.hasM2 || snap.hasM3 || snap.hasM4);  // no stale flags.
+    TEST_ASSERT_EQUAL_UINT8(0, snap.collectedCount());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_discovers_then_captures_then_advances);
@@ -407,5 +479,8 @@ int main(int, char**) {
     RUN_TEST(test_disarmed_engine_never_transmits);
     RUN_TEST(test_rejected_frames_count_as_txfail_not_txok);
     RUN_TEST(test_deauth_only_while_capturing_and_stops_once_captured);
+    RUN_TEST(test_snapshot_reflects_discovering);
+    RUN_TEST(test_snapshot_reflects_populated_capturing);
+    RUN_TEST(test_snapshot_hides_target_when_not_capturing);
     return UNITY_END();
 }

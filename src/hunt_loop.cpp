@@ -297,7 +297,8 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
             Serial.println("[FATAL] event bus subscription failed (screen surface)");
             return false;
         }
-        Serial.println("[SCREEN] enabled (status HUD + cracked toast)");
+        g_screen->setHuntSource(*g_engine);  // live-hunt HUD pulls the snapshot each tick (ADR-0033, §4 #18).
+        Serial.println("[SCREEN] enabled (status HUD + live hunt + cracked toast)");
     } else {
         Serial.println("[SCREEN] disabled (no display)");
     }
@@ -343,6 +344,10 @@ const DrainOutcome& huntLoopLastDrain() {
 
 uint32_t huntLoopDrainCount() { return g_supervisor != nullptr ? g_supervisor->drainCount() : 0; }
 
+HuntSnapshot huntLoopSnapshot() {
+    return g_engine != nullptr ? g_engine->huntSnapshot() : HuntSnapshot{};
+}
+
 const SyncOutcome& huntLoopLastSync() { return g_syncLogger.last(); }
 
 uint32_t huntLoopSyncCount() { return g_syncLogger.count(); }
@@ -373,6 +378,18 @@ void huntLoopForceSyncDue() {
     // the deadline an hour out. Test-hooks only, so no shipped binary can force a sync (§4 invariant #4).
     g_scheduler.begin(millis());
     Serial.println("[SYNC] forced due (verify clock-advance stimulus)");
+}
+#endif
+
+#ifdef SAPPER_TEST_HOOKS
+void huntLoopDeferSync() {
+    if (!g_running) return;
+    // The scheduler's first sync is due at begin(), and a *failed* sync stays due (only success pushes it
+    // out), so on a network-less bench it opens an STA window every retry — each one stops the engine, so
+    // it never sustains Capturing. Push the deadline a full interval out (as a success would) so the
+    // hunt-HUD verify can hunt uninterrupted. Test-hooks only (§4 invariant #4).
+    g_scheduler.noteSynced(millis());
+    Serial.println("[SYNC] deferred (hunt-HUD verify: no STA windows while proving the live HUD)");
 }
 #endif
 
@@ -446,16 +463,11 @@ void injectRealPcap() {
 
 }  // namespace
 
-void huntLoopInjectStimulus() {
-    if (!g_running) return;
-    if (kWpaSecTestPcapLen > 0) {  // an operator pcap is embedded — use it instead of the synthetic.
-        injectRealPcap();
-        return;
-    }
-    HandshakeCollector collector(kStimulusBssid, /*channel=*/1);  // matches the stimulus beacon below.
-
-    uint8_t beacon[64];
-    std::memset(beacon, 0, sizeof(beacon));
+// Build the synthetic SAPPER beacon (BSSID kStimulusBssid, SSID "SAPPER", channel 1) into @p beacon,
+// returning its length in @p len. Shared by the upload stimulus (fed to a local collector) and the
+// hunt-HUD stimulus (fed through the engine's onFrame), so the two never drift.
+void buildStimulusBeacon(uint8_t* beacon, uint16_t& len) {
+    std::memset(beacon, 0, 64);
     beacon[0] = 0x80;                       // beacon.
     std::memset(&beacon[4], 0xFF, 6);       // broadcast.
     std::memcpy(&beacon[10], kStimulusBssid, 6);
@@ -468,7 +480,44 @@ void huntLoopInjectStimulus() {
     beacon[bp++] = 0x03;                    // DS Parameter Set,
     beacon[bp++] = 0x01;
     beacon[bp++] = 0x01;                    // channel 1.
-    collector.ingest(beacon, bp);
+    len = bp;
+}
+
+void huntLoopInjectHudStimulus() {
+    if (!g_running || g_engine == nullptr) return;
+    // Drive the engine into a *populated, persistent* Capturing state through the SAME seam a real sniffed
+    // frame uses (§4 invariant #2): the engine's onFrame. The beacon makes the engine discover and target
+    // kStimulusBssid; M1 then lands in its collector while it captures that BSSID, lighting the live HUD's
+    // Beacon + M1 indicators (progress 2/5). Deliberately a PARTIAL handshake — beacon + M1, NO M2: a
+    // wpa-sec-valid set (beacon+M1+M2) would make the engine report-and-advance immediately, so the
+    // populated state would flash by, never sitting still for the panel `dump`. Beacon+M1 is not valid, so
+    // the engine stays on the target for its whole capture window with a stable, dumpable HUD. This is how
+    // the on-air hunt-HUD verify proves the HUD deterministically (ADR-0033 #5). Test-hooks-only — no
+    // shipped binary compiles it, no serial command reaches it (§4 #4). Run the verify on a quiet channel
+    // so the synthetic AP is the one the engine captures.
+    uint8_t beacon[64];
+    uint16_t bl = 0;
+    buildStimulusBeacon(beacon, bl);
+    g_engine->onFrame(beacon, bl);
+
+    uint8_t frame[160];
+    uint16_t len = 0;
+    appendEapol(frame, len, kStimulusBssid, kStimulusClient, 0x0088, /*fromAp=*/true);   // M1 (Ack) only.
+    g_engine->onFrame(frame, len);
+}
+
+void huntLoopInjectStimulus() {
+    if (!g_running) return;
+    if (kWpaSecTestPcapLen > 0) {  // an operator pcap is embedded — use it instead of the synthetic.
+        injectRealPcap();
+        return;
+    }
+    HandshakeCollector collector(kStimulusBssid, /*channel=*/1);  // matches the stimulus beacon.
+
+    uint8_t beacon[64];
+    uint16_t bl = 0;
+    buildStimulusBeacon(beacon, bl);
+    collector.ingest(beacon, bl);
 
     uint8_t frame[160];
     uint16_t len = 0;

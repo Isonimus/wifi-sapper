@@ -30,6 +30,7 @@
 #include "net/deauth.h"  // ManagementSubtype, for the armed-deauth burst (ADR-0029).
 #include "net/handshake_collector.h"
 #include "net/handshake_consumer.h"
+#include "net/hunt_snapshot.h"  // HuntPhase (aliased as Phase), HuntSnapshot, HuntSnapshotSource (ADR-0033).
 #include "net/radio_sniffer.h"
 #include "net/raw_transmitter.h"
 
@@ -68,9 +69,11 @@ struct HuntConfig {
  * and RadioSniffer. The caller must not destroy the engine or its sinks within one settleMs of stop()
  * — the driver callback cannot be hard-joined (ADR-0011).
  */
-class HuntEngine : public FrameConsumer {
+class HuntEngine : public FrameConsumer, public HuntSnapshotSource {
 public:
-    enum class Phase { Idle, Discovering, Capturing, Quiescing };
+    /// The loop phase. Aliased to the shared HuntPhase (ADR-0033) so `HuntEngine::Phase::X` still names
+    /// it while the pull-snapshot POD header can name the enum without including the engine.
+    using Phase = HuntPhase;
 
     /// @param transmitter Optional raw-TX seam (ADR-0029). When non-null the engine *arms*: during
     ///        Capturing it broadcasts deauth/disassoc at the current target on the parked channel, to
@@ -104,6 +107,12 @@ public:
     /// a surface and the on-air verify. Both stay 0 on a disarmed (nullptr-transmitter) engine.
     uint32_t deauthTxOk() const { return deauthTxOk_; }
     uint32_t deauthTxFail() const { return deauthTxFail_; }
+
+    /// The live pull snapshot the HUD reads (ADR-0033, §4 #18): current phase, parked channel, discovered
+    /// count, and the in-flight target's identity + which of Beacon/M1–M4 the collector holds. A
+    /// best-effort, lock-free, app-task read of driver-task-written state — cosmetic by design (see the
+    /// impl comment); never a bus event.
+    HuntSnapshot huntSnapshot() const override;
 
 private:
     /// Post-settle action a Quiescing phase completes into.

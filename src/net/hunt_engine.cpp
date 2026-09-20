@@ -4,6 +4,8 @@
  */
 #include "net/hunt_engine.h"
 
+#include <cstring>  // memcpy: copy the target identity into the pull snapshot.
+
 #include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
 
 namespace sapper {
@@ -159,6 +161,35 @@ void HuntEngine::onFrame(const uint8_t* frame, uint16_t len) {
 const uint8_t* HuntEngine::capturingBssid() const {
     if (phase_ != Phase::Capturing) return nullptr;
     return collector_.handshake().bssid;
+}
+
+HuntSnapshot HuntEngine::huntSnapshot() const {
+    // Cosmetic, lock-free by design (ADR-0033 #3, §4 #18): the collector is written on the driver task
+    // (onFrame → ingest, §4 #10) while this runs on the app task. DO NOT add a lock — it would put
+    // contention on the driver-task hot path for a HUD read whose staleness is harmless. Why each field
+    // read here is safe without one: `bssid` is written once, at retarget, on the app task under the §4
+    // #11 quiesce settle — no driver-task write races it. The presence flags are backed by a small
+    // length field written monotonically (0 → set once per frame, never reset until retarget), so a torn
+    // read is at worst a one-tick-early/late indicator. `ssid` is re-written by every beacon for the
+    // current target *on the driver task*, but the collector publishes it in a single memcpy of a
+    // complete value (handshake_collector.cpp), so a concurrent read sees a consistent name, never a
+    // transient empty one. Any residual staleness is one tick, gone the next.
+    HuntSnapshot snap;
+    snap.phase = phase_;
+    snap.channel = parkedChannel_;
+    snap.discovered = registry_.count();
+    if (phase_ == Phase::Capturing) {
+        const CapturedHandshake& hs = collector_.handshake();
+        std::memcpy(snap.bssid, hs.bssid, sizeof(snap.bssid));
+        std::memcpy(snap.ssid, hs.ssid, sizeof(snap.ssid));
+        snap.ssid[sizeof(snap.ssid) - 1] = '\0';  // defend against a torn/over-long read of the array.
+        snap.hasBeacon = hs.hasBeacon();
+        snap.hasM1 = hs.has(HandshakeMessage::M1);
+        snap.hasM2 = hs.has(HandshakeMessage::M2);
+        snap.hasM3 = hs.has(HandshakeMessage::M3);
+        snap.hasM4 = hs.has(HandshakeMessage::M4);
+    }
+    return snap;
 }
 
 void HuntEngine::maybeTransmitDeauth(uint32_t nowMs) {

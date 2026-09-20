@@ -20,6 +20,7 @@
 
 #include "hal/display/display_hal.h"  // IDisplay — the optional panel the status HUD renders on.
 #include "net/cracked_sync.h"  // SyncOutcome, for the sync getters below.
+#include "net/hunt_snapshot.h"  // HuntSnapshot — the live-hunt observation getter below (ADR-0033).
 #include "net/provisioning_store.h"
 #include "net/upload_supervisor.h"
 
@@ -41,6 +42,10 @@ const DrainOutcome& huntLoopLastDrain();
 
 /// Monotonic count of drain cycles run, so an observer can detect each new drain.
 uint32_t huntLoopDrainCount();
+
+/// The engine's live pull snapshot (ADR-0033): current phase/channel/target and collected-message set.
+/// For a probe/verify to observe the live HUD state; a zeroed snapshot before the loop begins.
+HuntSnapshot huntLoopSnapshot();
 
 /// The most recent cracked-results sync outcome, for a device surface / the on-air verify to report.
 const SyncOutcome& huntLoopLastSync();
@@ -64,6 +69,22 @@ void huntLoopForceSyncDue();
 /// would on a real capture (§4 invariant #2) — the on-air verify's stimulus. Present only in
 /// test-hooks builds (§4 invariant #4).
 void huntLoopInjectStimulus();
+#endif
+
+#ifdef SAPPER_TEST_HOOKS
+/// Push the cracked-sync deadline out by a full interval (as a successful sync would), so no sync-due
+/// STA window opens and stops the engine. The hunt-HUD verify calls it so the engine can hunt
+/// uninterrupted on a network-less bench. Present only in test-hooks builds (§4 invariant #4).
+void huntLoopDeferSync();
+#endif
+
+#ifdef SAPPER_TEST_HOOKS
+/// Inject a synthetic beacon + M1 (a PARTIAL handshake, no M2) through the engine's `onFrame` — the SAME
+/// seam a real sniffed frame uses (§4 invariant #2), never a parallel path — so the engine discovers,
+/// captures, and *populates* its collector, lighting the live hunt HUD's Beacon + M1 indicators. Partial
+/// on purpose: a complete (wpa-sec-valid) set would make the engine report-and-advance, so the HUD would
+/// not persist for a `dump`. The hunt-HUD verify's stimulus (ADR-0033). Test-hooks builds only (§4 #4).
+void huntLoopInjectHudStimulus();
 #endif
 
 #ifdef SAPPER_TEST_HOOKS

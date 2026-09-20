@@ -17,11 +17,14 @@
 
 #include "net/cracked_result.h"
 #include "net/cracked_sync.h"        // SyncOutcome
+#include "net/hunt_snapshot.h"       // HuntSnapshot / HuntPhase — the live-hunt pull (ADR-0033)
 #include "net/upload_supervisor.h"   // DrainOutcome
+#include "support/fake_hunt_snapshot_source.h"
 #include "support/fake_screen_renderer.h"
 #include "surface/screen_toast_surface.h"
 
 using namespace sapper;
+using sapper_test::FakeHuntSnapshotSource;
 using sapper_test::FakeScreenRenderer;
 
 void setUp(void) {}
@@ -272,6 +275,101 @@ void test_nonprintable_essid_byte_is_filtered_before_display(void) {
     TEST_ASSERT_EQUAL_STRING("PlainNet", r.last().toastEssid);
 }
 
+// --- Live hunt HUD (slice-0034 Scenarios C, D, E; ADR-0033) ----------------------------------------
+
+void test_hunt_line_shows_scan_while_discovering(void) {
+    // While Discovering, the live line reports the sweep: phase, parked channel, and how many APs seen.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeHuntSnapshotSource src;
+    src.snapshot.phase = HuntPhase::Discovering;
+    src.snapshot.channel = 6;
+    src.snapshot.discovered = 3;
+    s.setHuntSource(src);
+    s.begin(0);
+
+    const ScreenView& v = r.last();
+    TEST_ASSERT_TRUE(v.huntShown);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(HuntPhase::Discovering), static_cast<int>(v.huntPhase));
+    TEST_ASSERT_EQUAL_UINT8(6, v.huntChannel);
+    TEST_ASSERT_EQUAL_UINT32(3, v.huntDiscovered);
+}
+
+void test_hunt_line_shows_target_and_indicators_while_capturing(void) {
+    // While Capturing, the live line names the target and lights the Beacon/M1/M2 indicators it holds.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeHuntSnapshotSource src;
+    src.snapshot.phase = HuntPhase::Capturing;
+    std::snprintf(src.snapshot.ssid, sizeof(src.snapshot.ssid), "%s", "lab-ap");
+    std::memcpy(src.snapshot.bssid, kBssid, sizeof(src.snapshot.bssid));
+    src.snapshot.hasBeacon = true;
+    src.snapshot.hasM1 = true;
+    src.snapshot.hasM2 = true;  // M3/M4 absent → progress 3-of-5.
+    s.setHuntSource(src);
+    s.begin(0);
+
+    const ScreenView& v = r.last();
+    TEST_ASSERT_TRUE(v.huntShown);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(HuntPhase::Capturing), static_cast<int>(v.huntPhase));
+    TEST_ASSERT_EQUAL_STRING("lab-ap", v.huntSsid);
+    TEST_ASSERT_EQUAL_STRING("AA:BB:CC:DD:EE:FF", v.huntBssid);  // the fallback label for a hidden SSID.
+    TEST_ASSERT_TRUE(v.huntHasBeacon && v.huntHasM1 && v.huntHasM2);
+    TEST_ASSERT_FALSE(v.huntHasM3 || v.huntHasM4);
+}
+
+void test_hunt_line_filters_a_nonprintable_ssid_byte(void) {
+    // An arbitrary SSID octet cannot corrupt the drawn line (mirrors the toast's printable filter).
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeHuntSnapshotSource src;
+    src.snapshot.phase = HuntPhase::Capturing;
+    std::snprintf(src.snapshot.ssid, sizeof(src.snapshot.ssid), "%s", "Ho\x01me");
+    s.setHuntSource(src);
+    s.begin(0);
+    TEST_ASSERT_EQUAL_STRING("Ho?me", r.last().huntSsid);
+}
+
+void test_hunt_line_shows_idle_when_source_reports_not_hunting(void) {
+    // A wired source reporting Idle/Quiescing still shows the live line (huntShown) but with the idle
+    // phase and no target — the renderer draws the "idle" line, not a stale target row.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeHuntSnapshotSource src;
+    src.snapshot.phase = HuntPhase::Idle;  // not Discovering, not Capturing.
+    s.setHuntSource(src);
+    s.begin(0);
+
+    const ScreenView& v = r.last();
+    TEST_ASSERT_TRUE(v.huntShown);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(HuntPhase::Idle), static_cast<int>(v.huntPhase));
+    TEST_ASSERT_FALSE(v.huntHasBeacon || v.huntHasM1 || v.huntHasM2);
+    TEST_ASSERT_EQUAL_STRING("", v.huntSsid);
+}
+
+void test_no_hunt_source_hides_the_live_line_but_changes_still_render(void) {
+    // With no source wired, the pre-0033 HUD renders (no live line). And the new hunt fields are in
+    // operator==, so a change in them triggers exactly one redraw (render-on-change still holds).
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    s.begin(0);
+    TEST_ASSERT_FALSE(r.last().huntShown);
+    TEST_ASSERT_EQUAL_size_t(1, r.renderCount());
+
+    FakeHuntSnapshotSource src;
+    src.snapshot.phase = HuntPhase::Discovering;
+    src.snapshot.discovered = 1;
+    s.setHuntSource(src);
+    s.tick(100);  // now a source is present and the view differs → one redraw.
+    TEST_ASSERT_TRUE(r.last().huntShown);
+    TEST_ASSERT_EQUAL_size_t(2, r.renderCount());
+
+    src.snapshot.discovered = 2;  // a live-hunt field changed → operator== must catch it and redraw.
+    s.tick(150);
+    TEST_ASSERT_EQUAL_size_t(3, r.renderCount());
+    TEST_ASSERT_EQUAL_UINT32(2, r.last().huntDiscovered);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_begin_renders_the_initial_hunting_hud);
@@ -283,6 +381,11 @@ int main(int, char**) {
     RUN_TEST(test_non_crack_facts_never_arm_the_toast);
     RUN_TEST(test_capture_arms_a_captured_banner_naming_the_network);
     RUN_TEST(test_a_crack_banner_outranks_a_capture_banner);
+    RUN_TEST(test_hunt_line_shows_scan_while_discovering);
+    RUN_TEST(test_hunt_line_shows_target_and_indicators_while_capturing);
+    RUN_TEST(test_hunt_line_filters_a_nonprintable_ssid_byte);
+    RUN_TEST(test_hunt_line_shows_idle_when_source_reports_not_hunting);
+    RUN_TEST(test_no_hunt_source_hides_the_live_line_but_changes_still_render);
     RUN_TEST(test_heartbeat_toggles_so_a_live_hud_is_not_a_frozen_one);
     RUN_TEST(test_renders_only_when_the_view_changes);
     RUN_TEST(test_nonprintable_essid_byte_is_filtered_before_display);

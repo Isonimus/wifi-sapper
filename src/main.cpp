@@ -29,6 +29,7 @@
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
 #include "capture_probe.h"
+#include "hunt_hud_probe.h"
 #include "screen_probe.h"
 #include "sync_probe.h"
 #include "upload_probe.h"
@@ -196,6 +197,7 @@ void setup() {
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
     if (captureProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
+    if (huntHudProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (screenProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (webhookProbeBegin()) return;
     if (ledProbeBegin()) return;
@@ -221,6 +223,12 @@ void loop() {
         g_channel.pump();  // like the screen verify, this one answers `dump` — pump the channel so the
                            // serial control commands are dispatched while the probe renders the banner.
         captureProbePump();
+        delay(5);
+        return;
+    }
+    if (huntHudProbeActive()) {  // bench live-hunt-HUD verify owns the device; normal boot is skipped.
+        g_channel.pump();  // answers `dump` — pump the channel so serial commands run while it renders.
+        huntHudProbePump();
         delay(5);
         return;
     }

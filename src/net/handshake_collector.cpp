@@ -59,9 +59,18 @@ void HandshakeCollector::ingest(const uint8_t* frame, uint16_t len) {
 
     if (isBeacon(frame, len)) {
         store(handshake_.beacon, frame, len);
-        // Empty on a hidden or malformed-SSID network; the beacon bytes are stored either way, so
-        // the pcap is byte-exact regardless of whether a display name could be read.
-        beaconSsid(frame, len, handshake_.ssid);
+        // Build the display SSID in a stack scratch, then publish it to handshake_.ssid in ONE write —
+        // never clear-then-fill in place. handshake_.ssid is read lock-free by the live-hunt snapshot on
+        // the app task (ADR-0033, §4 #18) while beacons for the current target keep arriving on the
+        // driver task; an in-place clear-then-fill would expose a transient empty name (a snapshot caught
+        // mid-write would show no SSID). A scratch build writes the same complete value each time, so a
+        // concurrent read always sees a consistent name. Empty on a hidden/malformed-SSID network; the
+        // beacon bytes are stored either way, so the pcap is byte-exact regardless. Only overwrite on a
+        // successful parse, so a later malformed beacon cannot wipe a good name (§4 #10: allocation-free).
+        char ssidScratch[33];
+        if (beaconSsid(frame, len, ssidScratch)) {
+            std::memcpy(handshake_.ssid, ssidScratch, sizeof(handshake_.ssid));
+        }
         return;
     }
 

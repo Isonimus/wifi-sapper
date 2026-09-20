@@ -14,6 +14,7 @@
 #include <cstring>
 
 #include "net/cracked_result.h"  // kCrackedEssidCap — the ESSID bound the toast copies within.
+#include "net/hunt_snapshot.h"   // HuntPhase — the live-hunt section the HUD renders (ADR-0033).
 
 namespace sapper {
 
@@ -59,6 +60,19 @@ struct ScreenView {
     char toastEssid[kCrackedEssidCap] = {0};  ///< The banner network's name (printable-filtered).
     char toastBssid[kBssidTextCap] = {0};     ///< Its BSSID, formatted "AA:BB:CC:DD:EE:FF".
 
+    // --- Live hunt section (ADR-0033): what the appliance is doing right now, pulled from the engine.
+    bool huntShown = false;                   ///< A hunt source is wired; render the live line (else hide it).
+    HuntPhase huntPhase = HuntPhase::Idle;    ///< SCAN while Discovering; the target line while Capturing.
+    uint8_t huntChannel = 0;                  ///< The parked channel.
+    uint32_t huntDiscovered = 0;              ///< APs seen this sweep (shown on the SCAN line).
+    char huntSsid[33] = {0};                  ///< The captured network's name (printable-filtered; empty = hidden).
+    char huntBssid[kBssidTextCap] = {0};      ///< Its BSSID, formatted; the fallback label for a hidden SSID.
+    bool huntHasBeacon = false;               ///< B/M1..M4 indicators — highlighted when present.
+    bool huntHasM1 = false;
+    bool huntHasM2 = false;
+    bool huntHasM3 = false;
+    bool huntHasM4 = false;
+
     /// Field-by-field equality: the surface renders only when the displayed state actually changes, so
     /// the panel sees discrete updates rather than a per-tick redraw (ADR-0025 decision 2).
     bool operator==(const ScreenView& o) const {
@@ -67,7 +81,12 @@ struct ScreenView {
                lastSyncNew == o.lastSyncNew && heartbeat == o.heartbeat &&
                toastActive == o.toastActive && toastKind == o.toastKind &&
                std::strcmp(toastEssid, o.toastEssid) == 0 &&
-               std::strcmp(toastBssid, o.toastBssid) == 0;
+               std::strcmp(toastBssid, o.toastBssid) == 0 &&
+               huntShown == o.huntShown && huntPhase == o.huntPhase && huntChannel == o.huntChannel &&
+               huntDiscovered == o.huntDiscovered && huntHasBeacon == o.huntHasBeacon &&
+               huntHasM1 == o.huntHasM1 && huntHasM2 == o.huntHasM2 && huntHasM3 == o.huntHasM3 &&
+               huntHasM4 == o.huntHasM4 && std::strcmp(huntSsid, o.huntSsid) == 0 &&
+               std::strcmp(huntBssid, o.huntBssid) == 0;
     }
     bool operator!=(const ScreenView& o) const { return !(*this == o); }
 };

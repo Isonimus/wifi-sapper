@@ -20,6 +20,7 @@
 #include <cstdint>
 
 #include "core/event_bus.h"
+#include "net/hunt_snapshot.h"  // HuntSnapshotSource — the live-hunt pull seam (ADR-0033).
 #include "surface/screen_renderer.h"
 #include "surface/screen_view.h"
 
@@ -28,6 +29,10 @@ namespace sapper {
 class ScreenToastSurface : public EventSink {
 public:
     explicit ScreenToastSurface(ScreenRenderer& renderer) : renderer_(renderer) {}
+
+    /// Wire the live-hunt pull source (ADR-0033, §4 #18). Set post-construction, like the webhook's
+    /// notifier, so the constructor does not grow an argument. Unset → the pre-0033 HUD (no live line).
+    void setHuntSource(HuntSnapshotSource& source) { huntSource_ = &source; }
 
     /// Seed the clock anchor and render the initial HUD. Call once after the engine is running, before
     /// the first tick().
@@ -63,6 +68,7 @@ private:
     void render(uint32_t nowMs);
 
     ScreenRenderer& renderer_;
+    HuntSnapshotSource* huntSource_ = nullptr;     ///< Optional live-hunt pull source (ADR-0033); null = hide.
     ScreenStatus status_ = ScreenStatus::Booting;  ///< The base HUD status the drain facts set.
     uint32_t uploaded_ = 0;                        ///< Cumulative accepted + duplicate uploads.
     uint32_t cracks_ = 0;                          ///< Cumulative NewPassword facts.

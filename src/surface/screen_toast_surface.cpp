@@ -139,6 +139,22 @@ void ScreenToastSurface::render(uint32_t nowMs) {
         std::snprintf(view.toastEssid, sizeof(view.toastEssid), "%s", toastEssid_);
         std::snprintf(view.toastBssid, sizeof(view.toastBssid), "%s", toastBssid_);
     }
+    // Live hunt section (ADR-0033): pull the current snapshot each render and fold it into the view, so
+    // the panel shows what is being sniffed right now. The pull is the §4 #13/#18 seam — never the bus.
+    if (huntSource_ != nullptr) {
+        const HuntSnapshot snap = huntSource_->huntSnapshot();
+        view.huntShown = true;
+        view.huntPhase = snap.phase;
+        view.huntChannel = snap.channel;
+        view.huntDiscovered = static_cast<uint32_t>(snap.discovered);
+        copyPrintable(view.huntSsid, sizeof(view.huntSsid), snap.ssid);  // arbitrary SSID octets → safe glyphs.
+        formatBssid(snap.bssid, view.huntBssid);
+        view.huntHasBeacon = snap.hasBeacon;
+        view.huntHasM1 = snap.hasM1;
+        view.huntHasM2 = snap.hasM2;
+        view.huntHasM3 = snap.hasM3;
+        view.huntHasM4 = snap.hasM4;
+    }
     if (view != lastShown_) {
         renderer_.render(view);
         lastShown_ = view;
