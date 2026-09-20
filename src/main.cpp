@@ -166,7 +166,7 @@ void startPortal() {
     Serial.println(banner);
 }
 
-void runMaintenance(const ProvisioningRecord& creds) {
+void runMaintenance(const ProvisioningRecord& creds, IDisplay& panel) {
     enterPhase(Phase::Maintenance);
 
     // Load the persisted recovered results through the §4 #12 seam (read-only in this phase). A store
@@ -194,8 +194,8 @@ void runMaintenance(const ProvisioningRecord& creds) {
         return;
     }
 
-    drawMaintenanceScreen(display(), portal.apSsid(), "http://192.168.4.1/", manifest.size());
-    display().present();
+    drawMaintenanceScreen(panel, portal.apSsid(), "http://192.168.4.1/", manifest.size());
+    panel.present();
 
     char banner[96];
     std::snprintf(banner, sizeof(banner), "[MAINT] ssid=%s url=http://%s/ recovered=%u",
@@ -228,7 +228,7 @@ void runMaintenance(const ProvisioningRecord& creds) {
     }
 }
 
-void runStationBoot(const ProvisioningRecord& creds) {
+void runStationBoot(const ProvisioningRecord& creds, IDisplay* panel) {
     for (uint8_t staFail = 0;;) {
         enterPhase(Phase::StationConnect);
         if (connectStation(creds.ssid, creds.pass, &pumpSerial)) {
@@ -237,7 +237,9 @@ void runStationBoot(const ProvisioningRecord& creds) {
                 enterPhase(Phase::Ready);  // headless steady state.
                 // Start the shipped hunt→enqueue→drain→upload loop (ADR-0017 decision #8). It releases
                 // the boot association and re-owns the radio promiscuously; loop() pumps it from here.
-                if (!huntLoopBegin(creds, {}, &display())) {  // pass the panel so the status HUD renders.
+                // `panel` is null when the panel failed to init, so the HUD is skipped and the hunt runs
+                // on headless — the proven "no display" path (ADR-0045 decision 3).
+                if (!huntLoopBegin(creds, {}, panel)) {  // pass the panel so the status HUD renders.
                     Serial.println("[FATAL] hunt/upload loop failed to start");
                 }
                 return;
@@ -260,11 +262,18 @@ void setup() {
     delay(200);  // let the S3 USB-CDC endpoint enumerate before the first line
 
     IDisplay& d = display();
-    if (!d.begin()) {
-        Serial.println("[FATAL] display init failed");
+    const bool panelReady = d.begin();
+    if (!panelReady) {
+        // Fail loud, then fail safe: a real panel init failure is announced once here and the boot
+        // continues fully headless. Every surface below draws through `panel`, never `d` directly, so
+        // a failed panel is treated exactly as an absent one — the proven screenless path — instead of
+        // half-drawing on the guarded-but-dead LovyanGFX buffer (ADR-0045, §3 fail-loud + #24).
+        Serial.println("[FATAL] display init failed — panel disabled, continuing headless");
     }
-    drawSplashFrame(d);
-    d.present();
+    static NullDisplay nullPanel;  // the fallback the surfaces no-op onto when the real panel failed.
+    IDisplay& panel = panelAfterInit(d, panelReady, nullPanel);
+    drawSplashFrame(panel);
+    panel.present();
 
 #ifdef SAPPER_TEST_HOOKS
     seedTestCredentials();
@@ -275,10 +284,18 @@ void setup() {
     // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
-    if (panelProbeBegin(d)) return;    // renders the ADR-0002 §5 panel proof over the splash (ADR-0041).
-    if (captureProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
-    if (huntHudProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
-    if (screenProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
+    // The panel-rendering bench probes exist only to draw a surface to the panel and dump it, so they
+    // cannot run without a live panel. On an init failure the [FATAL] above is the loud signal (and the
+    // verify script's missing artifact is the fail); skip them rather than push to a dead panel — for
+    // panel_probe that push is present() through an uninitialised driver, the very hardware half-draw #24
+    // forbids, during the exact bench session meant to diagnose it. Inside this guard `panel` == `d`
+    // (the real, live panel). The non-panel probes below (network/LED/RF) need no panel (ADR-0045 #4).
+    if (panelReady) {
+        if (panelProbeBegin(d)) return;    // renders the ADR-0002 §5 panel proof over the splash (ADR-0041).
+        if (captureProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
+        if (huntHudProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
+        if (screenProbeBegin(d)) return;   // renders to the panel d already brought up (one canvas).
+    }
     if (webhookProbeBegin()) return;
     if (webhookCaptureProbeBegin()) return;
     if (ledProbeBegin()) return;
@@ -295,9 +312,13 @@ void setup() {
     if (entry == Phase::Provisioning) {
         startPortal();
     } else if (entry == Phase::Maintenance) {
-        runMaintenance(creds);  // BOOT held at power-on: serve the results dashboard, never returns.
+        // Serve the results dashboard, never returns. `panel` is the null fallback if init failed, so
+        // the Maintenance screen no-ops on a dead panel while the SoftAP still serves (ADR-0045).
+        runMaintenance(creds, panel);  // BOOT held at power-on.
     } else {
-        runStationBoot(creds);  // hunt_loop copies the creds it needs; this local may go out of scope.
+        // hunt_loop copies the creds it needs; this local may go out of scope. Pass the panel only if it
+        // initialised — nullptr reuses hunt_loop's proven "[SCREEN] disabled" path (ADR-0045 decision 3).
+        runStationBoot(creds, panelReady ? &display() : nullptr);
     }
 }
 

@@ -62,4 +62,14 @@ public:
     virtual size_t readCanvas(size_t offset, uint8_t* out, size_t cap) const = 0;
 };
 
+/// The panel a surface renders to after init: @p real when the panel initialised (@p initOk), else
+/// @p fallback — a `NullDisplay`. On a real init failure a surface must not half-draw on the guarded
+/// but dead LovyanGFX buffer (§3 fail-loud); routing it to the null fallback treats a *failed* panel
+/// exactly as an *absent* one (the proven screenless path), so no new rendering path appears and the
+/// headless hunt/serve runs on. The failure is announced loud at the init site; this only diverts the
+/// draws. Pure (no LovyanGFX), so it is unit-tested natively like resolveDisplay (ADR-0045).
+inline IDisplay& panelAfterInit(IDisplay& real, bool initOk, IDisplay& fallback) {
+    return initOk ? real : fallback;
+}
+
 }  // namespace sapper

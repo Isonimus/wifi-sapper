@@ -3,7 +3,9 @@
 A portable, headless-first ESP-32 firmware appliance: it hunts WPA/WPA2 handshakes endlessly,
 auto-uploads each capture to [wpa-sec.stanev.org](https://wpa-sec.stanev.org), and once an hour
 fetches cracked results back and announces any newly recovered passwords. The capture→upload→sync
-engine has no UI dependency, so the same firmware runs on hardware with or without a screen.
+engine has no UI dependency, so the same firmware runs on hardware with or without a screen — and
+if a panel *fails to initialise* at boot, the unit logs `[FATAL] display init failed` and keeps
+hunting fully headless rather than stalling on the dead screen (ADR-0045).
 
 The project conventions, decision records, and roadmap live in
 [`CLAUDE.md`](CLAUDE.md), [`adr/`](adr/), and [`LEDGER.md`](LEDGER.md). This README is a live
