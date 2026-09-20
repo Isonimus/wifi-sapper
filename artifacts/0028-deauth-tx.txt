@@ -1,0 +1,10 @@
+[DEAUTH] txOk=296 txFail=0 selfHeard=0 captured=0 elapsed=30002ms
+[DEAUTH] txOk=316 txFail=0 selfHeard=0 captured=0 elapsed=32002ms
+[DEAUTH] txOk=356 txFail=0 selfHeard=0 captured=0 elapsed=36002ms
+[DEAUTH] txOk=376 txFail=0 selfHeard=0 captured=0 elapsed=38002ms
+[DEAUTH] txOk=396 txFail=0 selfHeard=0 captured=0 elapsed=40002ms
+[DEAUTH] txOk=416 txFail=0 selfHeard=0 captured=0 elapsed=42002ms
+[DEAUTH] txOk=436 txFail=0 selfHeard=0 captured=0 elapsed=44002ms
+[DEAUTH] txOk=456 txFail=0 selfHeard=0 captured=0 elapsed=46002ms
+[DEAUTH] txOk=476 txFail=0 selfHeard=0 captured=0 elapsed=48002ms
+[DEAUTH] txOk=496 txFail=0 selfHeard=0 captured=0 elapsed=50002ms

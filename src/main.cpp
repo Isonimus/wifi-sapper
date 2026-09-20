@@ -21,6 +21,7 @@
 #include "net/provisioning.h"
 #include "net/provisioning_store.h"
 #include "net/wifi_station.h"
+#include "deauth_probe.h"
 #include "hunt_loop.h"
 #include "hunt_probe.h"
 #include "led_probe.h"
@@ -201,6 +202,7 @@ void setup() {
     if (huntProbeBegin()) return;
     if (rfDiscoverProbeBegin()) return;
     if (rfSniffProbeBegin()) return;
+    if (deauthProbeBegin()) return;  // transmits deauth + captures the forced handshake (ADR-0027).
 
     ProvisioningRecord creds = {};
     const bool hasCreds = loadProvisioning(creds);
@@ -252,6 +254,11 @@ void loop() {
     }
     if (rfSniffProbeActive()) {  // bench RF probe owns the device; the normal boot loop is skipped.
         rfSniffProbePump();
+        delay(5);
+        return;
+    }
+    if (deauthProbeActive()) {  // bench deauth probe owns the device; the normal boot loop is skipped.
+        deauthProbePump();
         delay(5);
         return;
     }
