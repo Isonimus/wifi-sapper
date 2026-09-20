@@ -90,13 +90,32 @@ void test_absent_webhook_shows_default_placeholder(void) {
     TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='https://ntfy.sh/your-topic'"));
 }
 
+void test_stored_maintpass_hints_keep(void) {
+    // The Maintenance AP passphrase (ADR-0039 #6) is a secret handled like the key/webhook: a stored one
+    // invites "leave blank to keep", and the value itself is never rendered (only the fact one is stored).
+    SetupFormModel model = {};
+    model.hasStoredMaintenancePass = true;
+    char html[kSetupFormBufSize];
+    TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
+    TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current passphrase'"));
+}
+
+void test_absent_maintpass_shows_default_placeholder(void) {
+    SetupFormModel model = {};  // hasStoredMaintenancePass false
+    char html[kSetupFormBufSize];
+    TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
+    TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='blank = use default AP password'"));
+}
+
 void test_form_never_prefills_a_value(void) {
     // The no-secret-echo guarantee, observably: the form uses placeholders, never a `value=` attribute,
     // so no field — secret or not — is pre-filled. The model has no secret string to echo (§4 #20), and
-    // this pins the property so a future edit that adds `value='...'` fails here.
+    // this pins the property so a future edit that adds `value='...'` fails here. Every secret-bearing
+    // flag is set so the assertion covers the maintenance passphrase field too (ADR-0039 #6).
     SetupFormModel model = {};
     model.hasStoredKey = true;
     model.hasStoredWebhook = true;
+    model.hasStoredMaintenancePass = true;
     char html[kSetupFormBufSize];
     TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
     TEST_ASSERT_NULL(strstr(html, "value="));
@@ -138,6 +157,28 @@ void test_nonblank_secrets_replace(void) {
 
     TEST_ASSERT_EQUAL_STRING("newkey", out.key);
     TEST_ASSERT_EQUAL_STRING("https://ntfy.sh/new", out.webhookUrl);
+}
+
+void test_maintpass_blank_keeps_stored_nonblank_replaces(void) {
+    // The Maintenance passphrase (ADR-0039 #6) merges like the key/webhook: a blank re-save keeps the
+    // stored value (a WiFi fix must not silently drop the AP back to the default password), a non-blank
+    // value replaces it.
+    ProvisioningRecord stored;
+    setRecord(stored, "old", "oldpass12", "k", "");
+    std::snprintf(stored.maintenancePass, sizeof(stored.maintenancePass), "storedmaint1");
+
+    ProvisioningRecord submittedBlank;
+    setRecord(submittedBlank, "new", "newpass12", "", "");  // maintpass blank
+    ProvisioningRecord keptOut;
+    resolveProvisioningUpdate(submittedBlank, stored, /*hasStored=*/true, keptOut);
+    TEST_ASSERT_EQUAL_STRING("storedmaint1", keptOut.maintenancePass);  // kept
+
+    ProvisioningRecord submittedNew;
+    setRecord(submittedNew, "new", "newpass12", "", "");
+    std::snprintf(submittedNew.maintenancePass, sizeof(submittedNew.maintenancePass), "freshmaint99");
+    ProvisioningRecord replacedOut;
+    resolveProvisioningUpdate(submittedNew, stored, /*hasStored=*/true, replacedOut);
+    TEST_ASSERT_EQUAL_STRING("freshmaint99", replacedOut.maintenancePass);  // replaced
 }
 
 void test_toggles_and_pair_always_from_submission(void) {
@@ -198,10 +239,13 @@ int main(int, char**) {
     RUN_TEST(test_absent_key_keeps_required);
     RUN_TEST(test_stored_webhook_hints_keep);
     RUN_TEST(test_absent_webhook_shows_default_placeholder);
+    RUN_TEST(test_stored_maintpass_hints_keep);
+    RUN_TEST(test_absent_maintpass_shows_default_placeholder);
     RUN_TEST(test_form_never_prefills_a_value);
     RUN_TEST(test_overflow_returns_zero_and_empties);
     RUN_TEST(test_blank_secrets_keep_stored);
     RUN_TEST(test_nonblank_secrets_replace);
+    RUN_TEST(test_maintpass_blank_keeps_stored_nonblank_replaces);
     RUN_TEST(test_toggles_and_pair_always_from_submission);
     RUN_TEST(test_blank_pass_stays_open_not_kept);
     RUN_TEST(test_first_boot_takes_submission_verbatim_and_blank_key_fails);

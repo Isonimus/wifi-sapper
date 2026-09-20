@@ -82,6 +82,7 @@ void CaptivePortal::handleRoot() {
         model.notifySyncError = stored.notifySyncError;
         model.hasStoredKey = stored.key[0] != '\0';
         model.hasStoredWebhook = stored.webhookUrl[0] != '\0';
+        model.hasStoredMaintenancePass = stored.maintenancePass[0] != '\0';
     } else {
         // First boot (or a corrupt/half-written record): fresh defaults — "cracked" pre-checked to match
         // the ADR-0035 NVS read-default, everything else off and no secret stored.
@@ -103,7 +104,9 @@ void CaptivePortal::handleSave() {
     if (!copyBounded(submitted.ssid, sizeof(submitted.ssid), m_http.arg("ssid")) ||
         !copyBounded(submitted.pass, sizeof(submitted.pass), m_http.arg("pass")) ||
         !copyBounded(submitted.key, sizeof(submitted.key), m_http.arg("key")) ||
-        !copyBounded(submitted.webhookUrl, sizeof(submitted.webhookUrl), m_http.arg("webhook"))) {
+        !copyBounded(submitted.webhookUrl, sizeof(submitted.webhookUrl), m_http.arg("webhook")) ||
+        !copyBounded(submitted.maintenancePass, sizeof(submitted.maintenancePass),
+                     m_http.arg("maintpass"))) {
         m_http.send(400, "text/html", "<h2>A field is too long.</h2><p><a href='/'>Back</a></p>");
         return;
     }
@@ -134,6 +137,16 @@ void CaptivePortal::handleSave() {
     if (record.webhookUrl[0] != '\0' && !isUsableWebhookUrl(record.webhookUrl)) {
         m_http.send(400, "text/html",
                     "<h2>Webhook URL must be an https:// address.</h2><p><a href='/'>Back</a></p>");
+        return;
+    }
+    // The Maintenance AP passphrase (ADR-0039 #6) is optional (blank = default AP password), but a
+    // non-blank value must meet the WPA2 minimum — a 1..7-char value is refused loudly rather than
+    // silently dropping the results-viewer AP to an open network. (After the merge, so a kept value is
+    // re-validated too.)
+    if (!isUsableMaintenancePass(record.maintenancePass)) {
+        m_http.send(400, "text/html",
+                    "<h2>Maintenance passphrase must be at least 8 characters.</h2>"
+                    "<p><a href='/'>Back</a></p>");
         return;
     }
     if (!persistProvisioning(record)) {

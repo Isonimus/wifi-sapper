@@ -41,6 +41,9 @@ enum class Phase : uint8_t {
     StationConnect,  ///< Associating to the configured network.
     TimeSync,        ///< NTP sync in progress; the TLS validity window depends on it.
     Ready,           ///< Provisioned, associated, clock synced. Engine mounts here later.
+    Maintenance,     ///< BOOT-held at power-on: a hardened SoftAP serving the results dashboard
+                     ///< instead of hunting (ADR-0039). Off the happy path — a hunt-suspended
+                     ///< boot phase entered deliberately, left only by rebooting into Station.
 };
 
 /**
@@ -87,14 +90,37 @@ bool isUsableWebhookUrl(const char* url);
 constexpr uint8_t kStaRetryBudget = 3;
 
 /**
- * @brief Decide the entry phase at boot (ADR-0006 decision #3). Pure.
+ * @brief Decide the entry phase at boot (ADR-0006 #3, extended by ADR-0039). Pure.
  *
- * Straight to StationConnect only when stored credentials are valid, re-provisioning was not
- * requested, and the STA-failure count is still within kStaRetryBudget. Every other case —
- * absent/invalid credentials, a re-provision request (GPIO/button hold), or the retry budget
- * spent — opens the portal.
+ * Precedence:
+ * - no usable stored triad → Provisioning (nothing to maintain or connect with — the button is
+ *   ignored, so a first-boot BOOT-hold still lands on the setup portal);
+ * - provisioned AND @p maintenanceRequested → Maintenance (the operator held BOOT to open the
+ *   results dashboard over a hardened SoftAP, ADR-0039);
+ * - provisioned, no button, STA-failure count still within kStaRetryBudget → StationConnect;
+ * - otherwise → Provisioning (the STA-fail reconfiguration fallback, ADR-0006 #3).
+ *
+ * The button input repurposes the former re-provision signal (ADR-0039 decision 2): BOOT-hold now
+ * opens Maintenance rather than the portal. Re-provisioning a *working* device stays reachable via the
+ * STA-fail fallback today, and will also be reachable from the config form Maintenance serves once
+ * slice-0041 adds it; a results viewer, by contrast, had no entry at all before.
  */
-Phase decideBootPhase(bool hasValidStoredCreds, uint8_t staFailCount, bool reprovisionRequested);
+Phase decideBootPhase(bool hasValidStoredCreds, uint8_t staFailCount, bool maintenanceRequested);
+
+// Maintenance SoftAP passphrase bounds (ADR-0039 decision 6). Empty is allowed and means "fall back
+// to kSoftApPassword"; any non-empty value must satisfy the same WPA2-PSK length window as an
+// association passphrase, below which WiFi.softAP() would reject it — a loud validation failure at
+// save time, never a silent downgrade to an open AP that would expose recovered PSKs to anyone.
+
+/**
+ * @brief Whether @p pass is a usable Maintenance SoftAP passphrase (ADR-0039 decision 6). Pure.
+ *
+ * Empty → usable (the AP falls back to the published kSoftApPassword; convenience over secrecy, the
+ * operator's explicit choice). A non-empty value must be kMinPassLen..kMaxPassLen; a 1..7-character
+ * value is rejected so the caller refuses the save rather than handing WiFi.softAP() a passphrase it
+ * would silently drop. Bounded scan (one past the max), never trusting the caller to have terminated.
+ */
+bool isUsableMaintenancePass(const char* pass);
 
 /**
  * @brief Format the SoftAP SSID as "Sapper-XXXX" from the last two bytes of @p mac (ADR-0006 #5).

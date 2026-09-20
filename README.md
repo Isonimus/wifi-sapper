@@ -60,6 +60,30 @@ blank to keep them** unchanged, or type a new value to replace one. To turn push
 **Push these** boxes (you do not need to clear the URL). Switching an already-configured webhook back to
 *none* through the portal is not supported (a documented limitation, [`LEDGER.md`](LEDGER.md), ADR-0037).
 
+The setup form also has a **Maintenance dashboard passphrase** field (see below). Like the other secrets
+it is accepted but never shown back, and *"leave blank to keep"* — blank on first boot means the
+maintenance access point uses the default `sapper-setup` password.
+
+### Maintenance mode (results dashboard)
+
+To read the recovered passwords off the device without a serial console, **hold the BOOT button while
+powering the device on** (ADR-0039). Instead of hunting, it comes up as a Wi-Fi access point serving a
+read-only dashboard of everything it has recovered:
+
+1. It raises the SoftAP **`Sapper-XXXX`** (same name as the setup portal). Join it with your
+   **Maintenance dashboard passphrase** — the one you set in the setup form. If you never set one, it
+   uses **`sapper-setup`**.
+2. Open **`http://192.168.4.1/`** in a browser. The page lists each recovered network and **its password
+   in clear**, plus how many handshakes are queued for upload, whether deauth is armed, and whether the
+   device has ever synced. A board with a screen also shows the AP name, the URL, and the recovered count
+   on its panel (but not the passwords — the screen is over-the-shoulder visible).
+3. To leave, **power-cycle without holding BOOT** — the device reboots and resumes hunting. If you walk
+   away, it auto-resumes after **30 minutes** of no activity, so it never stops hunting for good.
+
+The dashboard shows plaintext passwords deliberately: it is a local viewer on the device's own access
+point, reached only by physically holding BOOT (ADR-0039). Set a strong Maintenance passphrase so only
+you can join and read them — otherwise anyone in radio range who knows the default password could.
+
 > **Secrets at rest.** Credentials are stored in plaintext NVS. Anyone with physical access and a
 > flash dump can read them; flash encryption is a tracked follow-up ([`LEDGER.md`](LEDGER.md),
 > ADR-0006). Treat a provisioned device as holding its network passphrase in the clear.
@@ -87,4 +111,5 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run verify:capture-notify` | Serial-driven capture-notification verify on an attached board with a panel (slice-0032, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_CAPTURE=1` (no network or credentials needed — a capture is announced at enqueue); proves a real board emits a repeating `[CAPTURE] essid=…` line and dumps the panel to `artifacts/0032-capture-notify.png`. Confirm the CAPTURED banner names the injected network against the artifact. See the script header. |
 | `npm run verify:hunt-hud` | Serial-driven live-hunt-HUD verify on an attached board with a panel (slice-0034, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_HUNT_HUD=1` (no network needed), on a quiet channel; injects a synthetic AP + handshake through the engine's `onFrame` seam so the panel shows the live-hunt line, and dumps it to `artifacts/0034-hunt-hud.png`. Confirm the target + Beacon/M1/M2 indicators + progress bar render against the artifact. See the script header. |
 | `npm run verify:webhook-capture` | Serial-driven capture-push webhook verify on an attached board (slice-0036, lane 3). Flash the `cardputer_testhooks` build with the same real credentials, a real `SAPPER_TEST_WEBHOOK_URL`, and `SAPPER_TEST_WEBHOOK_CAPTURE=1`; forces capture-push on, injects a synthetic capture fact, and proves the transport POSTs a "captured" notification (ESSID/BSSID, no PSK) to the live endpoint (2xx). Confirm it arrived. See the script header. |
+| `npm run verify:maintenance` | Serial-driven Maintenance-mode verify on an attached board (slice-0040, lane 3). Flash the `cardputer_testhooks` build with real credentials, `SAPPER_TEST_MAINT=1`, and `SAPPER_TEST_MAINT_PASS`; asserts the device enters `phase=maintenance`, prints the `[MAINT]` banner, and keeps answering serial. Join the workstation to the `Sapper-XXXX` AP with that passphrase and set `SAPPER_MAINT_DASHBOARD_URL=http://192.168.4.1/` (and optionally `SAPPER_MAINT_EXPECT_PSK`) to also fetch and check the served dashboard. See the script header. |
 | `npm run lint` / `npm run index` | Documentation linter and generated ADR index. |

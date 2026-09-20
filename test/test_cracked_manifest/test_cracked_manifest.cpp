@@ -151,9 +151,29 @@ void test_flush_fails_loud_on_store_error(void) {
     TEST_ASSERT_FALSE(manifest.flush());
 }
 
+void test_entry_at_enumerates_and_bounds(void) {
+    // The Maintenance dashboard (ADR-0039) enumerates the whole account through entryAt() rather than
+    // parsing the store; an out-of-range index returns nullptr, never a stale slot past the count.
+    FakeCrackedStore store;
+    CrackedManifest manifest(store);
+    TEST_ASSERT_TRUE(manifest.begin());
+    manifest.apply(makeResult(1, "Net1", "pw1"), 1000);
+    manifest.apply(makeResult(2, "Net2", "pw2"), 2000);
+
+    TEST_ASSERT_EQUAL_size_t(2, manifest.size());
+    TEST_ASSERT_NOT_NULL(manifest.entryAt(0));
+    TEST_ASSERT_NOT_NULL(manifest.entryAt(1));
+    // The two entries are the two applied results (order is insertion order here).
+    TEST_ASSERT_EQUAL_STRING("pw1", manifest.entryAt(0)->result.password);
+    TEST_ASSERT_EQUAL_STRING("pw2", manifest.entryAt(1)->result.password);
+    TEST_ASSERT_NULL(manifest.entryAt(2));  // past the count.
+    TEST_ASSERT_NULL(manifest.entryAt(kMaxCrackedEntries));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_apply_new_bssid_is_new_and_stored);
+    RUN_TEST(test_entry_at_enumerates_and_bounds);
     RUN_TEST(test_reapplying_same_result_is_unchanged_noop);
     RUN_TEST(test_changed_password_updates_in_place_and_reports_changed);
     RUN_TEST(test_bound_is_enforced_and_oldest_is_evicted);

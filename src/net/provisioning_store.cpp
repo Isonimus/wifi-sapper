@@ -25,6 +25,7 @@ constexpr char kKeyDeauth[] = "deauth_arm";    // 10 chars; the default-off deau
 constexpr char kKeyNotifyCap[] = "notify_cap";
 constexpr char kKeyNotifyCrk[] = "notify_crk";
 constexpr char kKeyNotifyErr[] = "notify_err";
+constexpr char kKeyMaintPass[] = "maint_pass";  // 10 chars; the optional Maintenance AP passphrase (ADR-0039).
 
 }  // namespace
 
@@ -55,6 +56,10 @@ bool loadProvisioning(ProvisioningRecord& out) {
     out.notifyCaptured = prefs.getBool(kKeyNotifyCap, /*defaultValue=*/false);
     out.notifyCracked = prefs.getBool(kKeyNotifyCrk, /*defaultValue=*/true);
     out.notifySyncError = prefs.getBool(kKeyNotifyErr, /*defaultValue=*/false);
+    // Optional Maintenance AP passphrase (ADR-0039): absent on a device provisioned before it existed,
+    // which getString leaves empty — the behaviour-preserving default is the published kSoftApPassword
+    // fallback the AP already used, so an upgrade never changes the Maintenance AP secret silently.
+    prefs.getString(kKeyMaintPass, out.maintenancePass, sizeof(out.maintenancePass));
     prefs.end();
 
     // A half-written or corrupt triad reads as "not provisioned" so the boot gate opens the
@@ -98,8 +103,13 @@ bool persistProvisioning(const ProvisioningRecord& record) {
     const bool wroteNotifyCap = prefs.putBool(kKeyNotifyCap, record.notifyCaptured) == sizeof(uint8_t);
     const bool wroteNotifyCrk = prefs.putBool(kKeyNotifyCrk, record.notifyCracked) == sizeof(uint8_t);
     const bool wroteNotifyErr = prefs.putBool(kKeyNotifyErr, record.notifySyncError) == sizeof(uint8_t);
+    // The Maintenance AP passphrase (ADR-0039): optional, so an empty value stores 0 bytes == its strlen
+    // and counts as written. It rides the same all-or-nothing clear() below, so a partial write never
+    // leaves a stale passphrase beside a fresh triad.
+    const bool wroteMaintPass =
+        prefs.putString(kKeyMaintPass, record.maintenancePass) == std::strlen(record.maintenancePass);
     const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook && wroteDeauth &&
-                       wroteNotifyCap && wroteNotifyCrk && wroteNotifyErr;
+                       wroteNotifyCap && wroteNotifyCrk && wroteNotifyErr && wroteMaintPass;
     if (!wrote) {
         prefs.clear();  // partial write — wipe so no mixed triad can survive to the next boot.
     }

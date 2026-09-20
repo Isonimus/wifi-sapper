@@ -18,6 +18,12 @@
 #include "hal/display/null_display.h"
 #include "hal/serial/serial_channel.h"
 #include "net/captive_portal.h"
+#include "net/cracked_manifest.h"
+#include "net/cracked_store_littlefs.h"
+#include "net/capture_store_littlefs.h"
+#include "net/capture_queue.h"
+#include "net/dashboard.h"
+#include "net/maintenance_portal.h"
 #include "net/provisioning.h"
 #include "net/provisioning_store.h"
 #include "net/wifi_station.h"
@@ -124,6 +130,9 @@ void seedTestCredentials() {
     // Optional push webhook URL (ADR-0023): unset expands to "" → the webhook stays disabled, exactly
     // as an unset credential routes to the portal. Set SAPPER_TEST_WEBHOOK_URL to run verify:webhook.
     std::snprintf(seed.webhookUrl, sizeof(seed.webhookUrl), "%s", SAPPER_TEST_WEBHOOK_URL);
+    // Optional Maintenance AP passphrase (ADR-0039): unset expands to "" -> the AP uses the default
+    // password. Set SAPPER_TEST_MAINT_PASS to let verify:maintenance assert the AP requires it.
+    std::snprintf(seed.maintenancePass, sizeof(seed.maintenancePass), "%s", SAPPER_TEST_MAINT_PASS);
     // seedProvisioning() persists a valid seed or clears any stale triad on an invalid one, so a
     // hooks build with no credential flags routes to the portal instead of inheriting a prior
     // flash's creds (ADR-0008). Host-tested; not a serial path (invariant #7).
@@ -131,11 +140,39 @@ void seedTestCredentials() {
 }
 #endif
 
-/// Whether the operator is asking to re-provision a device that already has valid credentials.
-/// The physical trigger (button/keyboard hold at boot) needs an input HAL this repo does not yet
-/// have, so it is deferred (LEDGER, ADR-0006); the STA-fail fallback in runStationBoot() already
-/// re-opens the portal automatically when a provisioned device cannot reach its network.
-bool reprovisionRequested() { return false; }
+/// Whether the operator is holding BOOT at power-on to enter Maintenance (ADR-0039 decision 2). Reads
+/// the board's BOOT/GPIO0 strapping button, active-low. This is the device seam behind the pure
+/// decideBootPhase() input (review-only, §4 #6-style boundary); a board without the button (pin -1)
+/// never enters Maintenance from here, exactly as before. Repurposes the former inert re-provision stub:
+/// re-provisioning a working device is now reachable from the config form, whereas a results viewer had
+/// no entry at all.
+bool maintenanceRequested() {
+#ifdef SAPPER_TEST_HOOKS
+    // The physical BOOT-hold cannot be driven by the headless verify, so a build-time hook forces entry
+    // (like the credential seed; never a serial path, §4 #7). Compiled out of every shipped build.
+    if (SAPPER_TEST_MAINT[0] != '\0') return true;
+#endif
+    const int8_t pin = kActiveBoard.bootButtonPin;
+    if (pin < 0) return false;  // no BOOT button on this board.
+    pinMode(pin, INPUT_PULLUP);
+    delay(5);  // let the input settle before the single sample.
+    return digitalRead(pin) == LOW;  // active-low: pressed reads LOW.
+}
+
+/// The Maintenance status screen on a board with a panel (ADR-0039). Connection info + a count only —
+/// deliberately NOT the recovered PSKs: the panel is shoulder-surfable, so the passwords stay behind the
+/// AP passphrase on the dashboard (the security symmetry of decision 6). A NullDisplay makes it a no-op.
+void drawMaintenanceScreen(IDisplay& d, const char* ssid, const char* url, size_t recovered) {
+    d.fillScreen(kBlack);
+    d.drawText(4, 2, "MAINTENANCE", kWhite, 2);
+    char line[40];
+    std::snprintf(line, sizeof(line), "AP: %s", ssid);
+    d.drawText(4, 30, line, kWhite, 1);
+    d.drawText(4, 44, url, kWhite, 1);
+    std::snprintf(line, sizeof(line), "%zu recovered", recovered);
+    d.drawText(4, 62, line, kGreen, 1);
+    d.drawText(4, 84, "power-cycle to resume hunting", kWhite, 1);
+}
 
 void startPortal() {
     enterPhase(Phase::Provisioning);
@@ -148,6 +185,60 @@ void startPortal() {
     std::snprintf(banner, sizeof(banner), "[PORTAL] ssid=%s pass=%s url=http://%s/",
                   g_portal.apSsid(), kSoftApPassword, WiFi.softAPIP().toString().c_str());
     Serial.println(banner);
+}
+
+void runMaintenance(const ProvisioningRecord& creds) {
+    enterPhase(Phase::Maintenance);
+
+    // Load the persisted recovered results through the §4 #12 seam (read-only in this phase). A store
+    // fault is logged loud on serial (the operator/verify's authoritative channel) but does not brick the
+    // viewer: the AP still comes up so the operator is never stranded, showing the entries that loaded
+    // (0 on a hard fault). This is the one deliberate log-and-continue in the phase — noted in ADR-0039.
+    LittleFsCrackedStore crackedStore;
+    CrackedManifest manifest(crackedStore);
+    if (!crackedStore.begin() || !manifest.begin()) {
+        Serial.println("[FATAL] maintenance: could not load recovered results");
+    }
+
+    // The persisted capture-queue depth for the summary: enumerate pending captures through the store.
+    size_t queueDepth = 0;
+    LittleFsCaptureStore captureStore;
+    if (captureStore.begin()) {
+        PendingCapture pending[kCaptureStoreScanCapacity];
+        size_t count = 0;
+        if (captureStore.listPending(pending, kCaptureStoreScanCapacity, count)) queueDepth = count;
+    }
+
+    MaintenancePortal portal(manifest, creds.deauthEnabled, queueDepth, creds.maintenancePass);
+    if (!portal.begin()) {
+        Serial.println("[FATAL] maintenance: SoftAP failed to start");
+        return;
+    }
+
+    drawMaintenanceScreen(display(), portal.apSsid(), "http://192.168.4.1/", manifest.size());
+    display().present();
+
+    char banner[96];
+    std::snprintf(banner, sizeof(banner), "[MAINT] ssid=%s url=http://%s/ recovered=%u",
+                  portal.apSsid(), WiFi.softAPIP().toString().c_str(),
+                  static_cast<unsigned>(manifest.size()));
+    Serial.println(banner);
+
+    // Serve until an explicit resume (a power-cycle without BOOT re-enters Station via the boot gate) or
+    // the no-activity backstop fires, protecting the endless-hunt identity of a walked-away unit
+    // (ADR-0039 decision 7). Both leave by rebooting; the radio comes back up clean for the hunt.
+    uint32_t lastActivity = millis();
+    for (;;) {
+        portal.handle();
+        g_channel.pump();  // keep `state`/`ping` answered while parked in Maintenance (§4 #3).
+        if (portal.consumeActivity()) lastActivity = millis();
+        if (maintenanceBackstopDue(lastActivity, millis())) {
+            Serial.println("[MAINT] no-activity backstop reached — rebooting into Station");
+            delay(50);  // let the line flush before the reset.
+            ESP.restart();
+        }
+        delay(5);
+    }
 }
 
 void runStationBoot(const ProvisioningRecord& creds) {
@@ -167,7 +258,7 @@ void runStationBoot(const ProvisioningRecord& creds) {
         }
         ++staFail;
         // Budget spent -> fall back to the portal for reconfiguration (fail loud, no silent loop).
-        if (decideBootPhase(/*hasValidStoredCreds=*/true, staFail, /*reprovisionRequested=*/false) ==
+        if (decideBootPhase(/*hasValidStoredCreds=*/true, staFail, /*maintenanceRequested=*/false) ==
             Phase::Provisioning) {
             startPortal();
             return;
@@ -212,9 +303,11 @@ void setup() {
 
     ProvisioningRecord creds = {};
     const bool hasCreds = loadProvisioning(creds);
-    const Phase entry = decideBootPhase(hasCreds, /*staFailCount=*/0, reprovisionRequested());
+    const Phase entry = decideBootPhase(hasCreds, /*staFailCount=*/0, maintenanceRequested());
     if (entry == Phase::Provisioning) {
         startPortal();
+    } else if (entry == Phase::Maintenance) {
+        runMaintenance(creds);  // BOOT held at power-on: serve the results dashboard, never returns.
     } else {
         runStationBoot(creds);  // hunt_loop copies the creds it needs; this local may go out of scope.
     }

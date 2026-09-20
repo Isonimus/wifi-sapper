@@ -38,6 +38,10 @@ const CrackedEntry* CrackedManifest::find(const uint8_t bssid[6]) const {
     return i < count_ ? &entries_[i] : nullptr;
 }
 
+const CrackedEntry* CrackedManifest::entryAt(size_t i) const {
+    return i < count_ ? &entries_[i] : nullptr;
+}
+
 ApplyOutcome CrackedManifest::apply(const CrackedResult& result, uint32_t nowMs) {
     const size_t existing = indexOf(result.bssid);
     if (existing < count_) {

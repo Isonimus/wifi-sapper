@@ -47,6 +47,14 @@ struct ProvisioningRecord {
     bool notifyCaptured;
     bool notifyCracked;
     bool notifySyncError;
+    /// Optional Maintenance SoftAP passphrase (ADR-0039 decision 6). Empty → the Maintenance AP falls
+    /// back to the published kSoftApPassword; a non-empty value (WPA2 length, validated by
+    /// isUsableMaintenancePass) hardens it so only the operator who set it can join and read the
+    /// plaintext PSKs the dashboard serves. It is a *secret* like `key`/`pass`: never rendered back into
+    /// served HTML (the setup form accepts-but-never-echoes it, §4 #20). Absent from NVS on a device
+    /// provisioned before it existed, where getString leaves it empty (the behaviour-preserving default:
+    /// the AP keeps using kSoftApPassword, exactly as it did before this field). Sized to the WPA2 max.
+    char maintenancePass[kMaxPassLen + 1];
 };
 
 /**

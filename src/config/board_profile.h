@@ -59,6 +59,12 @@ struct BoardProfile {
     int8_t batteryAdcPin;
     int8_t lcdCs, lcdDc, lcdRst, lcdBl;
     int8_t sdCs, sdMosi, sdMiso, sdClk;
+    /// The BOOT/GPIO0 strapping button, held at power-on to enter Maintenance (ADR-0039). Active-low
+    /// (reads LOW when pressed); nearly every ESP32 board wires GPIO0 to it. -1 on a board without one.
+    /// Unlike the peripheral pins this one *gates a mode*, so it carries a `-1` default member
+    /// initializer: a future board profile that forgets it defaults to "absent" (no spurious Maintenance
+    /// entry / PSK exposure), not to GPIO0 — the one pin where an accidental zero would be behavioural.
+    int8_t bootButtonPin = -1;
 };
 
 }  // namespace sapper

@@ -27,6 +27,11 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
             : "<input name='key' maxlength='64' required>";
     const char* webhookPlaceholder =
         model.hasStoredWebhook ? "leave blank to keep current webhook" : "https://ntfy.sh/your-topic";
+    // The Maintenance AP passphrase (ADR-0039 #6): optional (empty → the default AP password), so never
+    // `required`. Like the key/webhook, the stored value is never rendered — only "leave blank to keep".
+    const char* maintPlaceholder = model.hasStoredMaintenancePass
+                                       ? "leave blank to keep current passphrase"
+                                       : "blank = use default AP password";
 
     const int written = std::snprintf(
         out, outSize,
@@ -46,10 +51,14 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "<p><label><input name='deauth' type='checkbox'%s> Enable deauth (arm)</label><br>"
         "<small>Only on networks you are authorized to test. Knocks clients off discovered APs to force "
         "handshakes. Off by default.</small></p>"
+        "<p>Maintenance dashboard passphrase (min 8 chars)<br>"
+        "<input name='maintpass' type='password' maxlength='63' placeholder='%s'><br>"
+        "<small>Protects the results dashboard shown when you hold BOOT at power-on. Blank uses the "
+        "default AP password.</small></p>"
         "<p><button type='submit'>Save &amp; reboot</button></p>"
         "</form></body></html>",
         keyField, webhookPlaceholder, checkedAttr(model.notifyCracked), checkedAttr(model.notifyCaptured),
-        checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed));
+        checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed), maintPlaceholder);
 
     // snprintf returns what it *would* have written: >= outSize means it truncated. Serve nothing
     // rather than a half-form (§3, fail loud) — clear out[0] so a careless caller cannot send garbage.
@@ -69,6 +78,10 @@ void resolveProvisioningUpdate(const ProvisioningRecord& submitted, const Provis
     // A blank secret field keeps the stored value; a non-blank one already sits in `out` from the copy.
     if (submitted.key[0] == '\0') std::memcpy(out.key, stored.key, sizeof(out.key));
     if (submitted.webhookUrl[0] == '\0') std::memcpy(out.webhookUrl, stored.webhookUrl, sizeof(out.webhookUrl));
+    // The Maintenance AP passphrase (ADR-0039 #6) is a secret handled like the key/webhook: a blank
+    // re-save keeps the stored passphrase rather than dropping the AP back to the default password.
+    if (submitted.maintenancePass[0] == '\0')
+        std::memcpy(out.maintenancePass, stored.maintenancePass, sizeof(out.maintenancePass));
 }
 
 }  // namespace sapper

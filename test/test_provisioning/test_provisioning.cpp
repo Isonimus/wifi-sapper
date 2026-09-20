@@ -135,18 +135,56 @@ void test_gate_absent_or_invalid_creds_open_portal(void) {
                           static_cast<int>(decideBootPhase(false, 0, false)));
 }
 
-void test_gate_reprovision_request_opens_portal(void) {
-    // Even with valid creds and no failures, a re-provision request (GPIO/button hold) wins.
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(Phase::Provisioning),
+void test_gate_boot_hold_on_provisioned_enters_maintenance(void) {
+    // ADR-0039 decision 2: the button signal was repurposed. On a *provisioned* device a BOOT-hold now
+    // opens Maintenance (the results dashboard) rather than the setup portal, and it outranks the STA
+    // path even with no failures.
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Phase::Maintenance),
                           static_cast<int>(decideBootPhase(true, 0, true)));
 }
 
+void test_gate_boot_hold_on_unprovisioned_still_opens_portal(void) {
+    // There is nothing to maintain and no network to join, so the button is ignored: a first-boot
+    // BOOT-hold still lands on the setup portal (ADR-0039 decision 2, precedence #1).
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Phase::Provisioning),
+                          static_cast<int>(decideBootPhase(false, 0, true)));
+}
+
 void test_gate_retry_budget_boundary(void) {
-    // One below the budget still tries STA; at the budget it falls back to the portal.
+    // One below the budget still tries STA; at the budget it falls back to the portal. (No button.)
     TEST_ASSERT_EQUAL_INT(static_cast<int>(Phase::StationConnect),
                           static_cast<int>(decideBootPhase(true, kStaRetryBudget - 1, false)));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(Phase::Provisioning),
                           static_cast<int>(decideBootPhase(true, kStaRetryBudget, false)));
+}
+
+// --- isUsableMaintenancePass: the optional hardened-AP passphrase (ADR-0039 #6) --------------------
+
+void test_maintenance_pass_empty_or_null_is_usable(void) {
+    // Empty/absent means "fall back to the published default AP password" — usable, not a failure.
+    TEST_ASSERT_TRUE(isUsableMaintenancePass(""));
+    TEST_ASSERT_TRUE(isUsableMaintenancePass(nullptr));
+}
+
+void test_maintenance_pass_rejects_below_wpa2_minimum(void) {
+    // A 1..7-char value is refused so the save fails loud, never handed to WiFi.softAP() to drop.
+    TEST_ASSERT_FALSE(isUsableMaintenancePass("short"));    // 5 chars
+    TEST_ASSERT_FALSE(isUsableMaintenancePass("1234567"));  // 7 chars
+}
+
+void test_maintenance_pass_accepts_wpa2_length_window(void) {
+    TEST_ASSERT_TRUE(isUsableMaintenancePass("12345678"));  // 8-char floor is inclusive.
+    char pass63[64];
+    for (int i = 0; i < 63; ++i) pass63[i] = 'p';
+    pass63[63] = '\0';
+    TEST_ASSERT_TRUE(isUsableMaintenancePass(pass63));      // 63-char ceiling is inclusive.
+}
+
+void test_maintenance_pass_rejects_overlong(void) {
+    char pass64[65];
+    for (int i = 0; i < 64; ++i) pass64[i] = 'p';
+    pass64[64] = '\0';
+    TEST_ASSERT_FALSE(isUsableMaintenancePass(pass64));     // past the WPA2 max.
 }
 
 // --- formatSoftApSsid -------------------------------------------------------
@@ -174,6 +212,7 @@ void test_phase_labels_match_serial_contract(void) {
     TEST_ASSERT_EQUAL_STRING("station_connect", phaseLabel(Phase::StationConnect));
     TEST_ASSERT_EQUAL_STRING("time_sync", phaseLabel(Phase::TimeSync));
     TEST_ASSERT_EQUAL_STRING("ready", phaseLabel(Phase::Ready));
+    TEST_ASSERT_EQUAL_STRING("maintenance", phaseLabel(Phase::Maintenance));
 }
 
 int main(int, char**) {
@@ -194,8 +233,13 @@ int main(int, char**) {
     RUN_TEST(test_webhook_url_does_not_gate_the_triad);
     RUN_TEST(test_gate_valid_creds_go_to_station);
     RUN_TEST(test_gate_absent_or_invalid_creds_open_portal);
-    RUN_TEST(test_gate_reprovision_request_opens_portal);
+    RUN_TEST(test_gate_boot_hold_on_provisioned_enters_maintenance);
+    RUN_TEST(test_gate_boot_hold_on_unprovisioned_still_opens_portal);
     RUN_TEST(test_gate_retry_budget_boundary);
+    RUN_TEST(test_maintenance_pass_empty_or_null_is_usable);
+    RUN_TEST(test_maintenance_pass_rejects_below_wpa2_minimum);
+    RUN_TEST(test_maintenance_pass_accepts_wpa2_length_window);
+    RUN_TEST(test_maintenance_pass_rejects_overlong);
     RUN_TEST(test_softap_ssid_from_last_two_mac_bytes);
     RUN_TEST(test_softap_ssid_zero_pads);
     RUN_TEST(test_phase_labels_match_serial_contract);

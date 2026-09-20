@@ -32,6 +32,10 @@ struct SetupFormModel {
     bool notifySyncError;   ///< Render the "sync errors" push checkbox `checked`.
     bool hasStoredKey;      ///< A wpa-sec key is stored: drop `required`, show a "leave blank to keep" hint.
     bool hasStoredWebhook;  ///< A webhook URL is stored: show a "leave blank to keep" hint.
+    bool hasStoredMaintenancePass;  ///< A Maintenance AP passphrase is stored (ADR-0039): show the same
+                                    ///< "leave blank to keep" hint. Optional (empty = the AP falls back
+                                    ///< to the published default), so never `required`. The value, being
+                                    ///< a secret, is never rendered — only the fact that one is stored.
 };
 
 /// Buffer size for the rendered setup form. The form is ~1.4 KB; 2 KB leaves margin. A compile-time
@@ -51,8 +55,9 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize);
  *
  * - `ssid`, `pass`: always taken from the submission (the pair the operator re-enters; a blank
  *   passphrase stays an open network, ADR-0006 — so switching to open is reachable by retyping the SSID).
- * - `key`, `webhookUrl`: a **blank** submitted field keeps the @p stored value (a re-save to fix WiFi
- *   must not silently wipe the secret the operator did not retype); a non-blank value replaces it.
+ * - `key`, `webhookUrl`, `maintenancePass`: a **blank** submitted field keeps the @p stored value (a
+ *   re-save to fix WiFi must not silently wipe the secret the operator did not retype); a non-blank
+ *   value replaces it. `maintenancePass` is a secret handled exactly like the others (ADR-0039 #6).
  * - the four notify/deauth booleans: always taken from the submission — the form now renders their
  *   stored state, so an unchecked box is a deliberate disarm, not a stateless reset.
  *

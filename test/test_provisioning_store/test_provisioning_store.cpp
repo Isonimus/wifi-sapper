@@ -171,6 +171,34 @@ void test_notify_absent_keys_load_with_migration_defaults(void) {
     TEST_ASSERT_FALSE(out.notifySyncError);
 }
 
+// --- slice-0040: the Maintenance AP passphrase round-trips, absent = empty fallback (ADR-0039) ------
+
+void test_maintenance_pass_roundtrips(void) {
+    ProvisioningRecord in = makeRecord("net-m", "passMMMMMMMM", "keyMMMMMMMM");
+    std::snprintf(in.maintenancePass, sizeof(in.maintenancePass), "dashboardpw1");
+    TEST_ASSERT_TRUE(persistProvisioning(in));
+
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_EQUAL_STRING("dashboardpw1", out.maintenancePass);
+}
+
+void test_maintenance_pass_defaults_empty_for_a_preexisting_record(void) {
+    // A device provisioned before the field existed: a valid triad in NVS, no maint_pass key. Seeded raw
+    // (the store's wire names) to reproduce the upgrade. loadProvisioning must read it back empty — the
+    // behaviour-preserving default, so the Maintenance AP keeps using kSoftApPassword, unchanged.
+    Preferences prefs;
+    TEST_ASSERT_TRUE(prefs.begin("sapper", /*readOnly=*/false));
+    prefs.putString("wifi_ssid", "legacy-net");
+    prefs.putString("wifi_pass", "legacypass1");
+    prefs.putString("wpasec_key", "legacykey01");
+    prefs.end();
+
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_EQUAL_STRING("", out.maintenancePass);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_persist_then_load_roundtrips);
@@ -182,5 +210,7 @@ int main(int, char**) {
     RUN_TEST(test_deauth_absent_key_loads_disarmed);
     RUN_TEST(test_notify_selector_roundtrips);
     RUN_TEST(test_notify_absent_keys_load_with_migration_defaults);
+    RUN_TEST(test_maintenance_pass_roundtrips);
+    RUN_TEST(test_maintenance_pass_defaults_empty_for_a_preexisting_record);
     return UNITY_END();
 }

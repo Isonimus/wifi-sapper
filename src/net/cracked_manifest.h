@@ -77,6 +77,11 @@ public:
     /// stays the store's single writer (§4 invariant #12).
     const CrackedEntry* find(const uint8_t bssid[6]) const;
 
+    /// The @p i-th mirrored entry (0..size()-1), or nullptr if out of range. Lets a surface enumerate
+    /// the whole account — the Maintenance dashboard (ADR-0039) — through this seam rather than parsing
+    /// the store itself, so the manifest stays the store's single reader/writer (§4 invariant #12).
+    const CrackedEntry* entryAt(size_t i) const;
+
 private:
     /// Index of the entry for @p bssid, or count_ if absent.
     size_t indexOf(const uint8_t bssid[6]) const;
