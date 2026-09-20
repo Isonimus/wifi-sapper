@@ -29,6 +29,7 @@ Rgb colorOf(LedStatus status) {
         case LedStatus::Working:   return {0, 0, kLevel};             // blue: off-air, uploading/syncing.
         case LedStatus::Degraded:  return {kLevel, kLevel / 3, 0};    // amber: last drain failed.
         case LedStatus::Fault:     return {kLevel, 0, 0};             // red: hard fault.
+        case LedStatus::Captured:  return {0, kLevel, kLevel};        // cyan flash: handshake captured.
         case LedStatus::Recovered: return {kLevel, kLevel, kLevel};   // white flash: new password.
     }
     return {0, 0, 0};  // unreachable; keeps the compiler from warning on a non-void path.
@@ -41,6 +42,7 @@ const char* nameOf(LedStatus status) {
         case LedStatus::Working:   return "working";
         case LedStatus::Degraded:  return "degraded";
         case LedStatus::Fault:     return "fault";
+        case LedStatus::Captured:  return "captured";
         case LedStatus::Recovered: return "recovered";
     }
     return "?";

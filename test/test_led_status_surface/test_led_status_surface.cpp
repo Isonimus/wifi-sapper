@@ -168,6 +168,41 @@ void test_new_password_latches_a_solid_flash_then_releases(void) {
     TEST_ASSERT_EQUAL_INT(static_cast<int>(LedStatus::Hunting), static_cast<int>(led.last()));
 }
 
+void test_capture_gives_a_brief_flash_then_releases(void) {
+    // A captured handshake flashes the LED briefly (ADR-0031 #4) — much shorter than the 5 s Recovered
+    // latch, so continuous hunting does not strobe. Fail-before: without the HandshakeCaptured case the
+    // LED never leaves the heartbeat. Armed at t=100, kCapturedHoldMs=800 -> until 900.
+    FakeLedDriver led;
+    LedStatusSurface surface(led);
+    surface.begin(0);  // Hunting.
+
+    surface.onAppEvent(AppEvent::handshakeCaptured(CaptureFact{}));
+    surface.tick(100);  // the capture flash arms.
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(LedStatus::Captured), static_cast<int>(led.last()));
+
+    surface.tick(500);  // still within the brief hold, overriding the heartbeat.
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(LedStatus::Captured), static_cast<int>(led.last()));
+
+    surface.tick(2000);  // well past the 800 ms hold (a Recovered latch would still be solid here) ->
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(LedStatus::Hunting), static_cast<int>(led.last()));  // heartbeat back.
+}
+
+void test_recovered_outranks_a_concurrent_capture_flash(void) {
+    // When a capture and a crack are live at once, the rarer, bigger news wins the LED: Recovered
+    // outranks Captured (ADR-0031 #4 render precedence).
+    FakeLedDriver led;
+    LedStatusSurface surface(led);
+    surface.begin(0);  // Hunting.
+
+    surface.onAppEvent(AppEvent::handshakeCaptured(CaptureFact{}));
+    surface.onAppEvent(AppEvent::newPassword(CrackedResult{}));  // both latches arm this step.
+    surface.tick(100);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(LedStatus::Recovered), static_cast<int>(led.last()));
+
+    surface.tick(1000);  // past the capture hold but inside the 5 s Recovered latch — still Recovered.
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(LedStatus::Recovered), static_cast<int>(led.last()));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_begin_lights_the_hunting_heartbeat);
@@ -179,5 +214,7 @@ int main(int, char**) {
     RUN_TEST(test_online_cycle_with_data_issues_still_shows_hunting);
     RUN_TEST(test_resume_failure_sits_solid_as_a_fault);
     RUN_TEST(test_new_password_latches_a_solid_flash_then_releases);
+    RUN_TEST(test_capture_gives_a_brief_flash_then_releases);
+    RUN_TEST(test_recovered_outranks_a_concurrent_capture_flash);
     return UNITY_END();
 }

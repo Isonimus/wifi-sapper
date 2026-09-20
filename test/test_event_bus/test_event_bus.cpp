@@ -84,6 +84,31 @@ void test_typed_payloads_route_to_the_right_field(void) {
     TEST_ASSERT_EQUAL_size_t(9, sink.lastSummaryCount);
 }
 
+void test_handshake_captured_factory_carries_only_the_capture_payload(void) {
+    // The capture fact routes to its own identity-only payload and to no other (ADR-0031, §4 #17). The
+    // factory sets `capture` and leaves every rich payload pointer null, so a sink cannot misread a
+    // capture as a crack/drain — and the payload type itself has no frame member, quarantining pcap
+    // bytes off the bus by construction (proven at compile time by CaptureFact's definition).
+    CaptureFact fact;
+    fact.bssid[0] = 0xAB;
+    fact.ssid[0] = 'Z';
+    const AppEvent e = AppEvent::handshakeCaptured(fact);
+
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(AppEventType::HandshakeCaptured), static_cast<int>(e.type));
+    TEST_ASSERT_EQUAL_PTR(&fact, e.capture);
+    TEST_ASSERT_NULL(e.drain);
+    TEST_ASSERT_NULL(e.sync);
+    TEST_ASSERT_NULL(e.password);
+
+    EventBus bus;
+    RecordingEventSink sink;
+    bus.subscribe(sink);
+    bus.publish(e);
+    TEST_ASSERT_EQUAL_size_t(1, sink.captures.size());
+    TEST_ASSERT_EQUAL_INT(0xAB, sink.captures[0].bssid[0]);
+    TEST_ASSERT_EQUAL_INT('Z', sink.captures[0].ssid[0]);
+}
+
 void test_double_subscribe_is_rejected_so_events_are_not_doubled(void) {
     EventBus bus;
     RecordingEventSink sink;
@@ -117,6 +142,7 @@ int main(int, char**) {
     RUN_TEST(test_publish_reaches_every_subscriber_in_subscription_order);
     RUN_TEST(test_empty_bus_publish_is_a_safe_no_op);
     RUN_TEST(test_typed_payloads_route_to_the_right_field);
+    RUN_TEST(test_handshake_captured_factory_carries_only_the_capture_payload);
     RUN_TEST(test_double_subscribe_is_rejected_so_events_are_not_doubled);
     RUN_TEST(test_subscribe_past_capacity_fails_loud);
     return UNITY_END();

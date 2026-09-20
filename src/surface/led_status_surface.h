@@ -52,6 +52,9 @@ private:
     static constexpr uint32_t kHeartbeatHalfPeriodMs = 1000;
     /// How long a newly recovered password holds the LED solid before it returns to the heartbeat.
     static constexpr uint32_t kRecoveredHoldMs = 5000;
+    /// How long a fresh capture flash holds. Brief, and shorter than the recovered latch: captures are
+    /// frequent, so a long hold would strobe the indicator and drown the heartbeat (ADR-0031 #4).
+    static constexpr uint32_t kCapturedHoldMs = 800;
 
     /// Map a completed drain to its resting status: a hard resume fault is Fault; a cycle that associated
     /// is Hunting; a cycle that could not associate is Degraded. Degraded is scoped to connectivity — the
@@ -74,6 +77,9 @@ private:
     bool recoveredPending_ = false;           ///< A NewPassword arrived; the next tick starts its hold.
     bool recoveredActive_ = false;            ///< The new-password flash is currently latched solid.
     uint32_t recoveredUntilMs_ = 0;           ///< When the flash latch releases back to the heartbeat.
+    bool capturedPending_ = false;            ///< A HandshakeCaptured arrived; the next tick starts its flash.
+    bool capturedActive_ = false;             ///< The capture flash is currently shown (outranked by Recovered).
+    uint32_t capturedUntilMs_ = 0;            ///< When the capture flash releases back to the heartbeat.
     bool begun_ = false;
 };
 

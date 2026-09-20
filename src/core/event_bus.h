@@ -34,6 +34,17 @@ struct DrainOutcome;
 struct SyncOutcome;
 struct CrackedResult;
 
+/// The identity of a just-captured handshake, and *only* its identity. Defined here — not borrowed
+/// from CapturedHandshake — on purpose (ADR-0031, §4 invariant #17): CapturedHandshake carries the
+/// raw pcap frames that invariant #9 quarantines to the CaptureSink seam, so a capture *fact* on the
+/// bus is a distinct, frame-free struct. A surface reading a HandshakeCaptured event is therefore
+/// structurally incapable of reaching capture bytes — the quarantine holds by construction, not by
+/// each surface remembering to look away. ssid is empty for a hidden network.
+struct CaptureFact {
+    uint8_t bssid[6] = {0};
+    char ssid[33] = {0};  ///< Same bound as CapturedHandshake::ssid (32 chars + NUL).
+};
+
 /// The kind of fact an AppEvent carries; the sink switches on it to read the right payload.
 enum class AppEventType : uint8_t {
     DrainStarted,      ///< An STA window opened — the appliance is off-air, associating/uploading.
@@ -41,6 +52,7 @@ enum class AppEventType : uint8_t {
     SyncCompleted,     ///< A cracked-results sync finished; payload `sync` carries its outcome.
     NewPassword,       ///< A genuinely new/changed crack in steady state; payload `password`.
     FirstSyncSummary,  ///< A fresh manifest was seeded; `importedCount` results, announced once.
+    HandshakeCaptured, ///< A handshake was just enqueued for upload; payload `capture` (identity only).
 };
 
 /**
@@ -60,6 +72,7 @@ struct AppEvent {
     const DrainOutcome* drain = nullptr;      ///< Non-null iff type == DrainCompleted.
     const SyncOutcome* sync = nullptr;        ///< Non-null iff type == SyncCompleted.
     const CrackedResult* password = nullptr;  ///< Non-null iff type == NewPassword.
+    const CaptureFact* capture = nullptr;     ///< Non-null iff type == HandshakeCaptured.
     size_t importedCount = 0;                 ///< Meaningful iff type == FirstSyncSummary.
 
     static AppEvent drainStarted() { return AppEvent{AppEventType::DrainStarted}; }
@@ -81,6 +94,11 @@ struct AppEvent {
     static AppEvent firstSyncSummary(size_t importedCount) {
         AppEvent e{AppEventType::FirstSyncSummary};
         e.importedCount = importedCount;
+        return e;
+    }
+    static AppEvent handshakeCaptured(const CaptureFact& fact) {
+        AppEvent e{AppEventType::HandshakeCaptured};
+        e.capture = &fact;
         return e;
     }
 };

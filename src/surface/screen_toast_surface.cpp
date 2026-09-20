@@ -65,7 +65,21 @@ void ScreenToastSurface::onAppEvent(const AppEvent& event) {
             // byte in an arbitrary SSID cannot corrupt the drawn line.
             copyPrintable(toastEssid_, sizeof(toastEssid_), r.essid);
             formatBssid(r.bssid, toastBssid_);
+            pendingKind_ = ToastKind::Cracked;  // a crack always wins the slot (ADR-0031 #4).
             toastPending_ = true;  // the next tick starts the banner hold (onAppEvent has no clock).
+            break;
+        }
+        case AppEventType::HandshakeCaptured: {
+            // A crack outranks a capture: never overwrite a CRACKED banner that is showing or already
+            // pending (ADR-0031 #4). Otherwise raise a CAPTURED banner naming the just-captured network.
+            const bool crackedHoldsSlot = (toastActive_ && activeKind_ == ToastKind::Cracked) ||
+                                          (toastPending_ && pendingKind_ == ToastKind::Cracked);
+            if (crackedHoldsSlot) break;
+            const CaptureFact& c = *event.capture;
+            copyPrintable(toastEssid_, sizeof(toastEssid_), c.ssid);  // empty for a hidden network.
+            formatBssid(c.bssid, toastBssid_);
+            pendingKind_ = ToastKind::Captured;
+            toastPending_ = true;
             break;
         }
         case AppEventType::SyncCompleted: {
@@ -87,7 +101,10 @@ void ScreenToastSurface::tick(uint32_t nowMs) {
     if (toastPending_) {
         toastPending_ = false;
         toastActive_ = true;
-        toastUntilMs_ = nowMs + kToastHoldMs;  // (re)arm from now, extending the hold on a repeat crack.
+        activeKind_ = pendingKind_;
+        // A crack banner holds longer than a capture banner (ADR-0031 #4). (Re)arm from now, extending
+        // the hold on a repeat of the same kind.
+        toastUntilMs_ = nowMs + (activeKind_ == ToastKind::Cracked ? kToastHoldMs : kCapturedHoldMs);
     }
     if (toastActive_ && reached(nowMs, toastUntilMs_)) toastActive_ = false;
     render(nowMs);
@@ -117,6 +134,7 @@ void ScreenToastSurface::render(uint32_t nowMs) {
     view.lastSyncNew = lastSyncNew_;
     view.heartbeat = heartbeatOn(nowMs);
     view.toastActive = toastActive_;
+    view.toastKind = activeKind_;
     if (toastActive_) {
         std::snprintf(view.toastEssid, sizeof(view.toastEssid), "%s", toastEssid_);
         std::snprintf(view.toastBssid, sizeof(view.toastBssid), "%s", toastBssid_);

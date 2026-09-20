@@ -54,6 +54,12 @@ static AppEvent newPassword(CrackedResult& r, const char* essid, const char* psk
     return AppEvent::newPassword(r);
 }
 
+static AppEvent captured(CaptureFact& f, const char* ssid) {
+    std::snprintf(f.ssid, sizeof(f.ssid), "%s", ssid);
+    std::memcpy(f.bssid, kBssid, sizeof(f.bssid));
+    return AppEvent::handshakeCaptured(f);
+}
+
 void test_begin_renders_the_initial_hunting_hud(void) {
     FakeScreenRenderer r;
     ScreenToastSurface s(r);
@@ -176,6 +182,55 @@ void test_non_crack_facts_never_arm_the_toast(void) {
     TEST_ASSERT_FALSE(r.last().toastActive);
 }
 
+void test_capture_arms_a_captured_banner_naming_the_network(void) {
+    // The gap this slice closes (ADR-0031): a captured handshake raises a CAPTURED banner, distinct from
+    // the crack banner (ToastKind::Captured), naming the network. Fail-before: without the
+    // HandshakeCaptured case the banner never arms. The hold is shorter than the crack's (captures are
+    // frequent) — armed at t=100, kCapturedHoldMs=2500 -> until 2600.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    s.begin(0);
+
+    CaptureFact f;
+    step(s, captured(f, "lab-ap"), 100);
+    const ScreenView& v = r.last();
+    TEST_ASSERT_TRUE(v.toastActive);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ToastKind::Captured), static_cast<int>(v.toastKind));
+    TEST_ASSERT_EQUAL_STRING("lab-ap", v.toastEssid);
+    TEST_ASSERT_EQUAL_STRING("AA:BB:CC:DD:EE:FF", v.toastBssid);
+
+    s.tick(2000);  // still within the capture hold.
+    TEST_ASSERT_TRUE(r.last().toastActive);
+    s.tick(2601);  // past the (short) capture hold — a crack's 6000 ms hold would still be up here.
+    TEST_ASSERT_FALSE(r.last().toastActive);
+}
+
+void test_a_crack_banner_outranks_a_capture_banner(void) {
+    // A crack is the rarer, bigger news, so a live CRACKED banner is never replaced by a capture
+    // (ADR-0031 #4); once it clears, a fresh capture arms CAPTURED normally.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    s.begin(0);
+
+    CrackedResult p;
+    step(s, newPassword(p, "HomeNet", "pw"), 100);  // CRACKED armed until 6100.
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ToastKind::Cracked), static_cast<int>(r.last().toastKind));
+
+    CaptureFact f;
+    step(s, captured(f, "lab-ap"), 200);  // a capture arrives mid-CRACKED-hold — must not steal the slot.
+    TEST_ASSERT_TRUE(r.last().toastActive);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ToastKind::Cracked), static_cast<int>(r.last().toastKind));
+    TEST_ASSERT_EQUAL_STRING("HomeNet", r.last().toastEssid);  // still the crack's network.
+
+    s.tick(6101);  // CRACKED hold elapses.
+    TEST_ASSERT_FALSE(r.last().toastActive);
+    CaptureFact f2;
+    step(s, captured(f2, "lab2"), 6200);  // now a capture is free to arm CAPTURED.
+    TEST_ASSERT_TRUE(r.last().toastActive);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ToastKind::Captured), static_cast<int>(r.last().toastKind));
+    TEST_ASSERT_EQUAL_STRING("lab2", r.last().toastEssid);
+}
+
 void test_heartbeat_toggles_so_a_live_hud_is_not_a_frozen_one(void) {
     FakeScreenRenderer r;
     ScreenToastSurface s(r);
@@ -226,6 +281,8 @@ int main(int, char**) {
     RUN_TEST(test_new_password_arms_toast_without_psk);
     RUN_TEST(test_toast_clears_after_hold_and_a_repeat_extends_it);
     RUN_TEST(test_non_crack_facts_never_arm_the_toast);
+    RUN_TEST(test_capture_arms_a_captured_banner_naming_the_network);
+    RUN_TEST(test_a_crack_banner_outranks_a_capture_banner);
     RUN_TEST(test_heartbeat_toggles_so_a_live_hud_is_not_a_frozen_one);
     RUN_TEST(test_renders_only_when_the_view_changes);
     RUN_TEST(test_nonprintable_essid_byte_is_filtered_before_display);

@@ -45,6 +45,9 @@ public:
 private:
     /// How long a freshly recovered password holds the CRACKED banner before it clears back to the HUD.
     static constexpr uint32_t kToastHoldMs = 6000;
+    /// How long a freshly captured handshake holds the CAPTURED banner. Shorter than the crack banner:
+    /// captures are frequent, so a long hold would leave the banner up near-continuously (ADR-0031 #4).
+    static constexpr uint32_t kCapturedHoldMs = 2500;
     /// Half the heartbeat period: the liveness pulse toggles every second (a 2 s blink), slow enough to
     /// read as "alive", fast enough to notice it stop — the reason a status LED blinks (slice-0022).
     static constexpr uint32_t kHeartbeatHalfPeriodMs = 1000;
@@ -67,8 +70,10 @@ private:
     bool lastSyncOk_ = false;
     uint32_t lastSyncNew_ = 0;
     uint32_t heartbeatAnchorMs_ = 0;               ///< When begin() ran; the pulse phase is measured hence.
-    bool toastPending_ = false;                    ///< A NewPassword arrived; the next tick starts its hold.
-    bool toastActive_ = false;                     ///< The CRACKED banner is currently shown.
+    bool toastPending_ = false;                    ///< A fact armed a banner; the next tick starts its hold.
+    bool toastActive_ = false;                     ///< A banner (CAPTURED or CRACKED) is currently shown.
+    ToastKind pendingKind_ = ToastKind::Cracked;   ///< Which banner the pending arm will show.
+    ToastKind activeKind_ = ToastKind::Cracked;    ///< Which banner is currently shown (read when active).
     uint32_t toastUntilMs_ = 0;                    ///< When the banner clears back to the HUD.
     char toastEssid_[kCrackedEssidCap] = {0};      ///< The pending/active banner's ESSID (printable-filtered).
     char toastBssid_[kBssidTextCap] = {0};         ///< Its formatted BSSID.

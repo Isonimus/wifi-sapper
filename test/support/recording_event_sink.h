@@ -28,11 +28,16 @@ public:
     // Drain facts.
     int drainStarted = 0;
     std::vector<sapper::DrainOutcome> drainsCompleted;
+    // Capture facts.
+    std::vector<sapper::CaptureFact> captures;
 
     void onAppEvent(const sapper::AppEvent& e) override {
         switch (e.type) {
             case sapper::AppEventType::NewPassword:
                 newPasswords.push_back(*e.password);  // copy the borrowed payload, like a real surface.
+                break;
+            case sapper::AppEventType::HandshakeCaptured:
+                captures.push_back(*e.capture);  // copy the borrowed identity-only payload (ADR-0031).
                 break;
             case sapper::AppEventType::FirstSyncSummary:
                 ++summaries;

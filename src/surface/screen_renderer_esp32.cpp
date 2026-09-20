@@ -92,8 +92,13 @@ void Esp32ScreenRenderer::drawHud(const ScreenView& view) {
 }
 
 void Esp32ScreenRenderer::drawBanner(const ScreenView& view) {
+    // One banner slot, two labels (ADR-0031 #4): a capture is the frequent everyday event (blue title),
+    // a crack the rare big win (red title) — the two are simply distinct; the LED picks its own capture
+    // hue (cyan) independently. The renderer only labels; the surface decides which shows.
+    const bool cracked = view.toastKind == ToastKind::Cracked;
     fillRect(0, kBannerY, 240, kBannerH, kWhite);
-    display_.drawText(kMargin, kBannerTitleY, "* CRACKED *", kRed, kStatusSize);
+    display_.drawText(kMargin, kBannerTitleY, cracked ? "* CRACKED *" : "* CAPTURED *",
+                      cracked ? kRed : kBlue, kStatusSize);
     display_.drawText(kMargin, kBannerEssidY, view.toastEssid, kBlack, kLineSize);
     display_.drawText(kMargin, kBannerBssidY, view.toastBssid, kBlack, kLineSize);
 }

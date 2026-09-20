@@ -28,6 +28,7 @@
 #include "webhook_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
+#include "capture_probe.h"
 #include "screen_probe.h"
 #include "sync_probe.h"
 #include "upload_probe.h"
@@ -194,6 +195,7 @@ void setup() {
     // gets first refusal, then the discover probe (channel hopping + AP discovery), then the
     // fixed-channel sniff probe. All are inactive unless their env var is set and compiled out of
     // every shipped build, so these return false there and boot proceeds normally.
+    if (captureProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (screenProbeBegin(d)) return;  // renders to the panel d already brought up (one canvas).
     if (webhookProbeBegin()) return;
     if (ledProbeBegin()) return;
@@ -215,6 +217,13 @@ void setup() {
 }
 
 void loop() {
+    if (captureProbeActive()) {  // bench capture-notify verify owns the device; normal boot is skipped.
+        g_channel.pump();  // like the screen verify, this one answers `dump` — pump the channel so the
+                           // serial control commands are dispatched while the probe renders the banner.
+        captureProbePump();
+        delay(5);
+        return;
+    }
     if (screenProbeActive()) {  // bench screen verify owns the device; the normal boot loop is skipped.
         g_channel.pump();  // unlike the other probes, this verify needs `dump` answered — pump the channel
                            // so the serial control commands are dispatched while the probe renders.

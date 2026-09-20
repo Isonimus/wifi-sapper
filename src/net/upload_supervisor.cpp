@@ -4,6 +4,8 @@
  */
 #include "net/upload_supervisor.h"
 
+#include <cstring>  // memcpy/strncpy: copy the capture identity into the bus payload.
+
 #include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
 #include "core/event_bus.h"
 #include "net/sync_session.h"
@@ -54,11 +56,26 @@ void UploadSupervisor::onCaptureReady(const CapturedHandshake& handshake) {
             // Replaced/Evicted keep the net count the same, but each is fresh capture activity worth
             // draining, so they count toward the trigger just as a plain Stored does.
             ++activity_;
+            // The data has landed in the queue (§4 #13's must-deliver seam did its job); now broadcast
+            // the cosmetic "it happened" fact so the local surfaces can announce it (ADR-0031). Publish
+            // *after* the enqueue, and only on a success arm, so the fact never claims a capture the
+            // queue dropped. The payload is identity-only — bssid + ssid, never the pcap frames (§4 #9/
+            // #17) — so no surface can reach capture bytes through the bus.
+            publishCaptured(handshake);
             return;
         case OfferResult::NotUploadable:
         case OfferResult::StoreError:
             return;  // nothing newly pending to drain; the failure (if any) is the queue's to report.
     }
+}
+
+void UploadSupervisor::publishCaptured(const CapturedHandshake& handshake) {
+    if (bus_ == nullptr) return;
+    CaptureFact fact;  // stack-local, held live across the synchronous publish() (ADR-0021).
+    std::memcpy(fact.bssid, handshake.bssid, sizeof(fact.bssid));
+    std::strncpy(fact.ssid, handshake.ssid, sizeof(fact.ssid) - 1);
+    fact.ssid[sizeof(fact.ssid) - 1] = '\0';  // strncpy does not NUL-terminate a full-length source.
+    bus_->publish(AppEvent::handshakeCaptured(fact));
 }
 
 bool UploadSupervisor::shouldOpenWindow(uint32_t nowMs) const {

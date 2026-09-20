@@ -26,6 +26,7 @@ enum class LedStatus : uint8_t {
     Degraded,   ///< The last cycle could not reach the network (did not associate) — uploads and the
                 ///< hourly sync are stalled until connectivity returns (rendered warning/amber).
     Fault,      ///< A hard fault: the engine could not resume promiscuous mode (rendered alarm/red, solid).
+    Captured,   ///< A handshake was just captured — a brief flash (rendered a distinct colour, e.g. cyan).
     Recovered,  ///< A new password was just recovered — a latched celebratory flash (rendered white).
 };
 

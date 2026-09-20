@@ -16,6 +16,8 @@ void LedStatusSurface::begin(uint32_t nowMs) {
     heartbeatAnchorMs_ = nowMs;
     recoveredPending_ = false;
     recoveredActive_ = false;
+    capturedPending_ = false;
+    capturedActive_ = false;
     begun_ = true;
     render(nowMs);  // light the LED at boot rather than waiting for the first tick.
 }
@@ -30,6 +32,9 @@ void LedStatusSurface::onAppEvent(const AppEvent& event) {
             break;
         case AppEventType::NewPassword:
             recoveredPending_ = true;  // the next tick starts the solid flash (onAppEvent has no clock).
+            break;
+        case AppEventType::HandshakeCaptured:
+            capturedPending_ = true;   // the next tick starts the brief capture flash (no clock here).
             break;
         case AppEventType::SyncCompleted:
             // No base change: the surrounding drain events set the state, and a genuinely new crack
@@ -51,6 +56,12 @@ void LedStatusSurface::tick(uint32_t nowMs) {
         recoveredUntilMs_ = nowMs + kRecoveredHoldMs;  // (re)arm the flash from now, extending on a repeat.
     }
     if (recoveredActive_ && reached(nowMs, recoveredUntilMs_)) recoveredActive_ = false;
+    if (capturedPending_) {
+        capturedPending_ = false;
+        capturedActive_ = true;
+        capturedUntilMs_ = nowMs + kCapturedHoldMs;  // (re)arm from now, extending on a repeat capture.
+    }
+    if (capturedActive_ && reached(nowMs, capturedUntilMs_)) capturedActive_ = false;
     render(nowMs);
 }
 
@@ -75,7 +86,9 @@ bool LedStatusSurface::heartbeatOn(uint32_t nowMs) const {
 void LedStatusSurface::render(uint32_t nowMs) {
     LedStatus displayed;
     if (recoveredActive_) {
-        displayed = LedStatus::Recovered;  // solid white flash overrides the base heartbeat.
+        displayed = LedStatus::Recovered;  // solid white flash overrides everything: the rarest, biggest news.
+    } else if (capturedActive_) {
+        displayed = LedStatus::Captured;   // a brief capture flash, outranked only by Recovered (ADR-0031 #4).
     } else if (baseStatus_ == LedStatus::Fault) {
         displayed = LedStatus::Fault;      // an alarm sits solid, not blinking like a heartbeat.
     } else {

@@ -30,6 +30,14 @@ enum class ScreenStatus : uint8_t {
 /// A formatted BSSID is 17 chars ("AA:BB:CC:DD:EE:FF") plus a NUL.
 constexpr size_t kBssidTextCap = 18;
 
+/// Which banner the toast slot is showing, so the renderer picks the label (ADR-0031 decision 4). One
+/// slot renders both: a freshly captured handshake (CAPTURED) or a freshly recovered password
+/// (CRACKED). Only meaningful while ScreenView::toastActive is true.
+enum class ToastKind : uint8_t {
+    Captured,  ///< A handshake was just enqueued for upload (frequent; a brief banner).
+    Cracked,   ///< A password was just recovered (rare; the bigger news, outranks a capture).
+};
+
 /**
  * @brief The complete state of the panel at one moment. Compared field-by-field for render-on-change.
  *
@@ -46,8 +54,9 @@ struct ScreenView {
     bool lastSyncOk = false;    ///< The last sync succeeded.
     uint32_t lastSyncNew = 0;   ///< New passwords the last sync announced.
     bool heartbeat = false;     ///< Liveness pulse; alternates ~1 Hz so a live HUD is not a frozen one.
-    bool toastActive = false;   ///< A CRACKED banner is currently shown over the HUD.
-    char toastEssid[kCrackedEssidCap] = {0};  ///< The cracked network's name (printable-filtered).
+    bool toastActive = false;   ///< A banner (CAPTURED or CRACKED) is currently shown over the HUD.
+    ToastKind toastKind = ToastKind::Cracked;  ///< Which banner is shown; read only when toastActive.
+    char toastEssid[kCrackedEssidCap] = {0};  ///< The banner network's name (printable-filtered).
     char toastBssid[kBssidTextCap] = {0};     ///< Its BSSID, formatted "AA:BB:CC:DD:EE:FF".
 
     /// Field-by-field equality: the surface renders only when the displayed state actually changes, so
@@ -56,7 +65,8 @@ struct ScreenView {
         return status == o.status && uploaded == o.uploaded && cracks == o.cracks &&
                haveSynced == o.haveSynced && lastSyncOk == o.lastSyncOk &&
                lastSyncNew == o.lastSyncNew && heartbeat == o.heartbeat &&
-               toastActive == o.toastActive && std::strcmp(toastEssid, o.toastEssid) == 0 &&
+               toastActive == o.toastActive && toastKind == o.toastKind &&
+               std::strcmp(toastEssid, o.toastEssid) == 0 &&
                std::strcmp(toastBssid, o.toastBssid) == 0;
     }
     bool operator!=(const ScreenView& o) const { return !(*this == o); }

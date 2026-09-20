@@ -138,6 +138,9 @@ private:
     /// Upload every pending capture once, recording counts in @p outcome; return whether the cycle
     /// fully succeeded (every upload terminal, no store error).
     bool drainQueue(DrainOutcome& outcome);
+    /// Broadcast the cosmetic HandshakeCaptured fact (identity only) for a successfully enqueued
+    /// capture, so surfaces can announce it (ADR-0031, §4 #17). No-op when no bus is wired.
+    void publishCaptured(const CapturedHandshake& handshake);
 
     HuntEngine& engine_;
     CaptureQueue& queue_;

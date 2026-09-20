@@ -111,6 +111,15 @@ public:
                               o.storeError, static_cast<int>(o.fetch));
                 break;
             }
+            case AppEventType::HandshakeCaptured: {
+                // The headless capture record — the one thing missing when a capture "went unnoticed"
+                // (ADR-0031). Identity only (no PSK; a capture has none), and the anchor the on-air
+                // capture-notify verify greps for.
+                const CaptureFact& c = *e.capture;
+                Serial.printf("[CAPTURE] essid='%s' bssid=%02x:%02x:%02x:%02x:%02x:%02x\n", c.ssid,
+                              c.bssid[0], c.bssid[1], c.bssid[2], c.bssid[3], c.bssid[4], c.bssid[5]);
+                break;
+            }
             case AppEventType::DrainStarted:
             case AppEventType::DrainCompleted:
                 break;  // the LED surface consumes drain facts; this logger stays sync-only.

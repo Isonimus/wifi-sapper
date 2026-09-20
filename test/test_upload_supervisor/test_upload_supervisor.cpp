@@ -441,6 +441,83 @@ void test_a_drain_cycle_publishes_start_and_completion_facts_on_the_bus(void) {
     TEST_ASSERT_EQUAL_size_t(1, sink.drainsCompleted[0].accepted);  // the same counted outcome as the snapshot.
 }
 
+// --- Capture-notification fact (slice-0032 Scenarios A, B, C; ADR-0031) ----------------------------
+
+/// A beacon-only "handshake": no EAPOL, so serializeHandshake() rejects it and offer() returns
+/// NotUploadable — the shape a well-behaved engine never reports, re-checked here (fail loud).
+static CapturedHandshake makeBeaconOnly(const uint8_t bssid[6]) {
+    HandshakeCollector collector(bssid, 6);
+    const std::vector<uint8_t> beacon = buildBeacon(bssid, "Net", 6);
+    collector.ingest(beacon.data(), static_cast<uint16_t>(beacon.size()));
+    return collector.handshake();
+}
+
+void test_a_successful_enqueue_publishes_handshake_captured_with_identity(void) {
+    // The gap this slice closes (ADR-0031): a captured handshake must raise a local fact, not just tick
+    // the upload counter. A successful enqueue publishes exactly one HandshakeCaptured carrying the
+    // network's identity — and only its identity (§4 #9/#17: CaptureFact has no frame bytes). Fail-before:
+    // without the publishCaptured() call, captures stays empty.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 100;  // stay in Hunting; we assert the enqueue-time fact, not a drain.
+    EventBus bus;
+    sapper_test::RecordingEventSink sink;
+    TEST_ASSERT_TRUE(bus.subscribe(sink));
+    Rig rig(config, nullptr, &bus);
+    rig.start(0);
+
+    const auto bssid = bssidN(7);
+    rig.supervisor.onCaptureReady(makeHandshake(bssid.data()));
+
+    TEST_ASSERT_EQUAL_size_t(1, sink.captures.size());
+    TEST_ASSERT_EQUAL_MEMORY(bssid.data(), sink.captures[0].bssid, 6);
+    TEST_ASSERT_EQUAL_STRING("Net", sink.captures[0].ssid);  // the beacon's SSID, carried for the banner.
+}
+
+void test_a_hidden_network_capture_carries_an_empty_ssid(void) {
+    // A hidden AP beacons no SSID, so the fact carries an empty ssid (the banner falls back to BSSID).
+    UploadSupervisorConfig config;
+    config.drainThreshold = 100;
+    EventBus bus;
+    sapper_test::RecordingEventSink sink;
+    TEST_ASSERT_TRUE(bus.subscribe(sink));
+    Rig rig(config, nullptr, &bus);
+    rig.start(0);
+
+    const auto bssid = bssidN(8);
+    HandshakeCollector collector(bssid.data(), 6);
+    const std::vector<uint8_t> beacon = buildBeacon(bssid.data(), "", 6);  // hidden: empty SSID.
+    collector.ingest(beacon.data(), static_cast<uint16_t>(beacon.size()));
+    const std::vector<uint8_t> m1 = buildEapol(bssid.data(), kClient, sapper_test::kKeyInfoM1, true);
+    collector.ingest(m1.data(), static_cast<uint16_t>(m1.size()));
+    const std::vector<uint8_t> m2 = buildEapol(bssid.data(), kClient, sapper_test::kKeyInfoM2, false);
+    collector.ingest(m2.data(), static_cast<uint16_t>(m2.size()));
+    rig.supervisor.onCaptureReady(collector.handshake());
+
+    TEST_ASSERT_EQUAL_size_t(1, sink.captures.size());
+    TEST_ASSERT_EQUAL_STRING("", sink.captures[0].ssid);
+}
+
+void test_a_failed_enqueue_publishes_no_capture_fact(void) {
+    // The fact must never announce a capture the queue actually dropped (ADR-0031 #1): it is published
+    // AFTER a successful offer, only on the success arms. A store failure and an unuploadable handshake
+    // both publish nothing.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 100;
+    EventBus bus;
+    sapper_test::RecordingEventSink sink;
+    TEST_ASSERT_TRUE(bus.subscribe(sink));
+    Rig rig(config, nullptr, &bus);
+    rig.start(0);
+
+    rig.store.failEnqueue = true;  // offer() -> StoreError.
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));
+    TEST_ASSERT_EQUAL_size_t(0, sink.captures.size());
+
+    rig.store.failEnqueue = false;
+    rig.supervisor.onCaptureReady(makeBeaconOnly(bssidN(2).data()));  // offer() -> NotUploadable.
+    TEST_ASSERT_EQUAL_size_t(0, sink.captures.size());
+}
+
 // --- Window sharing with a transmitting surface (slice-0024 Scenario J; ADR-0023) ------------------
 
 void test_a_live_window_flushes_the_notifier_and_an_offline_cycle_does_not(void) {
@@ -488,6 +565,9 @@ int main(int, char**) {
     RUN_TEST(test_a_sync_runs_only_inside_a_live_window_and_a_failed_associate_fakes_no_activity);
     RUN_TEST(test_a_sync_not_due_never_forces_a_window);
     RUN_TEST(test_a_drain_cycle_publishes_start_and_completion_facts_on_the_bus);
+    RUN_TEST(test_a_successful_enqueue_publishes_handshake_captured_with_identity);
+    RUN_TEST(test_a_hidden_network_capture_carries_an_empty_ssid);
+    RUN_TEST(test_a_failed_enqueue_publishes_no_capture_fact);
     RUN_TEST(test_a_live_window_flushes_the_notifier_and_an_offline_cycle_does_not);
     return UNITY_END();
 }
