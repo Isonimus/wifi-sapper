@@ -29,8 +29,13 @@ extern const uint8_t kRootCaBundleEnd[] asm("_binary_x509_crt_bundle_end");
 bool Esp32WebhookTransport::post(const WebhookRequest& request) {
     WiFiClientSecure client;
     // Validate the peer against the standard root store — arbitrary host, so a bundle not a pin.
-    client.setCACertBundle(kRootCaBundleStart,
-                           static_cast<size_t>(kRootCaBundleEnd - kRootCaBundleStart));
+    // kRootCaBundleEnd/Start are two linker symbols bracketing one embedded blob; end - start is its
+    // byte length. cppcheck flags the cross-symbol subtraction (comparePointers), but this is the
+    // standard, correct idiom for sizing a linker-embedded binary — there is no other way to get it
+    // (ADR-0051).
+    // cppcheck-suppress comparePointers
+    const size_t bundleLen = static_cast<size_t>(kRootCaBundleEnd - kRootCaBundleStart);
+    client.setCACertBundle(kRootCaBundleStart, bundleLen);
     client.setTimeout(kTlsTimeoutSec);
 
     HTTPClient http;

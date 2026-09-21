@@ -1,0 +1,10 @@
+name: "CodeQL config"
+
+# NOTE: `paths` / `paths-ignore` are INERT for compiled languages (C/C++). CodeQL analyzes
+# everything compiled during the build, so the vendored libraries pulled into .pio/libdeps by
+# `pio run` are analyzed no matter what a paths filter says here.
+#
+# Scoping to our own sources is therefore done AFTER analysis: the "Filter vendored dependencies"
+# step in codeql.yml drops every result located under .pio/, lib/, or test/ from the SARIF before
+# upload. This file is kept as the pinned config-file reference (and a home for future query-suite
+# selection). See ADR-0051.

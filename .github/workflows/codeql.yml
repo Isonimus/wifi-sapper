@@ -1,0 +1,87 @@
+name: CodeQL
+
+# Semantic security analysis of the C/C++ firmware sources. Findings surface as Code Scanning
+# alerts in the Security tab (ADR-0051).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '27 4 * * 1'  # weekly, Monday 04:27 UTC
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze C/C++
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # The pioarduino ESP32 platform requires Python 3.10-3.13; '3.x' resolves
+          # to 3.14 on current runners and the platform hard-rejects it.
+          python-version: '3.13'
+
+      # CodeQL for c-cpp traces a real compilation, so build the primary firmware between init and
+      # analyze — autobuild cannot drive PlatformIO. Cache the platform/toolchain like ci.yml does.
+      - name: Cache PlatformIO
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-codeql-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-codeql-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Build firmware (cardputer)
+        run: pio run -e cardputer
+
+      # Analyze, but do NOT upload yet. paths-ignore is inert for compiled languages, so CodeQL has
+      # also analyzed the vendored libraries compiled into .pio/libdeps. We strip those results by
+      # path before upload (see codeql-config.yml).
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:c-cpp"
+          upload: false
+          output: sarif-results
+
+      # Drop every result located under .pio/, lib/, or test/ — vendored dependencies and host
+      # mocks we don't own and won't patch. jq keeps this dependency-free (no third-party filtering
+      # action); it is null-safe, so a result without a location is kept rather than crashing the
+      # filter.
+      - name: Filter vendored dependencies from results
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in sarif-results/*.sarif; do
+            jq '(.runs[].results) |= map(select(
+              ((.locations[0].physicalLocation.artifactLocation.uri)? // "") as $u
+              | ($u|startswith(".pio/")) or ($u|startswith("lib/")) or ($u|startswith("test/"))
+              | not))' "$f" > "$f.tmp"
+            mv "$f.tmp" "$f"
+          done
+
+      - name: Upload filtered results
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results
+          category: "/language:c-cpp"

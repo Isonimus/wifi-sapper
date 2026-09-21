@@ -1,0 +1,61 @@
+#!/bin/sh
+# Pre-push hook (ADR-0051) — the fast local mirror of CI.
+#
+# The pre-commit hook grades the INDEX (git write-tree, stele:ADR-0018). That leaves three gaps it
+# cannot close from inside pre-commit (ADR-0049 amendment 2, F4): a pathspec-limited
+# `git commit -- <path>` commits working-tree content the index scan never saw, `--no-verify`
+# skips the hook, and a clone that never installed the hook has no gate at all. This hook runs the
+# same guards against the working tree at push time (the offending content is in the tree by then),
+# plus the build, so the operator learns before the round-trip to CI — not after.
+#
+# It is the fast MIRROR, not the authority: it is skippable with `git push --no-verify`, and it
+# scans the working tree rather than the exact pushed ref. The authoritative pushed-tree scan is CI
+# (.github/workflows/ci.yml, the `guards` job), which is why the artifact-privacy and lint checks
+# live there too — a gate the operator can skip cannot be the backstop for a public remote.
+#
+# Install: ln -sf ../../.claude/hooks/pre-push .git/hooks/pre-push
+# Bypass in a genuine emergency with `git push --no-verify` — CI still catches it.
+
+set -e
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+# A delete-only push (every local sha all-zero) ships no new content, so there is nothing to
+# verify — skip the build rather than compile for a branch deletion. An empty stdin (the hook run
+# by hand) is treated as "check anyway".
+zero="0000000000000000000000000000000000000000"
+saw_line=0
+has_update=0
+while read -r _localref localsha _remoteref _remotesha; do
+  saw_line=1
+  [ "$localsha" != "$zero" ] && has_update=1
+done
+if [ "$saw_line" -eq 1 ] && [ "$has_update" -eq 0 ]; then
+  echo "pre-push: delete-only push, nothing to verify."
+  exit 0
+fi
+
+# Fail loud on a missing tool rather than skipping a check silently (quality bar §3): a pre-push
+# that quietly does nothing is worse than none, because it grants false confidence.
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-push: node not found on PATH — cannot run the doc/privacy guards." >&2
+  exit 1
+fi
+if ! command -v pio >/dev/null 2>&1; then
+  echo "pre-push: pio (PlatformIO) not found on PATH — cannot run the native suite or board build." >&2
+  echo "          Install PlatformIO, or push with --no-verify (CI will still run the full lane)." >&2
+  exit 1
+fi
+
+# 1. The F4-closing guards, against the working tree: doc-corpus integrity, the generated index is
+#    fresh, and no real network identifier rides a committed artifact (ADR-0049).
+npm run lint
+npm run check:index
+npm run check:artifact-privacy
+
+# 2. The build half (the operator's explicit choice, ADR-0051 decision 4): the host unit suite and
+#    the reference firmware build. Native runs here because the platform-shadowing defect that made
+#    it die with UnknownPlatform is fixed (ADR-0051 decision 5) — it is a real, green lane now.
+pio test -e native
+pio run -e cardputer

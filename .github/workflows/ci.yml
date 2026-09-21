@@ -1,0 +1,97 @@
+name: CI
+
+# Runs on every push and PR against the checked-out (pushed) tree — the tree that lands, not the
+# index the pre-commit hook grades. This is the backstop for what the local hook cannot see: a
+# pathspec-limited `git commit -- <path>`, a `--no-verify`, or a clone that never installed the
+# hook (ADR-0051, closing ADR-0049 F4).
+on:
+  push:
+  pull_request:
+
+# Only the latest push to a given ref is worth building; cancel superseded runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The F4-closing half: the stele doc linter, the generated-index check, and the artifact-privacy
+  # guard (ADR-0049), all against the pushed tree on a runner nobody can `--no-verify`. These are
+  # the two checks a clone without the pre-commit hook would otherwise never run. Zero-dependency
+  # node scripts, so no install step.
+  guards:
+    name: guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Lint docs
+        run: npm run lint
+
+      - name: Check generated index
+        run: npm run check:index
+
+      - name: Check artifact privacy
+        run: npm run check:artifact-privacy
+
+  build:
+    name: ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: native
+            cmd: pio test -e native
+          - env: cardputer
+            cmd: pio run -e cardputer
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # The pioarduino ESP32 platform requires Python 3.10-3.13; '3.x' resolves
+          # to 3.14 on current runners and the platform hard-rejects it.
+          python-version: '3.13'
+
+      # The pioarduino platform, the bruce Arduino-libs bundle and the Xtensa toolchain are large
+      # release-zip downloads; cache them per leg. Keyed on platformio.ini so the cache invalidates
+      # when platform/lib/env defs change.
+      - name: Cache PlatformIO
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.env }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: ${{ matrix.cmd }}
+        run: ${{ matrix.cmd }}
+
+  # cppcheck is a separate job, not a matrix leg: it needs an apt install and different steps, which
+  # would contort the env->cmd matrix above. It gates on cppcheck's default `error` severity —
+  # genuine bugs (null deref, buffer overrun, use-after-free), the low-false-positive class — over
+  # our own src/ only (lib/ is vendored). False positives are handled with in-source
+  # `cppcheck-suppress` comments, not by loosening the gate (ADR-0051).
+  cppcheck:
+    name: cppcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: >
+          cppcheck --std=c++17 --language=c++ --error-exitcode=1
+          --inline-suppr --suppress=missingIncludeSystem
+          -I src src/

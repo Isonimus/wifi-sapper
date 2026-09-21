@@ -26,7 +26,8 @@
     "verify:serial-stimulus": "node scripts/0048-serial-stimulus-verify.mjs",
     "check:artifact-privacy": "node scripts/check-artifact-privacy.mjs",
     "lint": "node scripts/lint-docs.mjs .",
-    "index": "node scripts/build-index.mjs ."
+    "index": "node scripts/build-index.mjs .",
+    "check:index": "node scripts/build-index.mjs --check ."
   },
   "devDependencies": {
     "serialport": "^12.0.0"

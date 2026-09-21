@@ -84,7 +84,10 @@ void HandshakeCollector::ingest(const uint8_t* frame, uint16_t len) {
 }
 
 void HandshakeCollector::reset() {
-    CapturedHandshake fresh;
+    // Value-init ({}) so the beacon/msg frame buffers are cleared, not just their len flags: a plain
+    // `CapturedHandshake fresh;` leaves each CapturedFrame::data[] indeterminate (only len has an
+    // NSDMI), and `handshake_ = fresh` would then copy that uninitialised memory (cppcheck uninitvar).
+    CapturedHandshake fresh{};
     std::memcpy(fresh.bssid, handshake_.bssid, sizeof(fresh.bssid));
     fresh.channel = handshake_.channel;
     handshake_ = fresh;

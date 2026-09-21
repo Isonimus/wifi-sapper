@@ -5,6 +5,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Isonimus/wifi-sapper/actions/workflows/ci.yml"><img src="https://github.com/Isonimus/wifi-sapper/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Isonimus/wifi-sapper/actions/workflows/codeql.yml"><img src="https://github.com/Isonimus/wifi-sapper/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: alpha">
   <img src="https://img.shields.io/badge/platform-ESP32--S3-333?logo=espressif" alt="Platform: ESP32-S3">
@@ -252,7 +254,8 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run verify:maintenance` | Serial-driven Maintenance-mode verify on an attached board (slice-0040 + slice-0044, lane 3). Flash the `cardputer_testhooks` build with real credentials, `SAPPER_TEST_MAINT=1`, and `SAPPER_TEST_MAINT_PASS`; asserts the device enters `phase=maintenance`, prints the `[MAINT]` banner, and keeps answering serial. Join the workstation to the `Sapper-XXXX` AP with that passphrase and set `SAPPER_MAINT_DASHBOARD_URL=http://192.168.4.1/` (and optionally `SAPPER_MAINT_EXPECT_PSK`) to also fetch the dashboard, check its controls, and fetch `GET /config`. Set `SAPPER_MAINT_DRIVE_RESUME=1` to also drive `POST /resume` (this reboots the board). See the script header. |
 | `npm run verify:serial-stimulus` | Serial-driven stimulus verify on an attached board (slice-0048, lane 3). Flash a **normally-booting** `cardputer_testhooks` build (real `SAPPER_TEST_WIFI_SSID`/`SAPPER_TEST_WIFI_PASS`/`SAPPER_TEST_WPASEC_KEY`, **no** probe env set); once it is hunting, the script writes `inject-handshake` over serial and proves the **shipped** hunt loop injects, enqueues, and drains the capture to wpa-sec — not a bench probe. The stimulus vocabulary exists only in `SAPPER_TEST_HOOKS` builds; a shipped binary rejects it (§4 #4, `test/test_serial_command`). See the script header. |
 | `npm run lint` / `npm run index` | Documentation linter and generated ADR index. |
-| `npm run check:artifact-privacy` | Fail if a committed verify artifact carries a real BSSID/SoftAP identifier (ADR-0049; also run by the pre-commit hook). |
+| `npm run check:index` | Fail if `adr/INDEX.md` is stale (the `--check` half of `index`; run by the pre-push hook and CI). |
+| `npm run check:artifact-privacy` | Fail if a committed verify artifact carries a real BSSID/SoftAP identifier (ADR-0049; also run by the pre-commit hook, the pre-push hook, and CI against the pushed tree). |
 
 ## Built with Stele
 
@@ -262,7 +265,12 @@ method. Every durable decision is written as an immutable **ADR** ([`adr/`](adr/
 as a **slice** ([`slices/`](slices/)) *before* the code, shipped in the same commit and frozen once
 merged — so the record of *why* is never rewritten, only superseded. Open work lives in a single
 [`LEDGER.md`](LEDGER.md); [`adr/INDEX.md`](adr/INDEX.md) is generated; and a pre-commit linter keeps
-the corpus honest (immutable bodies may only gain lines, citations must resolve). The conventions
+the corpus honest (immutable bodies may only gain lines, citations must resolve). A local `pre-push`
+hook (`ln -sf ../../.claude/hooks/pre-push .git/hooks/pre-push`) re-runs the linter and the
+artifact-privacy guard against the working tree — plus the native test suite and the board build —
+before each push, and GitHub Actions CI re-runs those against the *pushed* tree on the server, plus
+cppcheck and CodeQL. CI is the authoritative backstop (it scans the exact pushed ref and guards PRs
+from clones without the hook); the hook is the fast local mirror (ADR-0051). The conventions
 live in [`CLAUDE.md`](CLAUDE.md), and the method's toolkit (`/adr`, `/slice`, `/wrap-up`, the quality
 bar) is vendored under [`.claude/`](.claude/). If the layout here looks unusual, that is why — the
 commit history is meant to read as a trail of decisions.
