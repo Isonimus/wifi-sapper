@@ -21,7 +21,7 @@
 #include <WebServer.h>
 
 #include "net/cracked_manifest.h"    // CrackedManifest — the §12 read seam the dashboard enumerates.
-#include "net/provisioning.h"        // kSoftApSsidBufSize, formatSoftApSsid, isUsableMaintenancePass
+#include "net/provisioning.h"        // kMaintApSsidBufSize, formatMaintenanceApSsid, isUsableMaintenancePass
 #include "net/provisioning_store.h"  // ProvisioningRecord — the record the config form renders/merges.
 
 namespace sapper {
@@ -57,7 +57,8 @@ public:
     /// the operator sees the acknowledgement before the AP drops.
     bool rebootRequested() const { return m_pendingReboot; }
 
-    /// The SoftAP SSID being broadcast ("Sapper-XXXX"), for the boot banner and the panel screen.
+    /// The SoftAP SSID being broadcast ("Sapper-Maint-XXXX", ADR-0055), for the boot banner and the
+    /// panel screen — distinct from the provisioning portal's "Sapper-XXXX".
     const char* apSsid() const { return m_ssid; }
 
 private:
@@ -74,7 +75,7 @@ private:
 
     DNSServer m_dns;
     WebServer m_http{80};
-    char m_ssid[kSoftApSsidBufSize] = {0};
+    char m_ssid[kMaintApSsidBufSize] = {0};
 };
 
 }  // namespace sapper

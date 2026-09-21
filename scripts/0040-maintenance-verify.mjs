@@ -28,7 +28,8 @@
  * while parked in Maintenance (§4 invariant #3 — a pre-engine blocking state pumps serial). Fails loud on
  * any [FATAL]/[ERROR] line.
  *
- * Eyeball/HTTP half (optional): join the workstation to the "Sapper-XXXX" AP using the maintenance
+ * Eyeball/HTTP half (optional): join the workstation to the "Sapper-Maint-XXXX" AP (ADR-0055; distinct
+ * from the provisioning portal's "Sapper-XXXX") using the maintenance
  * passphrase (this proves the AP is NOT open and NOT using the default "sapper-setup" password), then set
  * SAPPER_MAINT_DASHBOARD_URL=http://192.168.4.1/ to have this script fetch the dashboard and assert it is
  * HTML that lists the recovered networks — including a plaintext PSK you seeded (ADR-0039 decision 5).

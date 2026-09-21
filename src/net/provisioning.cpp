@@ -64,6 +64,12 @@ void formatSoftApSsid(const uint8_t mac[6], char (&out)[kSoftApSsidBufSize]) {
     std::snprintf(out, kSoftApSsidBufSize, "Sapper-%02X%02X", mac[4], mac[5]);
 }
 
+void formatMaintenanceApSsid(const uint8_t mac[6], char (&out)[kMaintApSsidBufSize]) {
+    // Same last-two-bytes suffix as formatSoftApSsid, with the "Maint" mode tag (ADR-0055). One extra
+    // snprintf line rather than a shared prefix helper — the second instance, not the third (§3).
+    std::snprintf(out, kMaintApSsidBufSize, "Sapper-Maint-%02X%02X", mac[4], mac[5]);
+}
+
 const char* phaseLabel(Phase phase) {
     // No default case: -Wswitch then makes a newly-added phase without a token a compile error,
     // so the serial contract can never silently omit a state (quality bar §3: fail loud).

@@ -53,10 +53,11 @@ bool copyBounded(char* dst, size_t dstSize, const String& src) {
 
 bool MaintenancePortal::begin() {
     // Read the SoftAP MAC from efuse (valid before WiFi starts, unlike the interface MAC), same as the
-    // captive portal, so the Maintenance AP carries the same "Sapper-XXXX" identity the README documents.
+    // captive portal. The Maintenance AP carries a DISTINCT "Sapper-Maint-XXXX" identity (ADR-0055) so it
+    // is never mistaken for the provisioning portal's "Sapper-XXXX" (e.g. the STA-fail fallback).
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    formatSoftApSsid(mac, m_ssid);
+    formatMaintenanceApSsid(mac, m_ssid);
 
     WiFi.mode(WIFI_AP);
     if (!WiFi.softAP(m_ssid, effectiveApPass(m_creds.maintenancePass))) {

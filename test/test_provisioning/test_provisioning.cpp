@@ -203,6 +203,21 @@ void test_softap_ssid_zero_pads(void) {
     TEST_ASSERT_EQUAL_STRING("Sapper-0A05", ssid);
 }
 
+// The Maintenance SoftAP carries the "Maint" tag so it is never confused with the provisioning portal
+// (ADR-0055). From the same MAC the two names must differ — a regression to reusing formatSoftApSsid
+// would make this equal "Sapper-ABCD" and fail.
+void test_maintenance_softap_ssid_is_tagged_and_distinct(void) {
+    const uint8_t mac[6] = {0x24, 0x6f, 0x28, 0x11, 0xAB, 0xCD};
+    char maintSsid[kMaintApSsidBufSize];
+    formatMaintenanceApSsid(mac, maintSsid);
+    TEST_ASSERT_EQUAL_STRING("Sapper-Maint-ABCD", maintSsid);
+
+    char provSsid[kSoftApSsidBufSize];
+    formatSoftApSsid(mac, provSsid);
+    TEST_ASSERT_EQUAL_STRING("Sapper-ABCD", provSsid);  // provisioning name unchanged (ADR-0006 #5)
+    TEST_ASSERT_TRUE(std::strcmp(maintSsid, provSsid) != 0);  // distinguishable
+}
+
 // --- phaseLabel: the serial [STATE] contract ---------------------------------
 
 void test_phase_labels_match_serial_contract(void) {
@@ -242,6 +257,7 @@ int main(int, char**) {
     RUN_TEST(test_maintenance_pass_rejects_overlong);
     RUN_TEST(test_softap_ssid_from_last_two_mac_bytes);
     RUN_TEST(test_softap_ssid_zero_pads);
+    RUN_TEST(test_maintenance_softap_ssid_is_tagged_and_distinct);
     RUN_TEST(test_phase_labels_match_serial_contract);
     return UNITY_END();
 }

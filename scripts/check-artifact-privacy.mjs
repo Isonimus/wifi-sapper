@@ -36,14 +36,19 @@ import { basename, join } from 'node:path';
 const root = process.argv[2] || '.';
 const artifactsDir = join(root, 'artifacts');
 
-// Identifier patterns. The redaction placeholders (`xx:xx:xx:xx:xx:xx`, `Sapper-XXXX`) are non-hex
-// where the pattern demands hex, so they never match — that is the point of choosing them.
+// Identifier patterns. The redaction placeholders (`xx:xx:xx:xx:xx:xx`, `Sapper-XXXX`,
+// `Sapper-Maint-XXXX`) are non-hex where the pattern demands hex, so they never match — that is the
+// point of choosing them.
 const PATTERNS = [
     { label: 'BSSID (colon)', re: /\b([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b/ },
     { label: 'BSSID (hyphen)', re: /\b([0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2}\b/ },
     { label: 'BSSID (dotted)', re: /\b([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}\b/ },
-    // The SoftAP name is `Sapper-%02X%02X` (four hex digits, no colons) — invisible to the MAC
-    // patterns above, and itself a stable, device-identifying string.
+    // The Maintenance SoftAP name is `Sapper-Maint-%02X%02X` (ADR-0055) — must precede the plain
+    // provisioning pattern below, whose `Sapper-` prefix would otherwise not reach the hex here anyway,
+    // but keeping it first documents that the tagged form is the more specific case.
+    { label: 'Maintenance SoftAP name', re: /\bSapper-Maint-[0-9A-Fa-f]{4}\b/ },
+    // The provisioning SoftAP name is `Sapper-%02X%02X` (four hex digits, no colons) — invisible to the
+    // MAC patterns above, and itself a stable, device-identifying string.
     { label: 'SoftAP name', re: /\bSapper-[0-9A-Fa-f]{4}\b/ },
 ];
 // Pixel/binary evidence carries identifiers as pixels, not greppable text; skip it (documented gap).

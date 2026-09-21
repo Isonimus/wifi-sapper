@@ -29,6 +29,10 @@ constexpr size_t kMaxWebhookUrlLen = 160;  ///< Optional push webhook URL (ADR-0
 /// formatSoftApSsid() cannot be handed a too-small buffer (no runtime cap, no silent truncation).
 constexpr size_t kSoftApSsidBufSize = 12;
 
+/// Buffer size for the Maintenance SoftAP SSID "Sapper-Maint-XXXX": 13 + 4 hex + NUL (ADR-0055). Its
+/// own compile-time size, same no-truncation contract as kSoftApSsidBufSize.
+constexpr size_t kMaintApSsidBufSize = 18;
+
 /**
  * @brief The pre-engine boot phases, reported on the serial `[STATE]` line (ADR-0006 decision #3).
  *
@@ -130,6 +134,17 @@ bool isUsableMaintenancePass(const char* pass);
  * the README's pattern. The reference-to-array parameter fixes the buffer size at compile time.
  */
 void formatSoftApSsid(const uint8_t mac[6], char (&out)[kSoftApSsidBufSize]);
+
+/**
+ * @brief Format the Maintenance SoftAP SSID as "Sapper-Maint-XXXX" from the last two @p mac bytes
+ *        (ADR-0055).
+ *
+ * The "Maint" tag makes the mode self-evident and distinct from the provisioning portal's "Sapper-XXXX"
+ * (ADR-0006 #5), so a device that fell back to provisioning cannot be mistaken for Maintenance. The MAC
+ * suffix is kept for per-unit disambiguation. Same compile-time-sized, no-truncation contract as
+ * formatSoftApSsid().
+ */
+void formatMaintenanceApSsid(const uint8_t mac[6], char (&out)[kMaintApSsidBufSize]);
 
 /**
  * @brief The stable serial token for a phase, as it appears in the `[STATE] phase=<token>` line.
