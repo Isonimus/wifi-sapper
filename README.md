@@ -101,6 +101,67 @@ you can join and read them — otherwise anyone in radio range who knows the def
 > flash dump can read them; flash encryption is a tracked follow-up ([`LEDGER.md`](LEDGER.md),
 > ADR-0006). Treat a provisioned device as holding its network passphrase in the clear.
 
+## Flashing a board
+
+The firmware is built and flashed with [PlatformIO](https://platformio.org). The only board
+profile that ships today is the reference **M5Stack Cardputer ADV** (ESP32-S3, no PSRAM), built
+as the `cardputer` environment; broadening to other boards (CYD, M5Stick, bare ESP32) is a tracked
+follow-up ([`LEDGER.md`](LEDGER.md), slice-8). The display driver (LovyanGFX) auto-detects the
+panel, so a screen is optional — a screenless board runs the same binary.
+
+1. Connect the board over USB-C. The Cardputer's ESP32-S3 exposes a **native USB-CDC** serial port
+   (no external UART bridge), so it enumerates directly.
+2. Build and flash the shipped firmware:
+
+   ```
+   pio run -e cardputer -t upload
+   ```
+
+   If the board does not auto-reset into its bootloader, hold **BOOT (GPIO0)** while tapping
+   **RESET**, then re-run the upload.
+3. Watch the serial log at **115200 baud** (the observation channel below speaks here):
+
+   ```
+   pio run -e cardputer -t monitor
+   ```
+
+After flashing, a device with no saved network comes up in the **captive setup portal** — continue
+with [Provisioning](#provisioning-first-boot) above. The `cardputer_testhooks` environment is the
+bench-verify build only (it carries the serial *stimulus* vocabulary and the compile-time probes);
+never deploy it, and see [Building & verifying](#building--verifying) for what each verify needs.
+
+## Serial control channel (observation)
+
+Every shipped build exposes a small, **read-only** serial control channel over the same USB-CDC
+port (115200 baud, line-oriented, `\n`-terminated — a bare `\r` is ignored, so a CRLF terminal and
+a bare-LF script behave alike). Its purpose is diagnosis and the automated verify scripts; it is
+the *observation* half of the channel (ADR-0003), and by design it **mutates no engine state**
+(§4 invariant #1). The *actuation/stimulus* half (injecting handshakes, forcing a sync) exists
+**only** in `SAPPER_TEST_HOOKS` builds and is absent from every shipped binary (§4 invariant #4,
+ADR-0047) — a shipped device cannot be commanded to upload, sync, or deauth over serial.
+
+Matching is **exact and lower-case** (the caller is a script, not a person); leading and trailing
+spaces are ignored. A line longer than **32 characters** is *refused, not truncated* — truncating a
+longer word into a shorter valid one would run a command nobody asked for (ADR-0003 #5). Replies
+are prefixed `[CMD]` / `[STATE]` / `[DUMP]`; a refusal is a `[CMD] refused …` line, never
+`[ERROR]`/`[FATAL]` (those prefixes are reserved for real faults, so a verify can tell a rejected
+command from a broken device).
+
+| Command | Reply | Meaning |
+|---|---|---|
+| `ping` | `[CMD] pong` | Liveness. |
+| `state` | `[STATE] phase=<phase> heap_free=<bytes> heap_max=<bytes> disp=<w>x<h>` | Observable state — boot phase, free heap, largest free block, panel geometry. Two consecutive `state`s report the same free heap, evidencing the path allocates nothing. |
+| `dump` | `[DUMP] begin w=<w> h=<h> bpp=16 bytes=<n>`, then hex lines (32 bytes → 64 hex chars each), then `[DUMP] end` | Stream the framebuffer back so a verify can render it to a PNG. |
+| *(blank line)* | *(nothing)* | Not an error — a bare newline is how a terminal user probes. |
+| *(anything else)* | `[CMD] refused unknown-command` | Unrecognised line. |
+| *(> 32 chars)* | `[CMD] refused line-too-long` | Over-length line, refused whole. |
+
+The `phase` field on `[STATE]` is one of `provisioning`, `station_connect`, `time_sync`, `ready`,
+or `maintenance` (a corrupted enum reads `invalid`). A just-flashed device announces itself with a
+`[STATE]` line at boot, and every pre-engine blocking phase (e.g. the captive portal) keeps pumping
+this channel, so a device is observable from the first second even before it is provisioned
+(ADR-0003 #7).
+
 ## Building & verifying
 
 This repo's `package.json` is the verification-script registry (ADR-0004), not a web toolchain.
