@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Artifact privacy guard (ADR-0049, hardened per its 2026-09-21 amendment) — wired into
+ * Artifact privacy guard (ADR-0049, hardened per its 2026-09-21 amendments) — wired into
  * package.json (`check:artifact-privacy`) and the pre-commit hook, so it runs on every commit.
  *
  * On-air verify artifacts are committed as evidence (ADR-0004), but a hunt/upload run sweeps up the
@@ -9,23 +9,29 @@
  * carrying a real BSSID (or the device's own MAC-derived SoftAP name) publishes where the device ran
  * and exposes a third party. This guard fails if any text file under <root>/artifacts contains a
  * MAC-address pattern (colon, hyphen, or Cisco-dotted) or a hex SoftAP name; redacted evidence uses
- * the non-hex placeholders `xx:xx:xx:xx:xx:xx` / `Sapper-XXXX`, which keep the evidentiary structure
- * without the identifier.
+ * the non-hex placeholders `xx:xx:xx:xx:xx:xx` / `Sapper-XXXX`.
  *
- * Two known, deliberate gaps (ADR-0049 amendment; both tracked in the LEDGER as the source-redaction
- * item):
- *  - PNG/binary artifacts are skipped: a screenshot of the HUD renders identifiers as *pixels*, which
- *    no regex can catch. The real fix is redaction in the verify scripts (feed placeholder identifiers
- *    into the surface before capture), so nothing real reaches disk.
- *  - SSID *text* is review-only: an arbitrary SSID string is not machine-distinguishable from a
- *    placeholder. Only MAC/SoftAP identifiers are mechanically enforced here.
+ * Deliberate scope and gaps (ADR-0049 amendments; the source-redaction LEDGER item is the durable fix):
+ *  - **Raw capture files (.pcap/.pcapng/.cap) hard-fail unconditionally.** Their MAC bytes are binary,
+ *    not scannable text, and per §4 invariant #9 capture bytes belong only behind the CaptureSink seam
+ *    (and the gitignored src/gen/), never in artifacts/ — so their mere presence is the violation.
+ *  - **PNG/binary artifacts are skipped:** a screenshot renders identifiers as *pixels* no regex can
+ *    read. Redaction at the verify-script source (feed placeholders into the surface before capture) is
+ *    the fix.
+ *  - **SSID text is review-only:** an arbitrary SSID string is not machine-distinguishable from a
+ *    placeholder. Only MAC/SoftAP identifiers are mechanically enforced.
+ *  - **The adr/ + slices/ corpus is NOT scanned:** it legitimately contains synthetic example MACs
+ *    (`aa:bb:cc:dd:ee:ff`, `Sapper-0000`), which this guard cannot tell from a real one — so keeping
+ *    real identifiers out of ADR/slice prose is a review discipline, not a mechanical check.
  *
  * The pre-commit hook runs this against the COMMITTED tree (an extracted $staged root), not the
  * working tree, so a staged-real / working-tree-clean split cannot slip a real BSSID past it
- * (stele:ADR-0018). Invoked with no argument it scans the working tree, for `npm run` use.
+ * (stele:ADR-0018). Note a pathspec-limited `git commit -- <path>` commits working-tree content the
+ * index-based hook cannot pre-see (ADR-0049 amendment 2 / F4): the durable backstop is CI scanning the
+ * pushed tree, tracked in the LEDGER. Invoked with no argument it scans the working tree, for `npm run`.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
 
 const root = process.argv[2] || '.';
 const artifactsDir = join(root, 'artifacts');
@@ -40,31 +46,37 @@ const PATTERNS = [
     // patterns above, and itself a stable, device-identifying string.
     { label: 'SoftAP name', re: /\bSapper-[0-9A-Fa-f]{4}\b/ },
 ];
-// Binary evidence (canvas PNG dumps) carries identifiers as pixels, not greppable text; skip it —
-// a deliberate, documented gap (see the header and ADR-0049 amendment), not an oversight.
+// Pixel/binary evidence carries identifiers as pixels, not greppable text; skip it (documented gap).
 const SKIP_EXT = /\.(png|jpg|jpeg|bin)$/i;
+// Raw capture bytes must never be committed at all (§4 #9); their presence under artifacts/ is itself
+// the violation, and their binary MACs would evade the text patterns anyway.
+const CAPTURE_EXT = /\.(pcap|pcapng|cap)$/i;
 
 function walk(dir) {
     const out = [];
     for (const name of readdirSync(dir)) {
         const path = join(dir, name);
+        // statSync throws on a dangling symlink; that is left to propagate (fail-closed) rather than
+        // being swallowed — a swallowed walk error would pass the whole commit unchecked (F2).
         if (statSync(path).isDirectory()) out.push(...walk(path));
         else out.push(path);
     }
     return out;
 }
 
-let artifacts;
-try {
-    artifacts = walk(artifactsDir);
-} catch {
-    // No artifacts/ in this tree (e.g. a commit before any verify ran): nothing to guard.
+// Only a genuinely-absent artifacts/ is a clean pass (a commit before any verify ran). Any other
+// error walking or reading is left to throw, so the commit fails closed rather than open.
+if (!existsSync(artifactsDir)) {
     console.log(`artifact-privacy: ok — no ${artifactsDir}`);
     process.exit(0);
 }
 
 const offenders = [];
-for (const file of artifacts) {
+for (const file of walk(artifactsDir)) {
+    if (CAPTURE_EXT.test(file)) {
+        offenders.push({ file, line: 0, label: 'raw capture — never commit (§4 #9)', hit: basename(file), text: '(binary capture bytes)' });
+        continue;
+    }
     if (SKIP_EXT.test(file)) continue;
     const lines = readFileSync(file, 'utf8').split('\n');
     lines.forEach((line, i) => {

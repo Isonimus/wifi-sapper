@@ -97,3 +97,16 @@ full in **ADR-0049's 2026-09-21 amendment**. Two "As built" claims above are sup
 Also hardened in the same fix: the guard now catches the MAC-derived SoftAP name (`Sapper-XXXX`
 excepted) and hyphen/Cisco-dotted MAC formats, and PNG artifacts are documented as an unscannable
 exception (identifiers rendered as pixels) whose fix is verify-script source redaction (LEDGER).
+
+## Amendment 2 — 2026-09-21: second adversarial review (fix(slice-0050), second round)
+
+A second blind pass found more, fixed and recorded in full in **ADR-0049's Amendment 2**. Most
+important: this slice's own "As built" prose above (and ADR-0049's) quoted the real neighbour SSIDs
+and the device's real SoftAP name to describe the scrub — putting them back into two immutable files
+bound for the public remote. A second `filter-repo` pass redacted those literals to the standard
+placeholders across all history (accepted immutability exception); the lines that named the mapping
+now read circularly, which is cosmetic. Also: the guard now fails **closed** on a walk error (was
+fail-open on a deep broken symlink), **hard-fails** on any raw `.pcap`/`.pcapng`/`.cap` under
+`artifacts/` (§4 #9; also gitignored), and the hook existence-checks the guard and drops its stale
+"CI catches it" claim. The pathspec-limited `git commit -- <path>` bypass (working-tree not index) is
+structural to stele:ADR-0018 and needs a CI/pre-push backstop (LEDGER).

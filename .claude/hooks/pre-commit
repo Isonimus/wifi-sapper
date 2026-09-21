@@ -11,7 +11,10 @@
 # (/init-method does this; see stele:ADR-0003. Do NOT install on a linter-red corpus — fix the
 #  reds first, or every commit is blocked. See LEDGER.)
 #
-# Bypass in a genuine emergency with `git commit --no-verify`; CI still catches it.
+# Bypass in a genuine emergency with `git commit --no-verify` — but nothing else catches it: no CI
+# is wired yet (LEDGER.md), so a bypass (or a pathspec-limited `git commit -- <path>`, which commits
+# working-tree content this index-based hook cannot pre-see) is unguarded until a CI/pre-push backstop
+# exists.
 
 set -e
 
@@ -90,6 +93,11 @@ fi
 #    source is the fix, tracked in LEDGER.md). `npm run check:artifact-privacy` scans the working
 #    tree for interactive use.
 if git cat-file -e "$tree:artifacts" 2>/dev/null; then
+  if [ ! -f "$staged/scripts/check-artifact-privacy.mjs" ]; then
+    echo "pre-commit: scripts/check-artifact-privacy.mjs is not in the commit — cannot guard artifacts." >&2
+    echo "            Stage the guard, or run /init-method --update." >&2
+    exit 1
+  fi
   git archive "$tree" -- artifacts | tar -x -C "$staged"
   node "$staged/scripts/check-artifact-privacy.mjs" "$staged"
 fi

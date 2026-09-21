@@ -127,3 +127,45 @@ the guard as first shipped. The corrections, applied in `fix(slice-0050)`:
   away: not publishing a bystander's captured SSID outranks body-immutability for a pre-publish scrub,
   and the redaction preserves each body's meaning (a real handshake was captured and accepted). No
   future in-repo edit may rewrite an immutable body; this exception is the scrub alone.
+
+## Amendment 2 — 2026-09-21: second adversarial review (fix(slice-0050), second round)
+
+A second blind adversarial pass on the hardened guard found more, all fixed in a second
+`fix(slice-0050)`:
+
+- **This ADR and slice-0050 quoted the real identifiers in their own prose (F1, critical).** The
+  Context above and Amendment 1 named the specific neighbour SSIDs and the device's real SoftAP name
+  to *describe* the scrub — putting the exact identifiers this ADR exists to remove into two immutable
+  files headed for a public remote. The guard only scans `artifacts/`, so it never saw them. Fixed by a
+  second one-time `filter-repo --replace-text` pass redacting those literals to the standard
+  placeholders across all history (another accepted immutability exception, same rationale as
+  Amendment 1). Consequence: the lines that named the mapping now read circularly
+  (`<redacted-ssid>` → `<redacted-ssid>`) — cosmetic, the meaning is unchanged and the real values are
+  gone. A *mechanical* corpus scan of `adr/`+`slices/` is **not** viable, because the corpus
+  legitimately holds synthetic example MACs (`aa:bb:cc:dd:ee:ff`, `Sapper-0000`) a scanner cannot tell
+  from a real one — so keeping real identifiers out of ADR/slice prose is a **review discipline**, now
+  stated in the guard header and enforced at `/wrap-up`, not a check.
+
+- **The guard failed open on a walk error (F2, high).** A dangling symlink deep in `artifacts/` threw
+  inside `walk()`, which a `try/catch` meant only for an absent top-level directory swallowed — the
+  scan then printed "ok" and passed a real BSSID. Now only a genuinely-absent `artifacts/` passes;
+  every other walk/read error propagates and fails the commit closed.
+
+- **Raw capture files were neither skipped nor scannable (F3, high).** `.pcap` bytes are binary, so the
+  text patterns never matched, and `scripts/0028-deauth-verify.mjs` writes a real forced-handshake pcap
+  into `artifacts/`. Per §4 invariant #9 capture bytes belong only behind the `CaptureSink` seam, never
+  in committed evidence, so the guard now **hard-fails** on any `.pcap`/`.pcapng`/`.cap` under
+  `artifacts/`, and `.gitignore` excludes them.
+
+- **A pathspec-limited commit bypasses the index-based hook (F4, high, structural).** `git commit --
+  <path>` (and `--only`) commits *working-tree* content for the named path, while the hook's
+  `git write-tree` reflects the *index* — so the tree scanned is not the tree that lands. This is a
+  property of the stele pre-commit model (stele:ADR-0018) shared by all four checks, not unique to this
+  guard, and cannot be closed inside `pre-commit`. The durable backstop is a CI (or `pre-push`) lane
+  that scans the actually-pushed tree; recorded in the LEDGER.
+
+- **Minor:** the hook's stale "CI still catches it" bypass note is corrected to "nothing else catches
+  it yet" (F5); the hook now existence-checks the guard before invoking it, failing closed with a clear
+  message (F7); and a separator-less 12-hex MAC (`aabbccddeeff`, the capture-filename format) is a
+  known latent gap left unmatched to avoid false-positiving on hashes — reachable only via a pcap
+  filename text-dumped into an artifact, and pcaps now hard-fail regardless (F6, LEDGER).
