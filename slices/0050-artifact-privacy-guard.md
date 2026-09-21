@@ -79,3 +79,21 @@ Shipped as designed (ADR-0049). No design changes during implementation.
   source-side redaction, and the missing node-test lane / absent `read-set.test.mjs` (boyscout).
 - **Enforcement scope:** BSSIDs mechanically (the geolocatable, highest-risk identifier); SSIDs
   review-only until the verify scripts redact at the source.
+
+## Amendment — 2026-09-21: adversarial-review corrections (fix(slice-0050))
+
+This slice's blind adversarial pass found real defects, fixed in `fix(slice-0050)` and recorded in
+full in **ADR-0049's 2026-09-21 amendment**. Two "As built" claims above are superseded:
+
+- "invoked from `.claude/hooks/pre-commit` as a **working-tree** scan" — the hook now scans the
+  **committed** tree (extracted from `$tree`), because a staged-real / working-tree-clean split
+  (reproduced) slipped a real BSSID past the working-tree scan.
+- "the immutable line-gain check is undisturbed" / "a uniform global replacement changes no
+  consecutive-commit line-gain relationship" — the scrub *did* rewrite lines inside slice-0007 and
+  slice-0018 bodies, which ADR-0019 forbids; `check-immutable.mjs` merely cannot see it across a
+  `filter-repo` rewrite. It is now recorded as an accepted one-time exception (ADR-0049 amendment,
+  per global §2), not an undisturbed check.
+
+Also hardened in the same fix: the guard now catches the MAC-derived SoftAP name (`Sapper-XXXX`
+excepted) and hyphen/Cisco-dotted MAC formats, and PNG artifacts are documented as an unscannable
+exception (identifiers rendered as pixels) whose fix is verify-script source redaction (LEDGER).

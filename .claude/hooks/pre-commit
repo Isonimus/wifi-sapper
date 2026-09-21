@@ -3,7 +3,9 @@
 #
 # A linter nobody runs is another convention resting on memory, which is the failure this
 # project exists to fix. This hook makes the checks mechanical: no green corpus, no commit.
-# CI (.github/workflows/docs.yml) is the backstop for clones without the hook installed.
+# A CI lane would be the backstop for clones without the hook installed — none is wired yet
+# (tracked in LEDGER.md; the same gap leaves the ADR-0049 artifact-privacy scan hook-only until
+# then, so a clone that skips /init-method is unguarded).
 #
 # Install: ln -sf ../../.claude/hooks/pre-commit .git/hooks/pre-commit
 # (/init-method does this; see stele:ADR-0003. Do NOT install on a linter-red corpus — fix the
@@ -78,12 +80,16 @@ if git rev-parse --verify --quiet HEAD >/dev/null; then
   node "$staged/scripts/check-immutable.mjs" HEAD "$tree"
 fi
 
-# 4. Repo-specific (ADR-0049, not a stele checker): on-air artifacts must carry no real BSSID.
-#    Scans the WORKING TREE, not $staged — artifacts are wholesale, machine-written evidence dumps
-#    added as a unit, so the staged-clean/unstaged-broken split the $staged extraction defends
-#    against (stele:ADR-0018) does not arise for them; keeping this a plain node call lets `npm run`
-#    and a future CI lane reuse it verbatim, and keeps artifacts out of the $paths list a read-set
-#    test holds equal to the linter scope. Skipped if the repo has no artifacts/ yet.
-if [ -d artifacts ]; then
-  node scripts/check-artifact-privacy.mjs
+# 4. Repo-specific (ADR-0049, not a stele checker): on-air artifacts must carry no real BSSID or
+#    MAC-derived SoftAP name. Runs the COMMITTED scanner against the COMMITTED artifacts (extracted
+#    into $staged like the three checks above), NOT the working tree — a staged-real /
+#    working-tree-clean split would otherwise slip a real identifier past it (stele:ADR-0018; this
+#    corrects ADR-0049's original working-tree scan — see its 2026-09-21 amendment). Artifacts are
+#    extracted here rather than added to the $paths list above, so that list stays equal to the
+#    linter's read-set. PNG/binary artifacts are a known unscannable gap (redaction at the verify
+#    source is the fix, tracked in LEDGER.md). `npm run check:artifact-privacy` scans the working
+#    tree for interactive use.
+if git cat-file -e "$tree:artifacts" 2>/dev/null; then
+  git archive "$tree" -- artifacts | tar -x -C "$staged"
+  node "$staged/scripts/check-artifact-privacy.mjs" "$staged"
 fi

@@ -85,3 +85,45 @@ placeholder, and the absence of real BSSIDs from `artifacts/` is mechanically en
   artifacts are still committed; they are redacted first. No mind was changed, so no supersession.
 - **Deferred, not built here:** verify-script-side redaction (redact identifiers before writing the
   artifact) and a wired node-test lane for `scripts/*.mjs` guards. Both recorded in `LEDGER.md`.
+
+## Amendment — 2026-09-21: corrections from slice-0050's adversarial review
+
+slice-0050's blind adversarial pass (the `/wrap-up` step for this §4 change) found real defects in
+the guard as first shipped. The corrections, applied in `fix(slice-0050)`:
+
+- **Decision 4 is reversed — the pre-commit scan reads the committed tree, not the working tree.** The
+  claim that "artifacts are wholesale dumps, so the staged-clean/unstaged-broken split does not arise"
+  was an assumption about *how* artifacts are authored, not a guarantee. A plain
+  `sed`-then-forget-to-`git add` (reproduced: stage a real BSSID, scrub the working copy, commit)
+  committed the real identifier while the working-tree scan passed. The hook now extracts `artifacts/`
+  from `$tree` and scans that, exactly as it does for the three stele checks (stele:ADR-0018) — the
+  original reasoning for the working-tree scan was wrong.
+
+- **PNG/binary artifacts are an explicit, unenforceable exception.** The HUD/toast/splash verify
+  scripts screenshot the panel, and the panel renders the target SSID/BSSID as *pixels* — which no
+  regex can read, so the guard skips PNGs. The already-committed PNGs were checked and render only
+  synthetic identifiers (the probes inject `SAPPER-VERIFY`/`SAPPER`, no network). The durable fix is
+  redaction at the verify-script source (feed placeholder identifiers into the surface before
+  capture), which the deferred LEDGER item now names PNGs for. Row 25's mechanical guarantee is
+  therefore scoped to **text** artifacts; PNG identifiers are review-only until source redaction lands.
+
+- **The MAC-derived SoftAP name and non-colon MAC formats are now caught (decision 2 generalized).**
+  The device SoftAP name `Sapper-%02X%02X` (four hex digits, no colons) was invisible to a
+  colon-only MAC regex, and hyphen/dotted MAC notations bypassed it. The guard now also matches
+  `Sapper-[0-9A-Fa-f]{4}` and hyphen/Cisco-dotted MACs; the non-hex placeholders never match, so no
+  false positive.
+
+- **No CI backstop exists yet, and the guard is hook-only.** The hook's inherited "CI is the backstop"
+  comment was false — no workflow is wired — so a clone that skips `/init-method` is unguarded. The
+  comment is corrected and the LEDGER CI item now calls for the CI lane to run this guard.
+
+- **This ADR's one-time history scrub broke ADR-0019 for two slices, accepted as a justified
+  exception.** The `filter-repo --replace-text` scrub rewrote `<redacted-ssid>` → `<redacted-ssid>`
+  inside the frozen bodies of slice-0007 and slice-0018 — a line *changed*, which ADR-0019 forbids and
+  `check-immutable.mjs` would reject for a normal commit. A history rewrite replaces every commit's
+  copy at once, outside commit/hook flow, so the check cannot see it; slice-0050's "the line-gain
+  check is undisturbed" is true only in that sense, not that the rule was honored. Per
+  `~/.claude/CLAUDE.md` §2 this is **recorded as an accepted, one-time exception** rather than asserted
+  away: not publishing a bystander's captured SSID outranks body-immutability for a pre-publish scrub,
+  and the redaction preserves each body's meaning (a real handshake was captured and accepted). No
+  future in-repo edit may rewrite an immutable body; this exception is the scrub alone.
