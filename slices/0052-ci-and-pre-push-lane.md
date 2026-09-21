@@ -133,3 +133,30 @@ local core", was dead for a different reason on *every* host.
     `dashboard.cpp` filter addition (hardware-free, no ODR clash), the hook's `set -e`/delete-only/
     fail-loud logic and POSIX portability, the fail-closed guards, and the ubuntu-only no-hardware
     jobs. One non-finding nit (CI `node-version` 20 → 22, past LTS) was taken.
+
+## Amendment — 2026-09-21: first remote run, all green (fills Scenario D's As-built link)
+
+The `## As built` line above left the CI run as `run: _(link after push)_`; this records it (the
+frozen line cannot be rewritten, stele:ADR-0019, so the link lands here).
+
+- **First push, first run — everything green.** Commit `1d63a84` pushed to `origin/main`; CI run
+  [35600000520](https://github.com/Isonimus/wifi-sapper/actions/runs/35600000520) is
+  `completed / success` with every job green: **guards, native, cardputer, cppcheck**. CodeQL run
+  [35600000315](https://github.com/Isonimus/wifi-sapper/actions/runs/35600000315) is
+  `completed / success` too. This is the Scenario D end-to-end exercise, and it confirms ADR-0051
+  decision 5 on a *fresh CI checkout*: the `platformio/native` lane built and ran 267/267 on a runner
+  that never had the local `native/`-dir collision "fixed" by hand — proving the defect was the bare
+  spec, not a corrupt local core.
+- **The F4 backstop proved itself immediately.** Dependabot opened
+  `chore(deps): bump actions/setup-node from 4 to 7` on push day, and **CI ran green on that PR** — a
+  PR from a source that never installed the pre-commit hook still got the full pushed-tree scan
+  (guards + build + cppcheck). That is exactly the hookless-clone gap ADR-0049 F4 named and §4 #26
+  closes.
+- **The pre-push hook ran in anger.** Installed via the documented symlink, it fired on the real
+  push and passed every gate (native 267/267, cardputer SUCCESS) before the push left the machine —
+  its first non-demonstration exercise (Scenario C).
+- **Transport footnote (not a slice concern, recorded so the next push of a workflow file does not
+  re-hit it):** GitHub refuses to let an HTTPS **PAT without the `workflow` scope** create/update
+  `.github/workflows/*.yml`. `origin` was switched from HTTPS to SSH (already authenticated as
+  Isonimus) to push, which is not subject to that rule. This is a local-config/credential fact, not a
+  repo invariant — it changes no decision here.
