@@ -98,9 +98,12 @@ maintenance access point uses the default `sapper-setup` password.
 
 ### Maintenance mode (results dashboard)
 
-To read the recovered passwords off the device without a serial console, **hold the BOOT button while
-powering the device on** (ADR-0039). Instead of hunting, it comes up as a Wi-Fi access point serving a
-dashboard of everything it has recovered, plus two controls (ADR-0043):
+To read the recovered passwords off the device without a serial console, **power the device on
+normally, then press the BOOT button once during the boot splash** (a ~3-second window; ADR-0053).
+Do *not* hold BOOT while powering on — on the Cardputer and most ESP32 boards BOOT is the GPIO0
+strapping pin, so holding it at power-on enters the chip's USB firmware-flashing mode instead of the
+app. Instead of hunting, the device comes up as a Wi-Fi access point serving a dashboard of everything
+it has recovered, plus two controls (ADR-0043):
 
 1. It raises the SoftAP **`Sapper-XXXX`** (same name as the setup portal). Join it with your
    **Maintenance dashboard passphrase** — the one you set in the setup form. If you never set one, it
@@ -119,12 +122,13 @@ dashboard of everything it has recovered, plus two controls (ADR-0043):
      exception: they are always taken from the form** (not pre-filled), so to keep the same network you
      must retype both — and saving with a blank passphrase configures an *open* network. Saving reboots
      into hunting with the new configuration.
-4. To leave without changing anything, **power-cycle without holding BOOT** — the device reboots and
+4. To leave without changing anything, **power-cycle and don't press BOOT** — the device reboots and
    resumes hunting. If you walk away, it auto-resumes after **30 minutes** of no activity, so it never
    stops hunting for good.
 
 The dashboard shows plaintext passwords deliberately: it is a local viewer on the device's own access
-point, reached only by physically holding BOOT (ADR-0039). Set a strong Maintenance passphrase so only
+point, reached only by a physical BOOT press at boot (ADR-0039, ADR-0053). Set a strong Maintenance
+passphrase so only
 you can join and read them — otherwise anyone in radio range who knows the default password could.
 
 > **Secrets at rest.** Credentials are stored in plaintext NVS. Anyone with physical access and a

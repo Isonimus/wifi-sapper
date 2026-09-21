@@ -41,9 +41,10 @@ enum class Phase : uint8_t {
     StationConnect,  ///< Associating to the configured network.
     TimeSync,        ///< NTP sync in progress; the TLS validity window depends on it.
     Ready,           ///< Provisioned, associated, clock synced. Engine mounts here later.
-    Maintenance,     ///< BOOT-held at power-on: a hardened SoftAP serving the results dashboard
-                     ///< instead of hunting (ADR-0039). Off the happy path — a hunt-suspended
-                     ///< boot phase entered deliberately, left only by rebooting into Station.
+    Maintenance,     ///< BOOT pressed during the boot splash: a hardened SoftAP serving the results
+                     ///< dashboard instead of hunting (ADR-0039, entry per ADR-0053). Off the happy
+                     ///< path — a hunt-suspended boot phase entered deliberately, left only by
+                     ///< rebooting into Station.
 };
 
 /**
@@ -94,13 +95,13 @@ constexpr uint8_t kStaRetryBudget = 3;
  *
  * Precedence:
  * - no usable stored triad → Provisioning (nothing to maintain or connect with — the button is
- *   ignored, so a first-boot BOOT-hold still lands on the setup portal);
- * - provisioned AND @p maintenanceRequested → Maintenance (the operator held BOOT to open the
- *   results dashboard over a hardened SoftAP, ADR-0039);
+ *   ignored, so a first-boot BOOT press still lands on the setup portal);
+ * - provisioned AND @p maintenanceRequested → Maintenance (the operator pressed BOOT during the boot
+ *   splash to open the results dashboard over a hardened SoftAP, ADR-0039; entry gesture ADR-0053);
  * - provisioned, no button, STA-failure count still within kStaRetryBudget → StationConnect;
  * - otherwise → Provisioning (the STA-fail reconfiguration fallback, ADR-0006 #3).
  *
- * The button input repurposes the former re-provision signal (ADR-0039 decision 2): BOOT-hold now
+ * The button input repurposes the former re-provision signal (ADR-0039 decision 2): a BOOT press now
  * opens Maintenance rather than the portal. Re-provisioning a *working* device stays reachable via the
  * STA-fail fallback today, and will also be reachable from the config form Maintenance serves once
  * slice-0041 adds it; a results viewer, by contrast, had no entry at all before.

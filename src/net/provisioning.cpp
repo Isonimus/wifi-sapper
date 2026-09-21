@@ -41,7 +41,7 @@ bool isUsableWebhookUrl(const char* url) {
 
 Phase decideBootPhase(bool hasValidStoredCreds, uint8_t staFailCount, bool maintenanceRequested) {
     // Unprovisioned wins over the button: there is nothing to maintain and no network to join, so a
-    // first-boot BOOT-hold still lands on the setup portal (ADR-0039 decision 2).
+    // first-boot BOOT press still lands on the setup portal (ADR-0039 decision 2, entry ADR-0053).
     if (!hasValidStoredCreds) return Phase::Provisioning;
     // Provisioned + BOOT-held → the results dashboard over a hardened SoftAP (ADR-0039).
     if (maintenanceRequested) return Phase::Maintenance;

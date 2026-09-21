@@ -5,7 +5,7 @@
  * Device-only (SoftAP, DNSServer, WebServer); excluded from the native lane and proven on hardware by
  * scripts/0040-maintenance-verify.mjs (slice-0040 Scenario G). It reuses the captive portal's shape —
  * SoftAP + DNS wildcard + WebServer, not-found serves the page — but for a different job: no hunting
- * runs in this boot phase, so it serves the persisted recovered results the operator held BOOT to read.
+ * runs in this boot phase, so it serves the persisted recovered results the operator pressed BOOT to read.
  *
  * The page is rendered by the pure net/dashboard functions and streamed chunked (WebServer::sendContent)
  * so the up-to-256-entry, ~36 KB account is never materialised in one buffer (dashboard.h). Cracked

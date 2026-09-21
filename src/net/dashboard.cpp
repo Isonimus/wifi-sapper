@@ -93,7 +93,7 @@ size_t appendCrackedRow(const CrackedResult& result, char* out, size_t outSize) 
 
     // Renders the recovered plaintext PSK into the page — a deliberate, recorded exception to the
     // no-plaintext-PSK doctrine (§4 #14/#19/#20), NOT an oversight (ADR-0039 decision 5): this is a
-    // local results viewer on the operator's own hardened SoftAP, reached only by a physical BOOT-hold.
+    // local results viewer on the operator's own hardened SoftAP, reached only by a physical BOOT press.
     // Do NOT "harden" this by redacting the password — that defeats the entire feature (stele:ADR-0012).
     const int written = std::snprintf(out, outSize, "<tr><td>%s</td><td><code>%s</code></td></tr>",
                                       essidEsc, pskEsc);

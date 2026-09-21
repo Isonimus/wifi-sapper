@@ -53,8 +53,8 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "handshakes. Off by default.</small></p>"
         "<p>Maintenance dashboard passphrase (min 8 chars)<br>"
         "<input name='maintpass' type='password' maxlength='63' placeholder='%s'><br>"
-        "<small>Protects the results dashboard shown when you hold BOOT at power-on. Blank uses the "
-        "default AP password.</small></p>"
+        "<small>Protects the results dashboard shown when you press BOOT during the boot splash. Blank "
+        "uses the default AP password.</small></p>"
         "<p><button type='submit'>Save &amp; reboot</button></p>"
         "</form></body></html>",
         keyField, webhookPlaceholder, checkedAttr(model.notifyCracked), checkedAttr(model.notifyCaptured),

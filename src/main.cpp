@@ -14,6 +14,7 @@
 #include <cstdio>
 
 #include "config/active_board.h"
+#include "config/entry_gesture.h"
 #include "config/firmware_version.h"
 #include "hal/display/display_hal.h"
 #include "hal/display/null_display.h"
@@ -119,23 +120,33 @@ void seedTestCredentials() {
 }
 #endif
 
-/// Whether the operator is holding BOOT at power-on to enter Maintenance (ADR-0039 decision 2). Reads
-/// the board's BOOT/GPIO0 strapping button, active-low. This is the device seam behind the pure
-/// decideBootPhase() input (review-only, §4 #6-style boundary); a board without the button (pin -1)
-/// never enters Maintenance from here, exactly as before. Repurposes the former inert re-provision stub:
-/// re-provisioning a working device is now reachable from the config form, whereas a results viewer had
-/// no entry at all.
+/// Whether the operator pressed the entry button during the boot splash to enter Maintenance
+/// (ADR-0053, superseding ADR-0039 decision 2's hold-at-power-on). Polls the board's entry button
+/// AFTER a normal boot — never held through reset: GPIO0/BOOT is the ESP32 strapping pin, so holding it
+/// at reset-release drops the ROM into serial download mode and firmware never runs (the old
+/// single-sample gesture could not fire on the Cardputer). Read post-boot GPIO0 is an ordinary input.
+/// This is the device seam behind the pure decideBootPhase() input (review-only, §4 #6-style boundary);
+/// the debounce/window decision logic is the pure PressDebouncer (host-tested). A board without an
+/// entry button (pin -1) never enters Maintenance from here.
 bool maintenanceRequested() {
 #ifdef SAPPER_TEST_HOOKS
-    // The physical BOOT-hold cannot be driven by the headless verify, so a build-time hook forces entry
+    // The physical press cannot be driven by the headless verify, so a build-time hook forces entry
     // (like the credential seed; never a serial path, §4 #7). Compiled out of every shipped build.
     if (SAPPER_TEST_MAINT[0] != '\0') return true;
 #endif
     const int8_t pin = kActiveBoard.bootButtonPin;
-    if (pin < 0) return false;  // no BOOT button on this board.
+    if (pin < 0) return false;  // no entry button on this board.
     pinMode(pin, INPUT_PULLUP);
-    delay(5);  // let the input settle before the single sample.
-    return digitalRead(pin) == LOW;  // active-low: pressed reads LOW.
+    // Poll for a bounded window: the operator boots normally, then presses BOOT once during the splash.
+    // First debounced press wins (early-exit); a normal boot waits the window out and proceeds. The
+    // subtraction-against-deadline compare is millis()-wrap-safe (int32_t rollover of the difference).
+    PressDebouncer debounce(kEntryDebounceSamples);
+    const uint32_t deadline = millis() + kMaintenanceEntryWindowMs;
+    while (static_cast<int32_t>(millis() - deadline) < 0) {
+        if (debounce.feed(digitalRead(pin) == LOW)) return true;  // active-low: pressed reads LOW.
+        delay(kEntryPollIntervalMs);
+    }
+    return false;
 }
 
 /// The Maintenance status screen on a board with a panel (ADR-0039). Connection info + a count only —
@@ -308,13 +319,17 @@ void setup() {
 
     ProvisioningRecord creds = {};
     const bool hasCreds = loadProvisioning(creds);
-    const Phase entry = decideBootPhase(hasCreds, /*staFailCount=*/0, maintenanceRequested());
+    // Gate the entry poll on hasCreds: an unprovisioned boot routes to Provisioning regardless of the
+    // button (decideBootPhase ignores the signal there), so the short-circuit spares it the window dwell
+    // — behaviour-preserving, just faster on first boot (ADR-0053 decision 6).
+    const bool maint = hasCreds && maintenanceRequested();
+    const Phase entry = decideBootPhase(hasCreds, /*staFailCount=*/0, maint);
     if (entry == Phase::Provisioning) {
         startPortal();
     } else if (entry == Phase::Maintenance) {
         // Serve the results dashboard, never returns. `panel` is the null fallback if init failed, so
         // the Maintenance screen no-ops on a dead panel while the SoftAP still serves (ADR-0045).
-        runMaintenance(creds, panel);  // BOOT held at power-on.
+        runMaintenance(creds, panel);  // BOOT pressed during the boot splash (ADR-0053).
     } else {
         // hunt_loop copies the creds it needs; this local may go out of scope. Pass the panel only if it
         // initialised — nullptr reuses hunt_loop's proven "[SCREEN] disabled" path (ADR-0045 decision 3).
