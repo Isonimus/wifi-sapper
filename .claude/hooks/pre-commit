@@ -77,3 +77,13 @@ node "$staged/scripts/build-index.mjs" --check "$staged"
 if git rev-parse --verify --quiet HEAD >/dev/null; then
   node "$staged/scripts/check-immutable.mjs" HEAD "$tree"
 fi
+
+# 4. Repo-specific (ADR-0049, not a stele checker): on-air artifacts must carry no real BSSID.
+#    Scans the WORKING TREE, not $staged — artifacts are wholesale, machine-written evidence dumps
+#    added as a unit, so the staged-clean/unstaged-broken split the $staged extraction defends
+#    against (stele:ADR-0018) does not arise for them; keeping this a plain node call lets `npm run`
+#    and a future CI lane reuse it verbatim, and keeps artifacts out of the $paths list a read-set
+#    test holds equal to the linter scope. Skipped if the repo has no artifacts/ yet.
+if [ -d artifacts ]; then
+  node scripts/check-artifact-privacy.mjs
+fi

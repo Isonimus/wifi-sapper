@@ -8,4 +8,13 @@ node_modules/
 # the on-air upload verify) — never committed: it can carry a real capture of someone's network.
 src/gen/
 
-# Verify artifacts are committed as evidence (ADR-0004), so they are NOT ignored.
+# Verify artifacts are committed as evidence (ADR-0004), so they are NOT ignored — but a real
+# third-party network identifier must never ride one (ADR-0049); scripts/check-artifact-privacy.mjs
+# enforces the BSSID half in the pre-commit hook.
+
+# Claude Code runtime / per-user state — never shared. The vendored stele method itself
+# (.claude/commands/, .claude/hooks/, .claude/.stele-vendored.json) stays tracked; only
+# per-machine session/lock/settings files are ignored.
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+.claude/settings.local.json
