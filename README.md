@@ -1,5 +1,26 @@
 # WiFi Sapper
 
+<p align="center">
+  <strong>Autonomous, headless-first WPA/WPA2 handshake-hunting ESP-32 appliance</strong>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: alpha">
+  <img src="https://img.shields.io/badge/platform-ESP32--S3-333?logo=espressif" alt="Platform: ESP32-S3">
+  <img src="https://img.shields.io/badge/built%20with-PlatformIO-orange?logo=platformio" alt="Built with PlatformIO">
+  <a href="https://www.npmjs.com/package/@isonimus/stele"><img src="https://img.shields.io/badge/method-Stele-6E44FF" alt="Built with Stele"></a>
+</p>
+
+<p align="center">
+  <a href="#provisioning-first-boot">Provisioning</a> •
+  <a href="#normal-operation">Operation</a> •
+  <a href="#flashing-a-board">Flashing</a> •
+  <a href="#building--verifying">Building</a> •
+  <a href="#built-with-stele">Method</a> •
+  <a href="DISCLAIMER.md">Legal</a>
+</p>
+
 A portable, headless-first ESP-32 firmware appliance: it hunts WPA/WPA2 handshakes endlessly,
 auto-uploads each capture to [wpa-sec.stanev.org](https://wpa-sec.stanev.org), and once an hour
 fetches cracked results back and announces any newly recovered passwords. The capture→upload→sync
@@ -10,6 +31,13 @@ hunting fully headless rather than stalling on the dead screen (ADR-0045).
 The project conventions, decision records, and roadmap live in
 [`CLAUDE.md`](CLAUDE.md), [`adr/`](adr/), and [`LEDGER.md`](LEDGER.md). This README is a live
 document (stele:ADR-0010): the sections below describe how the firmware behaves **now**.
+
+> [!WARNING]
+> WiFi Sapper is pentesting tooling in **alpha**. Capturing handshakes from, or transmitting deauth
+> at, networks you do not own or lack **explicit written permission** to test is illegal in most
+> jurisdictions. Deauth is off by default; leave it disarmed unless every network in radio range is
+> authorized. Read the [DISCLAIMER](DISCLAIMER.md) before use — by building or running this firmware
+> you accept it.
 
 ## Provisioning (first boot)
 
@@ -101,6 +129,42 @@ you can join and read them — otherwise anyone in radio range who knows the def
 > flash dump can read them; flash encryption is a tracked follow-up ([`LEDGER.md`](LEDGER.md),
 > ADR-0006). Treat a provisioned device as holding its network passphrase in the clear.
 
+## Normal operation
+
+Once provisioned, the Sapper reboots, joins the network, syncs its clock over NTP, and then **hunts
+continuously with no further interaction**: it hops channels, discovers access points, captures
+WPA/WPA2 4-way handshakes, and auto-uploads each new capture to wpa-sec. Once an hour it downloads
+cracked results and announces any newly recovered password. It never stops on its own — a failed
+upload or sync is retried, and a network it cannot reach drops it back to the setup portal after a
+few attempts (see [Re-provisioning](#re-provisioning)). If **deauth is armed**, it also broadcasts
+deauth frames at discovered APs to force handshakes (authorized environments only).
+
+You can see what it is doing three ways, in increasing detail:
+
+**Status LED** (boards with an RGB LED). The colour blinks as a slow heartbeat — proof of life — and a
+hard fault shows solid:
+
+| Colour | Meaning |
+|---|---|
+| Green (heartbeat) | Hunting — normal steady state |
+| Blue | Working — an upload/sync window is open (briefly off-air) |
+| Amber | Degraded — the network was unreachable; uploads and the hourly sync are stalled until it returns |
+| Red (solid) | Fault — the radio could not resume promiscuous mode |
+| Cyan (brief flash) | A handshake was just captured |
+| White (~5 s flash) | A new password was just recovered |
+
+**Screen** (boards with a panel). The HUD shows the current target and its Beacon/M1–M4 handshake
+progress while hunting, a banner when a handshake is captured, and a toast when a password is
+recovered. It **never** shows a recovered password — the panel is over-the-shoulder visible, so read
+the passwords in [Maintenance mode](#maintenance-mode-results-dashboard) instead.
+
+**Serial log** (USB-CDC, 115200 baud) — always available, on any board, screen or not. Key lines:
+`[HUNT]` (discovery/targeting), `[CAPTURE]` (a handshake landed), `[UPLOAD]` (wpa-sec upload result),
+`[SYNC]` (the hourly cracked-results sync), `[CRACK]` (a newly recovered password), `[DEAUTH]` (only
+when armed), and `[WEBHOOK]` (a push was sent). `[ERROR]`/`[FATAL]` mark faults. The read-only
+`ping`/`state`/`dump` commands (see [Serial control channel](#serial-control-channel-observation))
+work at any time without disturbing the hunt.
+
 ## Flashing a board
 
 The firmware is built and flashed with [PlatformIO](https://platformio.org). The only board
@@ -188,3 +252,22 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run verify:maintenance` | Serial-driven Maintenance-mode verify on an attached board (slice-0040 + slice-0044, lane 3). Flash the `cardputer_testhooks` build with real credentials, `SAPPER_TEST_MAINT=1`, and `SAPPER_TEST_MAINT_PASS`; asserts the device enters `phase=maintenance`, prints the `[MAINT]` banner, and keeps answering serial. Join the workstation to the `Sapper-XXXX` AP with that passphrase and set `SAPPER_MAINT_DASHBOARD_URL=http://192.168.4.1/` (and optionally `SAPPER_MAINT_EXPECT_PSK`) to also fetch the dashboard, check its controls, and fetch `GET /config`. Set `SAPPER_MAINT_DRIVE_RESUME=1` to also drive `POST /resume` (this reboots the board). See the script header. |
 | `npm run verify:serial-stimulus` | Serial-driven stimulus verify on an attached board (slice-0048, lane 3). Flash a **normally-booting** `cardputer_testhooks` build (real `SAPPER_TEST_WIFI_SSID`/`SAPPER_TEST_WIFI_PASS`/`SAPPER_TEST_WPASEC_KEY`, **no** probe env set); once it is hunting, the script writes `inject-handshake` over serial and proves the **shipped** hunt loop injects, enqueues, and drains the capture to wpa-sec — not a bench probe. The stimulus vocabulary exists only in `SAPPER_TEST_HOOKS` builds; a shipped binary rejects it (§4 #4, `test/test_serial_command`). See the script header. |
 | `npm run lint` / `npm run index` | Documentation linter and generated ADR index. |
+| `npm run check:artifact-privacy` | Fail if a committed verify artifact carries a real BSSID/SoftAP identifier (ADR-0049; also run by the pre-commit hook). |
+
+## Built with Stele
+
+This repo is developed with **[Stele](https://github.com/Isonimus/stele)** (also on npm as
+[`@isonimus/stele`](https://www.npmjs.com/package/@isonimus/stele)), a documentation-as-decisions
+method. Every durable decision is written as an immutable **ADR** ([`adr/`](adr/)) and every feature
+as a **slice** ([`slices/`](slices/)) *before* the code, shipped in the same commit and frozen once
+merged — so the record of *why* is never rewritten, only superseded. Open work lives in a single
+[`LEDGER.md`](LEDGER.md); [`adr/INDEX.md`](adr/INDEX.md) is generated; and a pre-commit linter keeps
+the corpus honest (immutable bodies may only gain lines, citations must resolve). The conventions
+live in [`CLAUDE.md`](CLAUDE.md), and the method's toolkit (`/adr`, `/slice`, `/wrap-up`, the quality
+bar) is vendored under [`.claude/`](.claude/). If the layout here looks unusual, that is why — the
+commit history is meant to read as a trail of decisions.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Pentesting tooling for authorized use only; see the
+[DISCLAIMER](DISCLAIMER.md) and [SECURITY](SECURITY.md) policy.
