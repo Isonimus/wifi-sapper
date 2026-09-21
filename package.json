@@ -23,6 +23,7 @@
     "verify:hunt-hud": "node scripts/0034-hunt-hud-verify.mjs",
     "verify:webhook-capture": "node scripts/0036-webhook-capture-verify.mjs",
     "verify:maintenance": "node scripts/0040-maintenance-verify.mjs",
+    "verify:serial-stimulus": "node scripts/0048-serial-stimulus-verify.mjs",
     "lint": "node scripts/lint-docs.mjs .",
     "index": "node scripts/build-index.mjs ."
   },

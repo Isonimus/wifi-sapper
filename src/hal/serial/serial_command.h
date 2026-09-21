@@ -6,10 +6,12 @@
  * dispatch that touches the port, the heap, or the canvas lives in `serial_channel` and is
  * covered by the device verify script (ADR-0003 #4).
  *
- * This half is the *observation* vocabulary only — `ping`, `state`, `dump` — which ships
- * unflagged in every build and mutates no engine state (ADR-0003 #2, invariant #1). The
- * stimulus vocabulary is absent here by design: it arrives behind `SAPPER_TEST_HOOKS` with
- * the engine it drives, so no shipped binary can parse a command that transmits.
+ * The *observation* vocabulary — `ping`, `state`, `dump` — ships unflagged in every build and
+ * mutates no engine state (ADR-0003 #2, invariant #1). The *stimulus* vocabulary (ADR-0047) lives
+ * behind `#ifdef SAPPER_TEST_HOOKS` below, so the shipped parser cannot recognise a command that
+ * drives an upload or a sync (§4 invariant #4) — and because the native unit lane compiles this file
+ * without the flag, `test_serial_command` asserts that absence on every run (the executable teeth for
+ * #4). The gated dispatch that reaches the engine lives in `serial_channel`.
  */
 #pragma once
 
@@ -31,6 +33,17 @@ enum class CommandKind : uint8_t {
     Dump,     ///< Stream the canvas buffer back for the verify artifact. Read-only.
     Unknown,  ///< A line that is not a command.
     TooLong,  ///< A line past kMaxCommandChars, refused rather than truncated.
+#ifdef SAPPER_TEST_HOOKS
+    // The stimulus / fault-injection vocabulary — behind SAPPER_TEST_HOOKS, compiled out of every
+    // shipped build so no released binary can be commanded to upload or sync over serial (ADR-0003 #2,
+    // §4 invariant #4). Appended after the observation kinds so the shipped enumerator values are
+    // unchanged. Each drives the running hunt loop through the same seam a real event uses (§4 #2); the
+    // dispatch lives in serial_channel and calls the existing huntLoop injectors (ADR-0047).
+    InjectHandshake,  ///< A synthetic wpa-sec-valid handshake through the capture-ready seam.
+    ForceSync,        ///< Re-arm the hourly scheduler so the next STA window runs a cracked-sync.
+    InjectCracked,    ///< A synthetic new-password fact on the event bus (LED/webhook alert path).
+    InjectCapture,    ///< A synthetic capture fact on the event bus (webhook capture-push path).
+#endif
 };
 
 struct Command {

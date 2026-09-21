@@ -34,6 +34,15 @@ Command parseCommand(const char* line) {
     if (matchesWord(line, "state")) return {CommandKind::State};
     if (matchesWord(line, "dump")) return {CommandKind::Dump};
 
+#ifdef SAPPER_TEST_HOOKS
+    // The stimulus vocabulary, recognised only in test-hooks builds (ADR-0047, §4 #4). In the shipped
+    // build these tokens fall through to Unknown below — the absence test_serial_command asserts.
+    if (matchesWord(line, "inject-handshake")) return {CommandKind::InjectHandshake};
+    if (matchesWord(line, "force-sync")) return {CommandKind::ForceSync};
+    if (matchesWord(line, "inject-cracked")) return {CommandKind::InjectCracked};
+    if (matchesWord(line, "inject-capture")) return {CommandKind::InjectCapture};
+#endif
+
     return {CommandKind::Unknown};
 }
 

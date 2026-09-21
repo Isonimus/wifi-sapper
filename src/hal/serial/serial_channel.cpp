@@ -9,6 +9,14 @@
 
 #include <cstdio>
 
+#ifdef SAPPER_TEST_HOOKS
+// Driving the engine and network flows is the stimulus channel's stated purpose (ADR-0003). The
+// include and the dispatch arms that use it are confined to this test-hooks block, so the *shipped*
+// serial_channel.cpp never pulls in the hunt spine and no released binary carries an actuation path
+// (§4 #4). The injectors dispatch through the same seams a real event uses (§4 #2; ADR-0047).
+#include "hunt_loop.h"
+#endif
+
 namespace sapper {
 namespace {
 
@@ -51,6 +59,30 @@ void SerialChannel::dispatch(const Command& command) const {
         case CommandKind::TooLong:
             Serial.println("[CMD] refused line-too-long");
             break;
+#ifdef SAPPER_TEST_HOOKS
+        // The stimulus arms (ADR-0047). Each acks with a [CMD] line (ADR-0003 #6 — never [ERROR]) and
+        // calls the matching huntLoop injector, which drives the running loop through a real seam
+        // (§4 #2) and prints its own [UPLOAD]/[SYNC]/[CRACK]/[CAPTURE] evidence. Each injector is a
+        // no-op before the hunt loop reaches Ready (it guards on g_running), so a premature stimulus is
+        // harmless. These enum values exist only under SAPPER_TEST_HOOKS, so the shipped switch above is
+        // exhaustive without them.
+        case CommandKind::InjectHandshake:
+            Serial.println("[CMD] inject-handshake");
+            huntLoopInjectStimulus();
+            break;
+        case CommandKind::ForceSync:
+            Serial.println("[CMD] force-sync");
+            huntLoopForceSyncDue();
+            break;
+        case CommandKind::InjectCracked:
+            Serial.println("[CMD] inject-cracked");
+            huntLoopInjectCrackedAlert();
+            break;
+        case CommandKind::InjectCapture:
+            Serial.println("[CMD] inject-capture");
+            huntLoopInjectCaptureAlert();
+            break;
+#endif
     }
 }
 
