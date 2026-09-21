@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (in the firmware)
+    url: https://github.com/Isonimus/wifi-sapper/security/advisories/new
+    about: >-
+      Report privately via GitHub Security Advisories. See SECURITY.md. Do not
+      open a public issue for a firmware vulnerability.
+  - name: Legal / acceptable use
+    url: https://github.com/Isonimus/wifi-sapper/blob/main/DISCLAIMER.md
+    about: This is pentesting tooling — authorized testing and research only.
