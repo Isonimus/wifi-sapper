@@ -20,6 +20,7 @@
 #include "core/event_bus.h"
 #include "net/ap_registry.h"
 #include "net/capture_queue.h"
+#include "net/cracked_lookup.h"
 #include "net/handshake_collector.h"
 #include "net/hunt_engine.h"
 #include "net/upload_supervisor.h"
@@ -61,6 +62,36 @@ static CapturedHandshake makeHandshake(const uint8_t bssid[6]) {
 }
 
 static std::array<uint8_t, 6> bssidN(uint8_t n) { return {0x02, 0x00, 0x00, 0x00, 0x00, n}; }
+
+/// A trivial CrackedLookup for the gate-A tests (ADR-0059): reports a fixed set of BSSIDs as cracked,
+/// everything else not — the "manifest knowledge" the drain gates on, without wiring a real store.
+class FakeCrackedLookup : public CrackedLookup {
+public:
+    void markCracked(const uint8_t bssid[6]) {
+        std::array<uint8_t, 6> b{};
+        std::memcpy(b.data(), bssid, 6);
+        cracked_.push_back(b);
+    }
+    bool isCracked(const uint8_t bssid[6]) const override {
+        for (const auto& b : cracked_) {
+            if (std::memcmp(b.data(), bssid, 6) == 0) return true;
+        }
+        return false;
+    }
+
+private:
+    std::vector<std::array<uint8_t, 6>> cracked_;
+};
+
+/// True if @p pcap contains the 6-byte @p bssid anywhere — the uploaded capture's frames embed the
+/// AP's BSSID, so this is how the gate-A tests assert *which* network's capture was uploaded.
+static bool pcapContainsBssid(const std::vector<uint8_t>& pcap, const uint8_t bssid[6]) {
+    if (pcap.size() < 6) return false;
+    for (size_t i = 0; i + 6 <= pcap.size(); ++i) {
+        if (std::memcmp(pcap.data() + i, bssid, 6) == 0) return true;
+    }
+    return false;
+}
 
 static bool isDiscovering(const HuntEngine& engine) {
     return engine.phase() == HuntEngine::Phase::Discovering;
@@ -550,6 +581,93 @@ void test_a_live_window_flushes_the_notifier_and_an_offline_cycle_does_not(void)
     TEST_ASSERT_EQUAL_INT(1, notifier.flushCalls);       // but no flush — it never associated.
 }
 
+// --- Dropping already-recovered captures at the drain (slice-0060 Scenarios A, B; ADR-0059 gate A) --
+
+void test_a_cracked_bssids_capture_is_dropped_never_uploaded(void) {
+    // Scenario A: with a lookup wired, the drain drops a queued capture whose BSSID is already
+    // recovered — it is removed from the queue and never handed to the uploader — while an uncracked
+    // network in the same batch still uploads. Fail-before: without the gate, X is uploaded too
+    // (calls.size() == 2). X (cracked) must be skipped, Y (uncracked) uploaded.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 2;  // both captures queue, then one drain cycle.
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    const auto cracked = bssidN(1);    // X — already recovered.
+    const auto uncracked = bssidN(2);  // Y — still needs uploading.
+    FakeCrackedLookup lookup;
+    lookup.markCracked(cracked.data());
+    rig.supervisor.setCrackedLookup(lookup);
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(cracked.data()));
+    rig.supervisor.onCaptureReady(makeHandshake(uncracked.data()));
+    TEST_ASSERT_EQUAL_UINT32(2, rig.store.size());
+
+    rig.supervisor.tick(100);  // threshold reached -> stop, settle.
+    rig.supervisor.tick(106);  // settle elapsed -> one drain cycle.
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());  // exactly one upload — not the cracked one,
+    TEST_ASSERT_TRUE(pcapContainsBssid(rig.uploader.calls[0].pcap, uncracked.data()));  // it was Y,
+    TEST_ASSERT_FALSE(pcapContainsBssid(rig.uploader.calls[0].pcap, cracked.data()));   // never X.
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().skippedCracked);  // X counted as skipped,
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().accepted);        // Y uploaded,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.lastDrain().storeErrors);     // the skip is not an error,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());  // both gone from the queue (Y uploaded, X dropped).
+}
+
+void test_with_no_lookup_every_capture_is_uploaded(void) {
+    // Scenario B: with no CrackedLookup wired (the default), the drain is exactly the slice-0018 path —
+    // every queued capture uploads, cracked-or-not is never consulted (there is nothing to consult).
+    UploadSupervisorConfig config;
+    config.drainThreshold = 2;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);  // setCrackedLookup never called.
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(2).data()));
+
+    rig.supervisor.tick(100);
+    rig.supervisor.tick(106);
+
+    TEST_ASSERT_EQUAL_UINT32(2, rig.uploader.calls.size());  // both uploaded — no gate,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.lastDrain().skippedCracked);  // nothing skipped,
+    TEST_ASSERT_EQUAL_UINT32(2, rig.supervisor.lastDrain().accepted);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());
+}
+
+void test_a_failed_remove_of_a_cracked_capture_is_a_loud_store_error(void) {
+    // The skip path's remove() can fail (§3 fail loud): a cracked BSSID whose queue remove() fails is
+    // counted a storeError and keeps the cycle dirty (so it backs off and retries), never silently
+    // dropped nor counted clean. Fail-before: without the storeErrors/allTerminal branch a failed
+    // skip-remove would look like a clean cycle.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    const auto cracked = bssidN(1);
+    FakeCrackedLookup lookup;
+    lookup.markCracked(cracked.data());
+    rig.supervisor.setCrackedLookup(lookup);
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(cracked.data()));
+    rig.store.failRemove = true;  // the queue cannot delete the skipped entry.
+
+    rig.supervisor.tick(100);
+    rig.supervisor.tick(106);
+
+    TEST_ASSERT_EQUAL_UINT32(0, rig.uploader.calls.size());  // still skipped — never uploaded,
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().skippedCracked);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().storeErrors);  // the failed remove is loud,
+    TEST_ASSERT_EQUAL_UINT32(1, rig.store.size());  // and the entry stays queued for the next cycle.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_capture_below_threshold_is_enqueued_without_pausing_the_hunt);
@@ -569,5 +687,8 @@ int main(int, char**) {
     RUN_TEST(test_a_hidden_network_capture_carries_an_empty_ssid);
     RUN_TEST(test_a_failed_enqueue_publishes_no_capture_fact);
     RUN_TEST(test_a_live_window_flushes_the_notifier_and_an_offline_cycle_does_not);
+    RUN_TEST(test_a_cracked_bssids_capture_is_dropped_never_uploaded);
+    RUN_TEST(test_with_no_lookup_every_capture_is_uploaded);
+    RUN_TEST(test_a_failed_remove_of_a_cracked_capture_is_a_loud_store_error);
     return UNITY_END();
 }

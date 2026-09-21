@@ -170,10 +170,29 @@ void test_entry_at_enumerates_and_bounds(void) {
     TEST_ASSERT_NULL(manifest.entryAt(kMaxCrackedEntries));
 }
 
+void test_is_cracked_is_manifest_membership(void) {
+    // ADR-0059 Scenario C: the CrackedLookup the upload/targeting gates depend on is exactly
+    // manifest membership — isCracked(b) == (find(b) != nullptr) — never a separate guess. A held
+    // BSSID is cracked; an unheld one is not.
+    FakeCrackedStore store;
+    CrackedManifest manifest(store);
+    TEST_ASSERT_TRUE(manifest.begin());
+    manifest.apply(makeResult(1, "Net1", "pw1"), 1000);
+
+    const uint8_t present[6] = {0xaa, 0, 0, 0, 0, 1};
+    const uint8_t absent[6] = {0xaa, 0, 0, 0, 0, 2};
+    TEST_ASSERT_TRUE(manifest.isCracked(present));
+    TEST_ASSERT_FALSE(manifest.isCracked(absent));
+    // Tie it to find() explicitly so a future change to either cannot let them silently diverge.
+    TEST_ASSERT_TRUE((manifest.find(present) != nullptr) == manifest.isCracked(present));
+    TEST_ASSERT_TRUE((manifest.find(absent) != nullptr) == manifest.isCracked(absent));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_apply_new_bssid_is_new_and_stored);
     RUN_TEST(test_entry_at_enumerates_and_bounds);
+    RUN_TEST(test_is_cracked_is_manifest_membership);
     RUN_TEST(test_reapplying_same_result_is_unchanged_noop);
     RUN_TEST(test_changed_password_updates_in_place_and_reports_changed);
     RUN_TEST(test_bound_is_enforced_and_oldest_is_evicted);

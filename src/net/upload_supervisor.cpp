@@ -8,6 +8,7 @@
 
 #include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
 #include "core/event_bus.h"
+#include "net/cracked_lookup.h"
 #include "net/sync_session.h"
 #include "net/window_notifier.h"
 
@@ -180,6 +181,21 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome) {
 
     bool allTerminal = true;
     for (size_t i = 0; i < count; ++i) {
+        // ADR-0059 gate A: a network whose PSK we have already recovered needs no further upload —
+        // wpa-sec holds it and CrackedSync has brought it back. Drop the queued capture (freeing the
+        // bounded queue) instead of re-reading and re-uploading it. Gated on manifest knowledge, not
+        // hope: isCracked is `find() != nullptr`, so a captured-but-not-yet-cracked network still
+        // uploads (that upload is how it gets cracked). Off entirely when no lookup is wired. A
+        // successful remove resolves the entry (like a purge), so it does not fail the cycle; only a
+        // failed remove is a loud store error that keeps the cycle dirty.
+        if (crackedLookup_ != nullptr && crackedLookup_->isCracked(pending[i].bssid)) {
+            ++outcome.skippedCracked;
+            if (!queue_.remove(pending[i].id)) {
+                ++outcome.storeErrors;
+                allTerminal = false;
+            }
+            continue;
+        }
         size_t len = 0;
         if (!queue_.read(pending[i].id, uploadBuffer_, sizeof(uploadBuffer_), len)) {
             // Bytes unreadable/oversized. On a single-threaded LittleFS this is corruption, not a
@@ -211,9 +227,10 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome) {
     }
     // Success only when every attempted upload was terminal AND no remove failed — an associated cycle
     // that still had a rejection or a stuck remove backs off and retries (decision #7, Scenario C). A
-    // purged corrupt entry does NOT block success: it is resolved (gone), so a cycle that only had to
-    // purge still counts clean and lets backoff recover. Terminal uploads and purges shrink the queue;
-    // the rejected leftovers wait for the next cycle.
+    // purged corrupt entry, or one skipped as already-cracked (ADR-0059), does NOT block success: it is
+    // resolved (gone), so a cycle that only had to purge/skip still counts clean and lets backoff
+    // recover. Terminal uploads, purges and skips shrink the queue; the rejected leftovers wait for the
+    // next cycle.
     return allTerminal && outcome.storeErrors == 0;
 }
 

@@ -35,6 +35,8 @@ class EventBus;     // core/event_bus.h — held as a pointer; the supervisor pu
                     // DrainCompleted facts for surfaces (ADR-0021), no include needed in this header.
 class WindowNotifier;  // net/window_notifier.h — an optional window-sharer flushed inside each STA
                        // window (the push webhook transmits there); held by pointer, wired post-ctor.
+struct CrackedLookup;  // net/cracked_lookup.h — an optional read-only "is this BSSID cracked?" seam
+                       // (ADR-0059 gate A); held by pointer, wired post-ctor. Pure abstract, no include.
 
 /// Forwards the engine's capture-ready event to a target set after construction. It exists to break
 /// a construction cycle: the HuntEngine takes its CaptureReadyObserver at construction, but the
@@ -79,6 +81,8 @@ struct DrainOutcome {
     size_t duplicate = 0;      ///< Uploads wpa-sec already held (also terminal success).
     size_t rejected = 0;       ///< Uploads kept for retry (non-success or unrecognised — decision #2).
     size_t purged = 0;         ///< Unreadable (corrupt) captures dropped so the queue can go clean (#1).
+    size_t skippedCracked = 0; ///< Already-recovered captures dropped without upload (ADR-0059 gate A) —
+                               ///< resolved like a purge, so it is not counted as an upload error.
     size_t storeErrors = 0;    ///< Removes that could not complete — a purge or post-upload delete that
                                ///< failed, leaving the entry stuck (fail loud — §3; keeps the cycle dirty).
     bool resumeFailed = false; ///< The engine could not re-enter promiscuous mode after the drain.
@@ -109,6 +113,12 @@ public:
     /// CaptureReadyRelay wiring, so the constructor does not grow a ninth argument. Unset → no flush,
     /// and the drain behaves exactly as slice-0018/0022 shipped it.
     void setNotifier(WindowNotifier& notifier) { notifier_ = &notifier; }
+
+    /// Wire an optional read-only cracked-results lookup (ADR-0059 gate A). When set, the drain drops a
+    /// queued capture whose BSSID is already recovered (`isCracked`) instead of re-uploading it to
+    /// wpa-sec. Set post-construction, mirroring setNotifier, so the constructor does not grow a ninth
+    /// argument. Unset (nullptr) → the exact slice-0018 drain behaviour, every capture uploaded.
+    void setCrackedLookup(const CrackedLookup& lookup) { crackedLookup_ = &lookup; }
 
     /// Seed the drain clock and pick up any captures already on flash from a prior run. Call after
     /// the engine has begun and before the first tick().
@@ -151,6 +161,7 @@ private:
     SyncSession* sync_;  ///< Optional; the sync shares the drain's STA window (ADR-0019 decision #6).
     EventBus* bus_;      ///< Optional; publishes DrainStarted/DrainCompleted facts for surfaces (ADR-0021).
     WindowNotifier* notifier_ = nullptr;  ///< Optional; flushed inside each STA window (ADR-0023).
+    const CrackedLookup* crackedLookup_ = nullptr;  ///< Optional; drops already-cracked captures (ADR-0059).
 
     State state_ = State::Hunting;
     size_t activity_ = 0;             ///< Uploadable captures known pending since the last success.

@@ -270,6 +270,9 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     g_supervisor = new (g_supervisorStorage)
         UploadSupervisor(*g_engine, g_queue, g_uploader, *g_station, g_creds.key, config, g_session, &g_bus);
     g_relay.setTarget(*g_supervisor);
+    // ADR-0059 gate A: let the drain drop captures for networks we have already recovered instead of
+    // re-uploading them. The manifest (loaded above, refreshed hourly by the sync) is the CrackedLookup.
+    g_supervisor->setCrackedLookup(g_manifest);
 
     // Wire the push-notification surface iff a usable webhook URL is provisioned (ADR-0023). A bad or
     // absent URL disables push loudly and never blocks the hunt — the webhook is optional. When enabled,

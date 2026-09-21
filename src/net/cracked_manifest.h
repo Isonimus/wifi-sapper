@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "net/cracked_lookup.h"
 #include "net/cracked_store.h"
 
 namespace sapper {
@@ -47,7 +48,7 @@ enum class ApplyOutcome { New, Changed, Unchanged };
  * clearFresh() mutate only RAM so a whole sync is one store write, and a failed sync that never
  * flushes leaves the persisted manifest exactly as it was (ADR-0019 decision #7; Scenario I).
  */
-class CrackedManifest {
+class CrackedManifest : public CrackedLookup {
 public:
     explicit CrackedManifest(CrackedStore& store) : store_(store) {}
 
@@ -76,6 +77,10 @@ public:
     /// The entry for @p bssid, or nullptr if not held. Read-only view for the sync/verify; the manifest
     /// stays the store's single writer (§4 invariant #12).
     const CrackedEntry* find(const uint8_t bssid[6]) const;
+
+    /// CrackedLookup (ADR-0059): "have we already recovered this BSSID's PSK?" — manifest membership
+    /// over the same find() read path, so the upload/targeting gates never grow a parallel parse.
+    bool isCracked(const uint8_t bssid[6]) const override { return find(bssid) != nullptr; }
 
     /// The @p i-th mirrored entry (0..size()-1), or nullptr if out of range. Lets a surface enumerate
     /// the whole account — the Maintenance dashboard (ADR-0039) — through this seam rather than parsing
