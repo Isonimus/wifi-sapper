@@ -12,11 +12,12 @@ src/gen/
 # third-party network identifier must never ride one (ADR-0049); scripts/check-artifact-privacy.mjs
 # enforces the BSSID half in the pre-commit hook.
 # Raw capture files are the exception: they are real handshakes (e.g. the deauth verify's forced
-# capture) and belong only behind the CaptureSink seam (§4 #9), never in the committed evidence —
-# ignored here, and the guard also hard-fails on any that reach artifacts/ (ADR-0049 amendment 2).
-artifacts/*.pcap
-artifacts/*.pcapng
-artifacts/*.cap
+# capture) and belong only behind the CaptureSink seam (§4 #9), never in the committed evidence.
+# Ignored repo-wide (not just artifacts/, and at any depth) so a real capture cannot be committed
+# anywhere; the guard additionally hard-fails on any that reach artifacts/ (ADR-0049 amendment 2).
+*.pcap
+*.pcapng
+*.cap
 
 # Claude Code runtime / per-user state — never shared. The vendored stele method itself
 # (.claude/commands/, .claude/hooks/, .claude/.stele-vendored.json) stays tracked; only
