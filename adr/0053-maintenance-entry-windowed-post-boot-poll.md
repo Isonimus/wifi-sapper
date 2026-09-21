@@ -2,10 +2,10 @@
 id: '0053'
 title: "Maintenance entry is a windowed post-boot poll of a per-board button, not a hold-at-power-on"
 type: architecture
-status: accepted
+status: superseded
 date: 2026-09-21
 supersedes: []
-superseded_by: []
+superseded_by: ['0057']
 ---
 
 ## Context

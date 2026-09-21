@@ -59,14 +59,17 @@ struct BoardProfile {
     int8_t batteryAdcPin;
     int8_t lcdCs, lcdDc, lcdRst, lcdBl;
     int8_t sdCs, sdMosi, sdMiso, sdClk;
-    /// The entry button polled during the boot splash to enter Maintenance (ADR-0053, superseding
-    /// ADR-0039 decision 2). Active-low (reads LOW when pressed); nearly every ESP32 board wires GPIO0
-    /// (BOOT) to it. Polled *after* boot, never held through reset — GPIO0 held at reset-release enters
-    /// ROM download mode (ADR-0053). A board whose entry button is not a strapping pin declares that pin
-    /// instead. -1 on a board without one. Unlike the peripheral pins this one *gates a mode*, so it
-    /// carries a `-1` default member initializer: a future board profile that forgets it defaults to
-    /// "absent" (no spurious Maintenance entry / PSK exposure), not to GPIO0 — the one pin where an
-    /// accidental zero would be behavioural.
+    /// A per-board entry button that could poll for Maintenance entry (ADR-0053). Active-low (reads LOW
+    /// when pressed). Superseded as the *reference-board* entry path by ADR-0057: the Cardputer ADV has
+    /// no runtime-pressable button wired to GPIO0 — GPIO0 is a boot strap only (holding it at
+    /// reset-release enters ROM download mode, and post-boot it reads a floating/high strap, never a
+    /// press), so the ADV declares -1 and enters Maintenance by a runtime keyboard 'm' press that reboots.
+    /// The field is kept for a future board that genuinely wires a pollable button (e.g. an M5Stick side
+    /// button), whose per-board entry gesture is deferred to slice-8 (ADR-0057 decision 7). -1 means "no
+    /// pollable entry button." Unlike the peripheral pins this one *gates a mode*, so it carries a `-1`
+    /// default member initializer: a future board profile that forgets it defaults to "absent" (no
+    /// spurious Maintenance entry / PSK exposure), not to GPIO0 — the one pin where an accidental zero
+    /// would be behavioural.
     int8_t bootButtonPin = -1;
 };
 

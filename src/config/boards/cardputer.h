@@ -33,7 +33,9 @@ inline constexpr BoardProfile kCardputerProfile = {
     .batteryAdcPin = 10,
     .lcdCs = 37, .lcdDc = 34, .lcdRst = 33, .lcdBl = 38,
     .sdCs = 12, .sdMosi = 14, .sdMiso = 39, .sdClk = 40,
-    .bootButtonPin = 0,  // GPIO0 / BOOT, pressed during the boot splash to enter Maintenance (ADR-0053).
+    .bootButtonPin = -1,  // No pollable entry button: the ADV's GPIO0 is a boot strap only (there is no
+                          // runtime-pressable button wired to it), so Maintenance is entered by a runtime
+                          // keyboard 'm' press that reboots, not a boot-button poll (ADR-0057).
 };
 
 }  // namespace sapper

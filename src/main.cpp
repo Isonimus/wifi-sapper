@@ -14,10 +14,11 @@
 #include <cstdio>
 
 #include "config/active_board.h"
-#include "config/entry_gesture.h"
 #include "config/firmware_version.h"
+#include "config/maintenance_intent.h"
 #include "hal/display/display_hal.h"
 #include "hal/display/null_display.h"
+#include "hal/input/tca8418_keyboard.h"
 #include "hal/serial/serial_channel.h"
 #include "net/captive_portal.h"
 #include "net/cracked_manifest.h"
@@ -32,6 +33,7 @@
 #include "deauth_probe.h"
 #include "hunt_loop.h"
 #include "hunt_probe.h"
+#include "keyboard_probe.h"
 #include "led_probe.h"
 #include "webhook_probe.h"
 #include "webhook_capture_probe.h"
@@ -87,6 +89,16 @@ Phase g_phase = Phase::Provisioning;
 SerialChannel g_channel(display(), g_phase);
 CaptivePortal g_portal;
 
+// The runtime keyboard, brought up on entering Ready so `loop()` can watch for the Maintenance key
+// (ADR-0057). Idle on any board without a keyboard (begin() is gated on the profile's InputKind).
+Tca8418Keyboard g_keyboard;
+
+// The reboot-into-Maintenance intent (ADR-0057 decision 3). RTC_NOINIT_ATTR: this word survives the
+// software ESP.restart() the `m` keypress issues, but is *undefined* after a power-on/brownout — which
+// is exactly why the pure decision also gates on esp_reset_reason() == ESP_RST_SW. Not static: a
+// file-scope global lands in the .rtc_noinit section the attribute selects.
+RTC_NOINIT_ATTR uint32_t g_maintenanceIntentWord;
+
 /// Pump the serial channel during a pre-engine blocking wait (CLAUDE.md §4 invariant #3), passed
 /// as the tick into the bounded STA/NTP waits so `state`/`ping` stay answered during boot.
 void pumpSerial() { g_channel.pump(); }
@@ -120,33 +132,25 @@ void seedTestCredentials() {
 }
 #endif
 
-/// Whether the operator pressed the entry button during the boot splash to enter Maintenance
-/// (ADR-0053, superseding ADR-0039 decision 2's hold-at-power-on). Polls the board's entry button
-/// AFTER a normal boot — never held through reset: GPIO0/BOOT is the ESP32 strapping pin, so holding it
-/// at reset-release drops the ROM into serial download mode and firmware never runs (the old
-/// single-sample gesture could not fire on the Cardputer). Read post-boot GPIO0 is an ordinary input.
-/// This is the device seam behind the pure decideBootPhase() input (review-only, §4 #6-style boundary);
-/// the debounce/window decision logic is the pure PressDebouncer (host-tested). A board without an
-/// entry button (pin -1) never enters Maintenance from here.
+/// Whether this clean boot should enter Maintenance (ADR-0057, superseding ADR-0053). The signal is a
+/// runtime `m` keypress that persisted a reboot-intent and restarted the device — NOT a boot-button
+/// poll: the Cardputer ADV has no runtime-pressable GPIO0 button (GPIO0 is a boot strap only; the
+/// field diagnostic held it 8 s and read HIGH throughout), so ADR-0053's windowed GPIO0 poll was
+/// unreachable. Reads and one-shot-consumes the RTC intent word through the pure decision, so a
+/// power-cycle (undefined RTC word, non-ESP_RST_SW reset) never enters Maintenance. Maintenance still
+/// enters only from a clean boot, so §4 #21 holds; the device seam is just the RTC word + reset reason,
+/// the decision is the host-tested consumeMaintenanceIntent().
 bool maintenanceRequested() {
 #ifdef SAPPER_TEST_HOOKS
     // The physical press cannot be driven by the headless verify, so a build-time hook forces entry
     // (like the credential seed; never a serial path, §4 #7). Compiled out of every shipped build.
     if (SAPPER_TEST_MAINT[0] != '\0') return true;
 #endif
-    const int8_t pin = kActiveBoard.bootButtonPin;
-    if (pin < 0) return false;  // no entry button on this board.
-    pinMode(pin, INPUT_PULLUP);
-    // Poll for a bounded window: the operator boots normally, then presses BOOT once during the splash.
-    // First debounced press wins (early-exit); a normal boot waits the window out and proceeds. The
-    // subtraction-against-deadline compare is millis()-wrap-safe (int32_t rollover of the difference).
-    PressDebouncer debounce(kEntryDebounceSamples);
-    const uint32_t deadline = millis() + kMaintenanceEntryWindowMs;
-    while (static_cast<int32_t>(millis() - deadline) < 0) {
-        if (debounce.feed(digitalRead(pin) == LOW)) return true;  // active-low: pressed reads LOW.
-        delay(kEntryPollIntervalMs);
-    }
-    return false;
+    const MaintenanceIntentRead intent =
+        consumeMaintenanceIntent(esp_reset_reason(), g_maintenanceIntentWord);
+    g_maintenanceIntentWord = intent.clearedWord;  // one-shot: consume before the phase is decided, so a
+                                                    // crash inside Maintenance cannot loop back into it.
+    return intent.enterMaintenance;
 }
 
 /// The Maintenance status screen on a board with a panel (ADR-0039). Connection info + a count only —
@@ -184,8 +188,16 @@ void runMaintenance(const ProvisioningRecord& creds, IDisplay& panel) {
     // fault is logged loud on serial (the operator/verify's authoritative channel) but does not brick the
     // viewer: the AP still comes up so the operator is never stranded, showing the entries that loaded
     // (0 on a hard fault). This is the one deliberate log-and-continue in the phase — noted in ADR-0039.
-    LittleFsCrackedStore crackedStore;
-    CrackedManifest manifest(crackedStore);
+    //
+    // `static`, NOT a stack local: CrackedManifest embeds `CrackedEntry entries_[kMaxCrackedEntries]`
+    // (256 × ~112 B ≈ 28 KB), which overflows the ~8 KB loopTask stack the instant it is constructed —
+    // a stack-canary panic in the ctor, measured on-device (this is why Maintenance rebooted before the
+    // SoftAP ever came up once ADR-0057 finally made it reachable). Static storage (.bss) mirrors the
+    // hunt path's file-scope g_manifest global (hunt_loop.cpp). runMaintenance runs once and does not
+    // return on the happy path, so a static local is the natural lifetime; the store is static too so
+    // the manifest's reference to it stays valid even on the early-return fault path below.
+    static LittleFsCrackedStore crackedStore;
+    static CrackedManifest manifest(crackedStore);
     if (!crackedStore.begin() || !manifest.begin()) {
         Serial.println("[FATAL] maintenance: could not load recovered results");
     }
@@ -214,9 +226,10 @@ void runMaintenance(const ProvisioningRecord& creds, IDisplay& panel) {
                   static_cast<unsigned>(manifest.size()));
     Serial.println(banner);
 
-    // Serve until an explicit resume (a power-cycle without BOOT re-enters Station via the boot gate) or
-    // the no-activity backstop fires, protecting the endless-hunt identity of a walked-away unit
-    // (ADR-0039 decision 7). Both leave by rebooting; the radio comes back up clean for the hunt.
+    // Serve until an explicit resume (a plain power-cycle re-enters Station via the boot gate: the RTC
+    // intent is not set, so the next boot hunts) or the no-activity backstop fires, protecting the
+    // endless-hunt identity of a walked-away unit (ADR-0039 decision 7). Both leave by rebooting; the
+    // radio comes back up clean for the hunt.
     uint32_t lastActivity = millis();
     for (;;) {
         portal.handle();
@@ -252,6 +265,13 @@ void runStationBoot(const ProvisioningRecord& creds, IDisplay* panel) {
                 // on headless — the proven "no display" path (ADR-0045 decision 3).
                 if (!huntLoopBegin(creds, {}, panel)) {  // pass the panel so the status HUD renders.
                     Serial.println("[FATAL] hunt/upload loop failed to start");
+                }
+                // Bring up the keyboard so loop() can watch for the Maintenance key (ADR-0057). Gated on
+                // the board declaring a keyboard; the driver is ADV-specific (decision 7). A failure is
+                // logged loud but does not brick hunting (the primary mission) — it only means runtime
+                // Maintenance entry is unavailable, never a swallowed error (§3 fail loud, not fail hard).
+                if (kActiveBoard.input == InputKind::Keyboard && !g_keyboard.begin()) {
+                    Serial.println("[KB] keyboard init failed — runtime Maintenance entry unavailable");
                 }
                 return;
             }
@@ -316,20 +336,26 @@ void setup() {
     if (rfDiscoverProbeBegin()) return;
     if (rfSniffProbeBegin()) return;
     if (deauthProbeBegin()) return;  // transmits deauth + captures the forced handshake (ADR-0027).
+    if (keyboardProbeBegin()) return;  // reads the TCA8418 to confirm the Maintenance keycode (ADR-0057).
 
     ProvisioningRecord creds = {};
     const bool hasCreds = loadProvisioning(creds);
-    // Gate the entry poll on hasCreds: an unprovisioned boot routes to Provisioning regardless of the
-    // button (decideBootPhase ignores the signal there), so the short-circuit spares it the window dwell
-    // — behaviour-preserving, just faster on first boot (ADR-0053 decision 6).
-    const bool maint = hasCreds && maintenanceRequested();
+    // Read AND consume the intent every boot — never behind the hasCreds gate. The consume is the
+    // one-shot clear (`consumeMaintenanceIntent`), and it must run unconditionally so an unprovisioned
+    // cold boot cannot leave undefined RTC-noinit garbage sitting in the word: the very first
+    // *provisioned* boot is itself an ESP_RST_SW (the captive-portal save reboots), so a short-circuit
+    // here would let cold-boot garbage that happens to equal the sentinel enter Maintenance on that
+    // first provisioned boot, having never been cleared. Only the resulting *decision* is gated on
+    // hasCreds (decideBootPhase ignores the signal when unprovisioned anyway) — ADR-0057 decision 3.
+    const bool intentRequested = maintenanceRequested();
+    const bool maint = hasCreds && intentRequested;
     const Phase entry = decideBootPhase(hasCreds, /*staFailCount=*/0, maint);
     if (entry == Phase::Provisioning) {
         startPortal();
     } else if (entry == Phase::Maintenance) {
         // Serve the results dashboard, never returns. `panel` is the null fallback if init failed, so
         // the Maintenance screen no-ops on a dead panel while the SoftAP still serves (ADR-0045).
-        runMaintenance(creds, panel);  // BOOT pressed during the boot splash (ADR-0053).
+        runMaintenance(creds, panel);  // reached via the runtime Maintenance-key reboot (ADR-0057).
     } else {
         // hunt_loop copies the creds it needs; this local may go out of scope. Pass the panel only if it
         // initialised — nullptr reuses hunt_loop's proven "[SCREEN] disabled" path (ADR-0045 decision 3).
@@ -410,6 +436,11 @@ void loop() {
         delay(5);
         return;
     }
+    if (keyboardProbeActive()) {  // bench keyboard-keycode probe owns the device; normal boot is skipped.
+        keyboardProbePump();
+        delay(5);
+        return;
+    }
 
     g_channel.pump();
 
@@ -422,6 +453,15 @@ void loop() {
         }
     } else if (g_phase == Phase::Ready) {
         huntLoopPump();  // the shipped endless hunt→enqueue→drain→upload loop (ADR-0017 decision #8).
+        // Runtime Maintenance entry (ADR-0057): a Maintenance-key press persists the reboot-intent and
+        // restarts; the clean boot reads the intent and routes to Maintenance via the boot gate — never
+        // a live radio swap (§4 #21). The poll is cheap (an ISR flag) until the keyboard signals a key.
+        if (g_keyboard.maintenanceKeyPressed()) {
+            Serial.println("[MAINT] Maintenance key pressed — rebooting into Maintenance");
+            g_maintenanceIntentWord = kMaintenanceIntentMagic;
+            delay(50);  // let the line flush before the reset.
+            ESP.restart();
+        }
     }
     delay(5);
 }

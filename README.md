@@ -98,12 +98,12 @@ maintenance access point uses the default `sapper-setup` password.
 
 ### Maintenance mode (results dashboard)
 
-To read the recovered passwords off the device without a serial console, **power the device on
-normally, then press the BOOT button once during the boot splash** (a ~3-second window; ADR-0053).
-Do *not* hold BOOT while powering on — on the Cardputer and most ESP32 boards BOOT is the GPIO0
-strapping pin, so holding it at power-on enters the chip's USB firmware-flashing mode instead of the
-app. Instead of hunting, the device comes up as a Wi-Fi access point serving a dashboard of everything
-it has recovered, plus two controls (ADR-0043):
+To read the recovered passwords off the device without a serial console, **press the `m` key while
+the device is hunting** (ADR-0057). The device saves a one-shot "enter Maintenance" flag and reboots
+into Maintenance — there is no timing window to catch; press whenever you like. On the Cardputer ADV
+there is no runtime button wired to GPIO0 (GPIO0 is a boot strap only, used for firmware flashing), so
+the keyboard is the entry input. Instead of hunting, the device then comes up as a Wi-Fi access point
+serving a dashboard of everything it has recovered, plus two controls (ADR-0043):
 
 1. It raises the SoftAP **`Sapper-Maint-XXXX`** — a distinct name from the setup portal's `Sapper-XXXX`
    (ADR-0055), so you can always tell Maintenance apart from the setup/STA-fail portal. Join it with your
@@ -123,13 +123,13 @@ it has recovered, plus two controls (ADR-0043):
      exception: they are always taken from the form** (not pre-filled), so to keep the same network you
      must retype both — and saving with a blank passphrase configures an *open* network. Saving reboots
      into hunting with the new configuration.
-4. To leave without changing anything, **power-cycle and don't press BOOT** — the device reboots and
-   resumes hunting. If you walk away, it auto-resumes after **30 minutes** of no activity, so it never
-   stops hunting for good.
+4. To leave without changing anything, **power-cycle the device** — it reboots and resumes hunting (the
+   Maintenance flag is one-shot and a plain power-on never re-enters Maintenance). If you walk away, it
+   auto-resumes after **30 minutes** of no activity, so it never stops hunting for good.
 
 The dashboard shows plaintext passwords deliberately: it is a local viewer on the device's own access
-point, reached only by a physical BOOT press at boot (ADR-0039, ADR-0053). Set a strong Maintenance
-passphrase so only
+point, reached only by a physical keypress at the device (ADR-0039, entry per ADR-0057). Set a strong
+Maintenance passphrase so only
 you can join and read them — otherwise anyone in radio range who knows the default password could.
 
 > **Secrets at rest.** Credentials are stored in plaintext NVS. Anyone with physical access and a
@@ -257,6 +257,7 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run verify:hunt-hud` | Serial-driven live-hunt-HUD verify on an attached board with a panel (slice-0034, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_HUNT_HUD=1` (no network needed), on a quiet channel; injects a synthetic AP + handshake through the engine's `onFrame` seam so the panel shows the live-hunt line, and dumps it to `artifacts/0034-hunt-hud.png`. Confirm the target + Beacon/M1/M2 indicators + progress bar render against the artifact. See the script header. |
 | `npm run verify:webhook-capture` | Serial-driven capture-push webhook verify on an attached board (slice-0036, lane 3). Flash the `cardputer_testhooks` build with the same real credentials, a real `SAPPER_TEST_WEBHOOK_URL`, and `SAPPER_TEST_WEBHOOK_CAPTURE=1`; forces capture-push on, injects a synthetic capture fact, and proves the transport POSTs a "captured" notification (ESSID/BSSID, no PSK) to the live endpoint (2xx). Confirm it arrived. See the script header. |
 | `npm run verify:maintenance` | Serial-driven Maintenance-mode verify on an attached board (slice-0040 + slice-0044, lane 3). Flash the `cardputer_testhooks` build with real credentials, `SAPPER_TEST_MAINT=1`, and `SAPPER_TEST_MAINT_PASS`; asserts the device enters `phase=maintenance`, prints the `[MAINT]` banner, and keeps answering serial. Join the workstation to the `Sapper-Maint-XXXX` AP with that passphrase and set `SAPPER_MAINT_DASHBOARD_URL=http://192.168.4.1/` (and optionally `SAPPER_MAINT_EXPECT_PSK`) to also fetch the dashboard, check its controls, and fetch `GET /config`. Set `SAPPER_MAINT_DRIVE_RESUME=1` to also drive `POST /resume` (this reboots the board). See the script header. |
+| `npm run verify:keyboard` | Interactive on-device keycode probe on an attached board (slice-0058, lane 3; a probe, not a wired verify). Flash the `cardputer_testhooks` build with `SAPPER_TEST_KB=1` (no network needed); it logs each keypress's decoded key number. Press `m` when prompted — it PASSES if that key reports `code=48` and matches `isMaintenanceKey`, confirming the Maintenance keycode ADR-0057 records. See the script header. |
 | `npm run verify:serial-stimulus` | Serial-driven stimulus verify on an attached board (slice-0048, lane 3). Flash a **normally-booting** `cardputer_testhooks` build (real `SAPPER_TEST_WIFI_SSID`/`SAPPER_TEST_WIFI_PASS`/`SAPPER_TEST_WPASEC_KEY`, **no** probe env set); once it is hunting, the script writes `inject-handshake` over serial and proves the **shipped** hunt loop injects, enqueues, and drains the capture to wpa-sec — not a bench probe. The stimulus vocabulary exists only in `SAPPER_TEST_HOOKS` builds; a shipped binary rejects it (§4 #4, `test/test_serial_command`). See the script header. |
 | `npm run lint` / `npm run index` | Documentation linter and generated ADR index. |
 | `npm run check:index` | Fail if `adr/INDEX.md` is stale (the `--check` half of `index`; run by the pre-push hook and CI). |
