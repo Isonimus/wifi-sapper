@@ -273,6 +273,9 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     // ADR-0059 gate A: let the drain drop captures for networks we have already recovered instead of
     // re-uploading them. The manifest (loaded above, refreshed hourly by the sync) is the CrackedLookup.
     g_supervisor->setCrackedLookup(g_manifest);
+    // ADR-0061 gate B (§4 #28): stop the hunt even *targeting* an already-cracked AP — no capture window,
+    // no deauth spent on a network we are done with. Same seam, at target selection instead of the drain.
+    g_engine->setCrackedLookup(g_manifest);
 
     // Wire the push-notification surface iff a usable webhook URL is provisioned (ADR-0023). A bad or
     // absent URL disables push loudly and never blocks the hunt — the webhook is optional. When enabled,

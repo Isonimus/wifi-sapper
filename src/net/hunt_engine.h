@@ -36,6 +36,8 @@
 
 namespace sapper {
 
+struct CrackedLookup;  // net/cracked_lookup.h — the read-only isCracked(bssid) seam (ADR-0059/-0061 gate B).
+
 /// Notified of each wpa-sec-valid handshake the engine captures. Implemented off the engine (the
 /// uploader, slice-5; the alerter, slice-7; a display) — the headless event boundary (ADR-0001). The
 /// engine calls it from tick() on the app task, never in the driver callback, so the subscriber may do
@@ -83,6 +85,14 @@ public:
     HuntEngine(RadioSniffer& sniffer, ApRegistry& registry, CaptureReadyObserver& observer,
                const uint8_t* channels, size_t channelCount, const HuntConfig& config = {},
                RawTransmitter* transmitter = nullptr);
+
+    /// Arm gate B (ADR-0061, §4 #28): consult @p lookup in target selection and skip any discovered AP
+    /// it reports already cracked — never tuning to, capturing, or (so, never) deauthing it. Off by
+    /// default: an unset lookup (`nullptr`) is the purely-frame-fed engine of §4 #8/#10, targeting every
+    /// discovered AP. The lookup is read only on the app task (target selection), never in onFrame, so
+    /// it adds no persisted-state read to the frame path. Mirrors UploadSupervisor::setCrackedLookup
+    /// (gate A) and the optional RawTransmitter arm.
+    void setCrackedLookup(const CrackedLookup& lookup) { crackedLookup_ = &lookup; }
 
     /// Install the engine as the sniffer's consumer on the first hop channel and enter Discovering.
     /// Returns false (and stays Idle) if the sniffer could not enter promiscuous mode.
@@ -137,6 +147,7 @@ private:
     ApRegistry& registry_;
     CaptureReadyObserver& observer_;
     RawTransmitter* transmitter_;  // null = disarmed (passive hunt); the default (invariant #16).
+    const CrackedLookup* crackedLookup_ = nullptr;  // null = target every AP (gate B off; ADR-0061 #28).
     HandshakeCollector collector_;         // owned; re-targeted across the round-robin.
     HandshakeConsumer handshakeConsumer_;  // wraps collector_ — must follow it in declaration order.
     ChannelHopper hopper_;

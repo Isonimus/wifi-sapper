@@ -6,7 +6,8 @@
 
 #include <cstring>  // memcpy: copy the target identity into the pull snapshot.
 
-#include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
+#include "core/deadline.h"       // reached(): the wrap-safe deadline test shared across clock-driven units.
+#include "net/cracked_lookup.h"  // CrackedLookup::isCracked — the gate-B target filter (ADR-0061 #28).
 
 namespace sapper {
 namespace {
@@ -75,6 +76,12 @@ void HuntEngine::doStartCapturing(uint32_t nowMs) {
     // Reached only with the router aimed away (from a quiesce), so retargeting the collector is safe.
     while (targetIndex_ < targetCount_) {
         const DiscoveredAp& target = registry_.at(targetIndex_);
+        // Gate B (ADR-0061 #28): a BSSID wpa-sec already cracked is skipped like a channel-rejected one —
+        // never tuned to, captured, or (never being capturingBssid()) deauthed. Off by default (no lookup).
+        if (crackedLookup_ != nullptr && crackedLookup_->isCracked(target.bssid)) {
+            ++targetIndex_;
+            continue;
+        }
         if (retuneTo(target.channel)) {
             collector_.retarget(target.bssid, target.channel);
             activeSink_.store(&handshakeConsumer_, std::memory_order_release);

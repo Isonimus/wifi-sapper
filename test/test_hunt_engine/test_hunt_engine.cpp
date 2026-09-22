@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "net/ap_registry.h"
+#include "net/cracked_lookup.h"
 #include "net/deauth.h"
 #include "net/hunt_engine.h"
 
@@ -53,6 +54,23 @@ struct RecordingObserver : public CaptureReadyObserver {
         std::array<uint8_t, 6> bssid{};
         std::memcpy(bssid.data(), handshake.bssid, 6);
         captured.push_back(bssid);
+    }
+};
+
+// A fake CrackedLookup (gate B, ADR-0061 #28): reports a fixed set of BSSIDs as already recovered, the
+// same membership contract CrackedManifest implements over its §4 #12 find() path.
+struct FakeCrackedLookup : public CrackedLookup {
+    std::vector<std::array<uint8_t, 6>> cracked;
+    void markCracked(const uint8_t bssid[6]) {
+        std::array<uint8_t, 6> b{};
+        std::memcpy(b.data(), bssid, 6);
+        cracked.push_back(b);
+    }
+    bool isCracked(const uint8_t bssid[6]) const override {
+        for (const auto& b : cracked) {
+            if (std::memcmp(b.data(), bssid, 6) == 0) return true;
+        }
+        return false;
     }
 };
 
@@ -464,6 +482,90 @@ void test_snapshot_hides_target_when_not_capturing(void) {
     TEST_ASSERT_EQUAL_UINT8(0, snap.collectedCount());
 }
 
+// --- Gate B: skip targeting an already-cracked AP (slice-0062 Scenarios A, B, C; ADR-0061 #28) ------
+
+void test_cracked_ap_is_never_targeted_but_uncracked_one_is(void) {
+    // Scenario A: X (kApA) is already cracked, Y (kApB) is not, with the lookup set. The engine must
+    // skip X in target selection — never tuning to it, capturing it, or deauthing it — and capture Y.
+    // Fail-before: without the doStartCapturing skip, X is targeted first and captured too.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeCrackedLookup lookup;
+    lookup.markCracked(kApA);
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    engine.setCrackedLookup(lookup);
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));  // discovered first (index 0) — cracked.
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6));  // discovered second (index 1) — not cracked.
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    engine.tick(35);  // settle elapsed -> kApA is cracked, so skip straight to kApB.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApB));  // never Capturing for kApA.
+    TEST_ASSERT_EQUAL_UINT8(6, sniffer.currentChannel);        // never tuned to kApA's channel 1.
+
+    deliverHandshake(sniffer, kApB, 6);
+    engine.tick(36);  // wpa-sec valid -> quiesce toward report+advance.
+    engine.tick(41);  // settle -> report kApB, advance past the enumeration -> re-discover.
+
+    TEST_ASSERT_EQUAL_UINT32(1, observer.captured.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApB, observer.captured[0].data(), 6);  // only kApB, never kApA.
+}
+
+void test_with_no_lookup_every_ap_is_targeted(void) {
+    // Scenario B: setCrackedLookup never called (nullptr) -> the purely-frame-fed engine of §4 #8/#10;
+    // both APs are captured, gate B off. Contrasts Scenario A: kApA (cracked in A) is captured here.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());  // no lookup wired.
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6));
+    engine.tick(30);  // discovery ends -> quiesce.
+
+    engine.tick(35);  // capture kApA (not skipped — no lookup).
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApA));
+    deliverHandshake(sniffer, kApA, 1);
+    engine.tick(36);
+    engine.tick(41);  // report kApA, advance to kApB.
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApB));
+    deliverHandshake(sniffer, kApB, 6);
+    engine.tick(42);
+    engine.tick(47);  // report kApB.
+
+    TEST_ASSERT_EQUAL_UINT32(2, observer.captured.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, observer.captured[0].data(), 6);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApB, observer.captured[1].data(), 6);
+}
+
+void test_all_cracked_degrades_to_rediscovery_not_a_spin(void) {
+    // Scenario C: every discovered AP is cracked -> the selection loop exhausts and falls through to a
+    // fresh discovery sweep (the existing "no capturable target remained" path), never a busy-loop and
+    // never a capture. Fail-before: without the skip, the first cracked AP is captured instead.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeCrackedLookup lookup;
+    lookup.markCracked(kApA);
+    lookup.markCracked(kApB);
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    engine.setCrackedLookup(lookup);
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6));
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    engine.tick(35);  // settle elapsed -> both targets cracked, so skip all -> re-discover.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Discovering), static_cast<int>(engine.phase()));
+    TEST_ASSERT_EQUAL_UINT32(0, engine.discoveredCount());  // registry reset for the new sweep.
+    TEST_ASSERT_EQUAL_UINT32(0, observer.captured.size());  // nothing was captured.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_discovers_then_captures_then_advances);
@@ -482,5 +584,8 @@ int main(int, char**) {
     RUN_TEST(test_snapshot_reflects_discovering);
     RUN_TEST(test_snapshot_reflects_populated_capturing);
     RUN_TEST(test_snapshot_hides_target_when_not_capturing);
+    RUN_TEST(test_cracked_ap_is_never_targeted_but_uncracked_one_is);
+    RUN_TEST(test_with_no_lookup_every_ap_is_targeted);
+    RUN_TEST(test_all_cracked_degrades_to_rediscovery_not_a_spin);
     return UNITY_END();
 }
