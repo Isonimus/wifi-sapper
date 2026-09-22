@@ -42,6 +42,7 @@ void ApRegistry::onFrame(const uint8_t* frame, uint16_t len) {
     // The beacon's own DS-Parameter-Set channel is authoritative; fall back to the channel we are
     // sweeping only when the beacon does not state one (ADR-0013 decision #3).
     slot.channel = (advertised != 0) ? advertised : currentChannel_.load(std::memory_order_relaxed);
+    slot.isOpen = beaconIsOpen(frame, len);  // recorded here so the hunt can skip an open AP (ADR-0063 #29).
 
     count_.store(n + 1, std::memory_order_release);
 }

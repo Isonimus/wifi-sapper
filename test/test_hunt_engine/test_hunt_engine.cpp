@@ -566,6 +566,55 @@ void test_all_cracked_degrades_to_rediscovery_not_a_spin(void) {
     TEST_ASSERT_EQUAL_UINT32(0, observer.captured.size());  // nothing was captured.
 }
 
+// --- skip-open: never target an open network (slice-0064 Scenarios A, B; ADR-0063 #29) --------------
+
+void test_open_ap_is_never_targeted_but_encrypted_one_is(void) {
+    // Scenario A: X (kApA) is open, Y (kApB) is encrypted. Skip-open is always on (no lookup wired), so
+    // the engine must skip X in target selection — never tuning to it, capturing it, or deauthing it —
+    // and capture Y. Fail-before: without the doStartCapturing isOpen skip, X is targeted first and captured.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Guest", 1, /*encrypted=*/false));  // index 0 — open.
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6, /*encrypted=*/true));   // index 1 — encrypted.
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    engine.tick(35);  // settle elapsed -> kApA is open, so skip straight to kApB.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApB));  // never Capturing for kApA.
+    TEST_ASSERT_EQUAL_UINT8(6, sniffer.currentChannel);        // never tuned to kApA's channel 1.
+
+    deliverHandshake(sniffer, kApB, 6);
+    engine.tick(36);  // wpa-sec valid -> quiesce toward report+advance.
+    engine.tick(41);  // settle -> report kApB, advance past the enumeration -> re-discover.
+
+    TEST_ASSERT_EQUAL_UINT32(1, observer.captured.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApB, observer.captured[0].data(), 6);  // only kApB, never kApA.
+}
+
+void test_all_open_degrades_to_rediscovery_not_a_spin(void) {
+    // Scenario B: every discovered AP is open -> the selection loop exhausts and falls through to a fresh
+    // discovery sweep (the existing "no capturable target remained" path), never a busy-loop, never a
+    // capture. Fail-before: without the skip, the first open AP is captured instead.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "GuestA", 1, /*encrypted=*/false));
+    sniffer.deliver(buildBeacon(kApB, "GuestB", 6, /*encrypted=*/false));
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    engine.tick(35);  // settle elapsed -> both targets open, so skip all -> re-discover.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Discovering), static_cast<int>(engine.phase()));
+    TEST_ASSERT_EQUAL_UINT32(0, engine.discoveredCount());  // registry reset for the new sweep.
+    TEST_ASSERT_EQUAL_UINT32(0, observer.captured.size());  // nothing was captured.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_discovers_then_captures_then_advances);
@@ -587,5 +636,7 @@ int main(int, char**) {
     RUN_TEST(test_cracked_ap_is_never_targeted_but_uncracked_one_is);
     RUN_TEST(test_with_no_lookup_every_ap_is_targeted);
     RUN_TEST(test_all_cracked_degrades_to_rediscovery_not_a_spin);
+    RUN_TEST(test_open_ap_is_never_targeted_but_encrypted_one_is);
+    RUN_TEST(test_all_open_degrades_to_rediscovery_not_a_spin);
     return UNITY_END();
 }

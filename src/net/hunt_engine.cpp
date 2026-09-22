@@ -76,6 +76,13 @@ void HuntEngine::doStartCapturing(uint32_t nowMs) {
     // Reached only with the router aimed away (from a quiesce), so retargeting the collector is safe.
     while (targetIndex_ < targetCount_) {
         const DiscoveredAp& target = registry_.at(targetIndex_);
+        // Skip an open network (ADR-0063 #29): an unencrypted BSS has no WPA 4-way handshake to capture,
+        // so tuning to it only wastes a capture window (and deauth airtime). Always on — an intrinsic
+        // beacon property, not the opt-in external state gate B consults below.
+        if (target.isOpen) {
+            ++targetIndex_;
+            continue;
+        }
         // Gate B (ADR-0061 #28): a BSSID wpa-sec already cracked is skipped like a channel-rejected one —
         // never tuned to, captured, or (never being capturingBssid()) deauthed. Off by default (no lookup).
         if (crackedLookup_ != nullptr && crackedLookup_->isCracked(target.bssid)) {

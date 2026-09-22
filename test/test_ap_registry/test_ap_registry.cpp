@@ -120,6 +120,20 @@ void test_overflow_is_reported_not_silently_dropped(void) {
     TEST_ASSERT_TRUE(reg.overflowed());                        // and the drop is surfaced, not hidden.
 }
 
+void test_records_open_flag_from_privacy_bit(void) {
+    // The registry records each AP's open/encrypted state from the beacon Privacy bit, so the hunt can
+    // skip an open network (ADR-0063 #29). Default buildBeacon is encrypted; open is the opt-in.
+    ApRegistry reg;
+    deliver(reg, buildBeacon(kApA, "Guest", /*channel=*/1, /*encrypted=*/false));
+    deliver(reg, buildBeacon(kApB, "Secure", /*channel=*/6, /*encrypted=*/true));
+
+    const int a = findAp(reg, kApA);
+    const int b = findAp(reg, kApB);
+    TEST_ASSERT_TRUE(a >= 0 && b >= 0);
+    TEST_ASSERT_TRUE(reg.at(a).isOpen);    // open network flagged,
+    TEST_ASSERT_FALSE(reg.at(b).isOpen);   // encrypted one not.
+}
+
 void test_reset_clears_the_enumeration(void) {
     ApRegistry reg;
     deliver(reg, buildBeacon(kApA, "Alpha", /*channel=*/1));
@@ -138,6 +152,7 @@ int main(int, char**) {
     RUN_TEST(test_out_of_band_ds_channel_falls_back_to_sweep_channel);
     RUN_TEST(test_non_beacon_frame_is_ignored);
     RUN_TEST(test_hidden_ssid_ap_is_recorded_with_empty_name);
+    RUN_TEST(test_records_open_flag_from_privacy_bit);
     RUN_TEST(test_overflow_is_reported_not_silently_dropped);
     RUN_TEST(test_reset_clears_the_enumeration);
     return UNITY_END();

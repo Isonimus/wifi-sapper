@@ -173,6 +173,23 @@ void test_beacon_channel_out_of_band_is_zero(void) {
     TEST_ASSERT_EQUAL_UINT8(14, beaconChannel(top.data(), top.size()));
 }
 
+void test_beacon_is_open_reads_the_privacy_bit(void) {
+    // Privacy bit clear = open; set = encrypted. This one bit is the whole open/encrypted distinction
+    // the hunt uses to skip a network with no capturable handshake (ADR-0063).
+    std::vector<uint8_t> open = buildBeacon(kBssid, "Guest", /*channel=*/6, /*encrypted=*/false);
+    TEST_ASSERT_TRUE(beaconIsOpen(open.data(), open.size()));
+    std::vector<uint8_t> encrypted = buildBeacon(kBssid, "Secure", /*channel=*/6, /*encrypted=*/true);
+    TEST_ASSERT_FALSE(beaconIsOpen(encrypted.data(), encrypted.size()));
+}
+
+void test_beacon_is_open_too_short_frame_is_not_open(void) {
+    // A frame too short to hold the capability field is undecidable: report not-open so it stays a
+    // capture target, never risk skipping a network we could not classify (ADR-0063, fail toward capture).
+    std::vector<uint8_t> tooShort(30, 0);  // shorter than the 34-octet capability offset.
+    tooShort[0] = 0x80;                     // beacon FC, but no capability field present.
+    TEST_ASSERT_FALSE(beaconIsOpen(tooShort.data(), tooShort.size()));
+}
+
 void test_beacon_channel_wrong_length_is_zero(void) {
     // A well-formed DS Parameter Set is exactly one octet; a two-octet element is malformed → 0.
     std::vector<uint8_t> frame(24 + 12, 0);
@@ -202,5 +219,7 @@ int main(int, char**) {
     RUN_TEST(test_beacon_channel_out_of_band_is_zero);
     RUN_TEST(test_beacon_channel_malformed_ie_list_is_zero);
     RUN_TEST(test_beacon_channel_wrong_length_is_zero);
+    RUN_TEST(test_beacon_is_open_reads_the_privacy_bit);
+    RUN_TEST(test_beacon_is_open_too_short_frame_is_not_open);
     return UNITY_END();
 }

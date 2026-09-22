@@ -34,6 +34,7 @@ struct DiscoveredAp {
     uint8_t bssid[6] = {0};
     char ssid[33] = {0};  ///< Empty for a hidden network.
     uint8_t channel = 0;
+    bool isOpen = false;  ///< Open (unencrypted) BSS from the beacon Privacy bit — skipped in the hunt (ADR-0063).
 };
 
 /**

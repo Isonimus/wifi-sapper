@@ -35,6 +35,13 @@ constexpr uint8_t kMin2GhzChannel = 1;   ///< The DS Parameter Set channel is a 
 constexpr uint8_t kMax2GhzChannel = 14;  ///< a value outside this band is a corrupt element, not a channel.
 constexpr size_t kMaxSsidOctets = 32;
 
+// Capability Information field: the last 2 octets of the fixed beacon body, immediately before the IE
+// list. Its Privacy bit (bit 4) is set for any encrypted BSS and clear only for an open one — the whole
+// open/encrypted distinction in one bit, for every WPA generation (ADR-0063). The bit lives in the low
+// octet (the field is little-endian on the wire), so only that one byte is read.
+constexpr uint16_t kCapabilityOffset = kMacHeaderLen + kBeaconFixedLen - 2;  // 34: caps precede the IEs.
+constexpr uint8_t kCapabilityPrivacyBit = 0x10;                              // bit 4 of the low capability octet.
+
 // Walk a beacon's tagged-parameter IE list for the element with id `wanted`, returning a pointer to
 // its data (and its length in `ieLen`) or nullptr if absent or the list is malformed. beaconSsid and
 // beaconChannel share this one bounds-checked walk on purpose: a beacon IE that claims more bytes
@@ -124,6 +131,13 @@ uint8_t beaconChannel(const uint8_t* frame, uint16_t len) {
     // than a value the radio can never tune to, exactly as for an absent element (ADR-0013).
     if (channel < kMin2GhzChannel || channel > kMax2GhzChannel) return 0;
     return channel;
+}
+
+bool beaconIsOpen(const uint8_t* frame, uint16_t len) {
+    // A frame too short to hold the capability field is undecidable: report not-open so it stays a
+    // capture target (ADR-0063), never risk skipping a network we could not classify. Privacy clear = open.
+    if (frame == nullptr || len < kCapabilityOffset + 1) return false;
+    return (frame[kCapabilityOffset] & kCapabilityPrivacyBit) == 0;
 }
 
 const uint8_t* locateEapol(const uint8_t* frame, uint16_t len, uint16_t& eapolLen) {

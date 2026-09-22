@@ -32,14 +32,17 @@ constexpr uint16_t kKeyInfoM4 = kKiPairwise | kKiMic | kKiSecure;
 /// Build a beacon frame advertising @p ssid for @p bssid. A hidden network is an empty @p ssid. When
 /// @p channel is >= 0 a DS Parameter Set IE (id 3) carrying it is appended after the SSID, so a test
 /// can exercise beaconChannel; the default of -1 omits it (a beacon with no DS Parameter Set).
+/// @p encrypted sets the Capability Information Privacy bit — the default, since this is a WPA-capture
+/// suite whose APs are meant to be captured; pass false to build an open network (exercises ADR-0063).
 inline std::vector<uint8_t> buildBeacon(const uint8_t bssid[6], const std::string& ssid,
-                                        int channel = -1) {
+                                        int channel = -1, bool encrypted = true) {
     std::vector<uint8_t> f(24, 0);
     f[0] = 0x80;  // FC: management / beacon.
     std::memset(&f[4], 0xFF, 6);          // Addr1: broadcast destination.
     std::memcpy(&f[10], bssid, 6);        // Addr2: source = BSSID.
     std::memcpy(&f[16], bssid, 6);        // Addr3: BSSID.
     f.insert(f.end(), 12, 0);             // Fixed body: timestamp + interval + capability.
+    if (encrypted) f[34] |= 0x10;         // Capability Privacy bit (low octet, offset 34): encrypted BSS.
     f.push_back(0x00);                    // SSID element id.
     f.push_back(static_cast<uint8_t>(ssid.size()));
     f.insert(f.end(), ssid.begin(), ssid.end());

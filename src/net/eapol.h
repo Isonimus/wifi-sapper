@@ -76,6 +76,18 @@ bool beaconSsid(const uint8_t* frame, uint16_t len, char (&out)[33]);
 uint8_t beaconChannel(const uint8_t* frame, uint16_t len);
 
 /**
+ * @brief Whether a beacon advertises an **open** (unencrypted) BSS, from its Privacy bit.
+ *
+ * Reads bit 4 (0x10) of the 2-octet Capability Information field in the fixed beacon body: clear = open,
+ * set = any encrypted BSS (WEP/WPA/WPA2/WPA3). This one bit tells open from encrypted for every WPA
+ * generation, so it never mis-reads a WPA network as open (ADR-0063) — unlike RSN-IE parsing, which
+ * would false-skip a pure-WPA1-only AP. Assumes a beacon the caller has already classified (like
+ * beaconChannel/beaconSsid). A frame too short to hold the capability field returns false (undecidable
+ * → not open → still a capture target): the read fails toward capturing, never toward skipping.
+ */
+bool beaconIsOpen(const uint8_t* frame, uint16_t len);
+
+/**
  * @brief Locate the EAPOL payload inside an 802.11 data frame.
  *
  * Scans for the LLC/SNAP header `AA AA 03 00 00 00 88 8E` (the 802.11 header is 24-30 bytes, so
