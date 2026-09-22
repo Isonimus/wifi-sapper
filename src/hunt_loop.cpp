@@ -22,6 +22,8 @@
 #include "net/cracked_store_littlefs.h"
 #include "net/cracked_sync.h"
 #include "net/hunt_engine.h"
+#include "net/submitted_manifest.h"
+#include "net/submitted_store_littlefs.h"
 #include "net/radio_sniffer_esp32.h"
 #include "net/raw_transmitter_esp32.h"
 #include "net/station_control_esp32.h"
@@ -72,6 +74,13 @@ LittleFsCrackedStore g_crackedStore;
 CrackedManifest g_manifest(g_crackedStore);
 WpaSecCrackedFetcher g_fetcher;
 SyncScheduler g_scheduler;
+
+// Gate C (ADR-0065): the local "submitted to wpa-sec" set on LittleFS and the pure per-BSSID manifest
+// over it. Written by the upload drain on each terminal Accepted/Duplicate, read by both the engine
+// (target selection) and the supervisor (queue drop). Far smaller than the cracked manifest (10 bytes
+// per entry, no ESSID/PSK); loaded whole at boot, rewritten whole per drain that recorded a submission.
+LittleFsSubmittedStore g_submittedStore;
+SubmittedManifest g_submitted(g_submittedStore);
 
 // The surface event bus (ADR-0021): the sync publishes cracked facts and the supervisor publishes drain
 // facts onto it; the two sinks below subscribe. This is the single mechanism ADR-0001 always intended,
@@ -249,6 +258,17 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         Serial.println("[FATAL] cracked manifest load failed");
         return false;
     }
+    // Gate C (ADR-0065): mount the submitted set and load it now, so the first drain/target-selection
+    // reflects flash, not an empty set. A missing file is success (empty set — first boot); only genuine
+    // corruption trips this, and it is fatal (fail loud, §3 — never run gate C against unknown state).
+    if (!g_submittedStore.begin()) {
+        Serial.println("[FATAL] submitted store (LittleFS) mount failed");
+        return false;
+    }
+    if (!g_submitted.begin()) {
+        Serial.println("[FATAL] submitted set load failed");
+        return false;
+    }
     // Wire the surfaces onto the bus before anything can publish. A failed subscription is a boot-time
     // wiring bug (too many surfaces for the bus capacity) and is fatal — never a silently missing
     // surface (ADR-0021, quality bar §3).
@@ -276,6 +296,12 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     // ADR-0061 gate B (§4 #28): stop the hunt even *targeting* an already-cracked AP — no capture window,
     // no deauth spent on a network we are done with. Same seam, at target selection instead of the drain.
     g_engine->setCrackedLookup(g_manifest);
+    // ADR-0065 gate C (§4 #30): the general form of gates A/B keyed on the local submitted set. The drain
+    // records each terminal upload and drops an already-submitted queued capture; the engine skips an
+    // already-submitted target — reclaiming the capture windows/deauth otherwise spent between submission
+    // and a (possibly never-arriving) crack. Complements gates A/B; the cracked manifest stays the floor.
+    g_supervisor->setSubmittedRecorder(g_submitted);
+    g_engine->setSubmittedLookup(g_submitted);
 
     // Wire the push-notification surface iff a usable webhook URL is provisioned (ADR-0023). A bad or
     // absent URL disables push loudly and never blocks the hunt — the webhook is optional. When enabled,

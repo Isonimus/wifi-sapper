@@ -37,6 +37,8 @@ class WindowNotifier;  // net/window_notifier.h — an optional window-sharer fl
                        // window (the push webhook transmits there); held by pointer, wired post-ctor.
 struct CrackedLookup;  // net/cracked_lookup.h — an optional read-only "is this BSSID cracked?" seam
                        // (ADR-0059 gate A); held by pointer, wired post-ctor. Pure abstract, no include.
+struct SubmittedRecorder;  // net/submitted_lookup.h — an optional read+record "submitted to wpa-sec?" seam
+                           // (ADR-0065 gate C); held by pointer, wired post-ctor. Pure abstract, no include.
 
 /// Forwards the engine's capture-ready event to a target set after construction. It exists to break
 /// a construction cycle: the HuntEngine takes its CaptureReadyObserver at construction, but the
@@ -83,8 +85,12 @@ struct DrainOutcome {
     size_t purged = 0;         ///< Unreadable (corrupt) captures dropped so the queue can go clean (#1).
     size_t skippedCracked = 0; ///< Already-recovered captures dropped without upload (ADR-0059 gate A) —
                                ///< resolved like a purge, so it is not counted as an upload error.
+    size_t skippedSubmitted = 0; ///< Already-submitted captures dropped without upload (ADR-0065 gate C) —
+                                 ///< resolved like a purge, so it is not counted as an upload error.
     size_t storeErrors = 0;    ///< Removes that could not complete — a purge or post-upload delete that
                                ///< failed, leaving the entry stuck (fail loud — §3; keeps the cycle dirty).
+    size_t submittedStoreErrors = 0; ///< A flushSubmitted() that failed (ADR-0065 #3) — surfaced loud but
+                                     ///< NOT a cycle failure: the uploads already landed, nothing to retry.
     bool resumeFailed = false; ///< The engine could not re-enter promiscuous mode after the drain.
 };
 
@@ -120,6 +126,13 @@ public:
     /// argument. Unset (nullptr) → the exact slice-0018 drain behaviour, every capture uploaded.
     void setCrackedLookup(const CrackedLookup& lookup) { crackedLookup_ = &lookup; }
 
+    /// Wire an optional submitted-set recorder (ADR-0065 gate C). When set, the drain (a) drops a queued
+    /// capture whose BSSID is already submitted (`isSubmitted`) — the general form of gate A — and (b)
+    /// records each terminal Accepted/Duplicate upload (`markSubmitted`), persisting the cycle's marks
+    /// with one `flushSubmitted()`. Set post-construction, mirroring setCrackedLookup. Unset (nullptr) →
+    /// the exact pre-gate-C drain behaviour, no submitted state consulted or written.
+    void setSubmittedRecorder(SubmittedRecorder& recorder) { submitted_ = &recorder; }
+
     /// Seed the drain clock and pick up any captures already on flash from a prior run. Call after
     /// the engine has begun and before the first tick().
     void begin(uint32_t nowMs);
@@ -146,8 +159,9 @@ private:
     bool shouldOpenWindow(uint32_t nowMs) const;
     void runDrainCycle(uint32_t nowMs);
     /// Upload every pending capture once, recording counts in @p outcome; return whether the cycle
-    /// fully succeeded (every upload terminal, no store error).
-    bool drainQueue(DrainOutcome& outcome);
+    /// fully succeeded (every upload terminal, no store error). @p nowMs stamps each new submitted-set
+    /// mark (gate C, ADR-0065) recorded on a terminal upload.
+    bool drainQueue(DrainOutcome& outcome, uint32_t nowMs);
     /// Broadcast the cosmetic HandshakeCaptured fact (identity only) for a successfully enqueued
     /// capture, so surfaces can announce it (ADR-0031, §4 #17). No-op when no bus is wired.
     void publishCaptured(const CapturedHandshake& handshake);
@@ -162,6 +176,8 @@ private:
     EventBus* bus_;      ///< Optional; publishes DrainStarted/DrainCompleted facts for surfaces (ADR-0021).
     WindowNotifier* notifier_ = nullptr;  ///< Optional; flushed inside each STA window (ADR-0023).
     const CrackedLookup* crackedLookup_ = nullptr;  ///< Optional; drops already-cracked captures (ADR-0059).
+    SubmittedRecorder* submitted_ = nullptr;  ///< Optional; drops already-submitted captures and records
+                                              ///< each terminal upload as submitted (ADR-0065 gate C).
 
     State state_ = State::Hunting;
     size_t activity_ = 0;             ///< Uploadable captures known pending since the last success.

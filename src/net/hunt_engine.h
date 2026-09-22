@@ -36,7 +36,8 @@
 
 namespace sapper {
 
-struct CrackedLookup;  // net/cracked_lookup.h — the read-only isCracked(bssid) seam (ADR-0059/-0061 gate B).
+struct CrackedLookup;    // net/cracked_lookup.h — the read-only isCracked(bssid) seam (ADR-0059/-0061 gate B).
+struct SubmittedLookup;  // net/submitted_lookup.h — the read-only isSubmitted(bssid) seam (ADR-0065 gate C).
 
 /// Notified of each wpa-sec-valid handshake the engine captures. Implemented off the engine (the
 /// uploader, slice-5; the alerter, slice-7; a display) — the headless event boundary (ADR-0001). The
@@ -94,6 +95,15 @@ public:
     /// (gate A) and the optional RawTransmitter arm.
     void setCrackedLookup(const CrackedLookup& lookup) { crackedLookup_ = &lookup; }
 
+    /// Arm gate C (ADR-0065, §4 #30): consult @p lookup in target selection and skip any discovered AP
+    /// it reports already submitted to wpa-sec — the general form of gate B (submitted ⊇ cracked), so it
+    /// skips a network from the moment a valid handshake landed, not merely once it is cracked. Off by
+    /// default: an unset lookup (`nullptr`) leaves the engine unchanged. Read only on the app task
+    /// (target selection), never in onFrame, so §4 #8/#10 hold as with gate B. Complements — does not
+    /// replace — setCrackedLookup: a target is skipped if cracked OR submitted, keeping the cracked
+    /// floor authoritative even after a local submitted-set loss (ADR-0065 #4).
+    void setSubmittedLookup(const SubmittedLookup& lookup) { submittedLookup_ = &lookup; }
+
     /// Install the engine as the sniffer's consumer on the first hop channel and enter Discovering.
     /// Returns false (and stays Idle) if the sniffer could not enter promiscuous mode.
     bool begin(uint32_t nowMs);
@@ -148,6 +158,7 @@ private:
     CaptureReadyObserver& observer_;
     RawTransmitter* transmitter_;  // null = disarmed (passive hunt); the default (invariant #16).
     const CrackedLookup* crackedLookup_ = nullptr;  // null = target every AP (gate B off; ADR-0061 #28).
+    const SubmittedLookup* submittedLookup_ = nullptr;  // null = ignore submitted state (gate C off; ADR-0065 #30).
     HandshakeCollector collector_;         // owned; re-targeted across the round-robin.
     HandshakeConsumer handshakeConsumer_;  // wraps collector_ — must follow it in declaration order.
     ChannelHopper hopper_;

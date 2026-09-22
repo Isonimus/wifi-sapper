@@ -9,6 +9,7 @@
 #include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
 #include "core/event_bus.h"
 #include "net/cracked_lookup.h"
+#include "net/submitted_lookup.h"
 #include "net/sync_session.h"
 #include "net/window_notifier.h"
 
@@ -127,7 +128,7 @@ void UploadSupervisor::runDrainCycle(uint32_t nowMs) {
     bool cycleSucceeded = false;
     if (station_.bringUpStation()) {
         outcome.associated = true;
-        cycleSucceeded = drainQueue(outcome);   // no-op success when the queue is empty (a sync-only window).
+        cycleSucceeded = drainQueue(outcome, nowMs);  // no-op success when the queue is empty (a sync-only window).
         // Share this live STA window with a due cracked-results sync before teardown (ADR-0019 decision
         // #6). The session owns its own cadence and its outcome is deliberately NOT folded into
         // cycleSucceeded: a wpa-sec download outage must not drag the upload backoff out — a failed sync
@@ -171,7 +172,7 @@ void UploadSupervisor::runDrainCycle(uint32_t nowMs) {
     if (bus_ != nullptr) bus_->publish(AppEvent::drainCompleted(lastDrain_));
 }
 
-bool UploadSupervisor::drainQueue(DrainOutcome& outcome) {
+bool UploadSupervisor::drainQueue(DrainOutcome& outcome, uint32_t nowMs) {
     PendingCapture pending[kCaptureStoreScanCapacity];
     size_t count = 0;
     if (!queue_.pending(pending, kCaptureStoreScanCapacity, count)) {
@@ -180,6 +181,7 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome) {
     }
 
     bool allTerminal = true;
+    bool markedSubmitted = false;  // gate C: flush the submitted set once, only if the cycle marked anything.
     for (size_t i = 0; i < count; ++i) {
         // ADR-0059 gate A: a network whose PSK we have already recovered needs no further upload —
         // wpa-sec holds it and CrackedSync has brought it back. Drop the queued capture (freeing the
@@ -190,6 +192,20 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome) {
         // failed remove is a loud store error that keeps the cycle dirty.
         if (crackedLookup_ != nullptr && crackedLookup_->isCracked(pending[i].bssid)) {
             ++outcome.skippedCracked;
+            if (!queue_.remove(pending[i].id)) {
+                ++outcome.storeErrors;
+                allTerminal = false;
+            }
+            continue;
+        }
+        // ADR-0065 gate C: the general form of gate A — a network we have already landed a valid
+        // handshake for at wpa-sec (Accepted/Duplicate earlier) needs no further upload, cracked yet or
+        // not: more handshakes of the same PSK add no cracking power. Drop the queued capture instead of
+        // re-uploading it. Checked after the cracked drop (cracked ⊆ submitted, but gate A keeps its own
+        // count and stays the durable floor). Like gate A, a successful remove resolves the entry (not a
+        // cycle failure); only a failed remove is a loud store error that keeps the cycle dirty.
+        if (submitted_ != nullptr && submitted_->isSubmitted(pending[i].bssid)) {
+            ++outcome.skippedSubmitted;
             if (!queue_.remove(pending[i].id)) {
                 ++outcome.storeErrors;
                 allTerminal = false;
@@ -210,7 +226,8 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome) {
             }
             continue;
         }
-        switch (uploader_.upload(uploadBuffer_, len, wpaSecKey_)) {
+        const UploadResult result = uploader_.upload(uploadBuffer_, len, wpaSecKey_);
+        switch (result) {
             case UploadResult::Accepted:
                 ++outcome.accepted;
                 if (!queue_.remove(pending[i].id)) ++outcome.storeErrors;  // uploaded; delete failed.
@@ -224,13 +241,27 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome) {
                 allTerminal = false;
                 break;
         }
+        // ADR-0065 gate C: record the BSSID submitted on a terminal success only — Accepted or Duplicate
+        // means wpa-sec has taken a valid handshake for it. Never on Rejected (it did not land — gate on
+        // knowledge, not hope, like ADR-0059 #4). RAM-only here; the one flush below persists the cycle.
+        if (submitted_ != nullptr &&
+            (result == UploadResult::Accepted || result == UploadResult::Duplicate)) {
+            submitted_->markSubmitted(pending[i].bssid, nowMs);
+            markedSubmitted = true;
+        }
     }
+
+    // Persist the cycle's submitted marks in one write (ADR-0065 #3). A flush failure is surfaced loud
+    // but does NOT fail the cycle: the uploads already landed and their queue entries are already gone,
+    // so there is nothing to retry — a lost submitted record only means a future cycle may re-target /
+    // re-upload that BSSID (a degradation, never a lost handshake; the cracked floor still holds).
+    if (markedSubmitted && !submitted_->flushSubmitted()) ++outcome.submittedStoreErrors;
     // Success only when every attempted upload was terminal AND no remove failed — an associated cycle
     // that still had a rejection or a stuck remove backs off and retries (decision #7, Scenario C). A
-    // purged corrupt entry, or one skipped as already-cracked (ADR-0059), does NOT block success: it is
-    // resolved (gone), so a cycle that only had to purge/skip still counts clean and lets backoff
-    // recover. Terminal uploads, purges and skips shrink the queue; the rejected leftovers wait for the
-    // next cycle.
+    // purged corrupt entry, or one skipped as already-cracked (ADR-0059) or already-submitted (ADR-0065),
+    // does NOT block success: it is resolved (gone), so a cycle that only had to purge/skip still counts
+    // clean and lets backoff recover. A submittedStoreError likewise does not block success (ADR-0065 #3).
+    // Terminal uploads, purges and skips shrink the queue; the rejected leftovers wait for the next cycle.
     return allTerminal && outcome.storeErrors == 0;
 }
 

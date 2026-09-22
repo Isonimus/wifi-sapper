@@ -23,9 +23,11 @@
 #include "net/cracked_lookup.h"
 #include "net/handshake_collector.h"
 #include "net/hunt_engine.h"
+#include "net/submitted_manifest.h"
 #include "net/upload_supervisor.h"
 
 #include "../support/fake_capture_store.h"
+#include "../support/fake_submitted_store.h"
 #include "../support/fake_radio_sniffer.h"
 #include "../support/fake_station_control.h"
 #include "../support/fake_sync_session.h"
@@ -40,6 +42,7 @@ using sapper_test::buildEapol;
 using sapper_test::FakeCaptureStore;
 using sapper_test::FakeRadioSniffer;
 using sapper_test::FakeStationControl;
+using sapper_test::FakeSubmittedStore;
 using sapper_test::FakeSyncSession;
 using sapper_test::FakeUploader;
 
@@ -668,6 +671,133 @@ void test_a_failed_remove_of_a_cracked_capture_is_a_loud_store_error(void) {
     TEST_ASSERT_EQUAL_UINT32(1, rig.store.size());  // and the entry stays queued for the next cycle.
 }
 
+// --- Gate C: drop already-submitted captures + record submissions (slice-0066 Scenarios C, D; ADR-0065) ---
+
+void test_c_submitted_capture_is_dropped_and_new_submission_is_recorded(void) {
+    // Scenario C: X is already submitted (seeded), Y is not. One drain: X is dropped without upload
+    // (skippedSubmitted), Y uploads Accepted and is recorded submitted, and exactly one flushSubmitted()
+    // persists the cycle. Fail-before: without gate C, X is uploaded too and Y is never marked.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 2;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    const auto submitted = bssidN(1);    // X — already landed at wpa-sec.
+    const auto fresh = bssidN(2);        // Y — still to upload.
+
+    FakeSubmittedStore subStore;
+    subStore.seed({{{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}, 1}});  // X pre-submitted from a prior run.
+    SubmittedManifest submitted_set(subStore);
+    TEST_ASSERT_TRUE(submitted_set.begin());
+    TEST_ASSERT_TRUE(submitted_set.isSubmitted(submitted.data()));
+    rig.supervisor.setSubmittedRecorder(submitted_set);
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(submitted.data()));
+    rig.supervisor.onCaptureReady(makeHandshake(fresh.data()));
+    TEST_ASSERT_EQUAL_UINT32(2, rig.store.size());
+
+    rig.supervisor.tick(100);  // threshold reached -> stop, settle.
+    rig.supervisor.tick(106);  // settle elapsed -> one drain cycle.
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());  // exactly one upload — not the submitted X,
+    TEST_ASSERT_TRUE(pcapContainsBssid(rig.uploader.calls[0].pcap, fresh.data()));    // it was Y,
+    TEST_ASSERT_FALSE(pcapContainsBssid(rig.uploader.calls[0].pcap, submitted.data()));  // never X.
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().skippedSubmitted);  // X dropped as submitted,
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().accepted);          // Y uploaded,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.lastDrain().storeErrors);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());  // both gone (Y uploaded, X dropped).
+    TEST_ASSERT_TRUE(submitted_set.isSubmitted(fresh.data()));  // Y now recorded submitted,
+    TEST_ASSERT_EQUAL_INT(1, subStore.saveCount);  // and persisted with exactly one flush this cycle.
+}
+
+void test_c_no_recorder_wired_uploads_and_records_nothing(void) {
+    // Scenario C baseline: with no recorder wired (the default), the drain is exactly the pre-gate-C
+    // path — every capture uploads, nothing is skipped-as-submitted or marked (there is nothing to mark).
+    UploadSupervisorConfig config;
+    config.drainThreshold = 2;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);  // setSubmittedRecorder never called.
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(1).data()));
+    rig.supervisor.onCaptureReady(makeHandshake(bssidN(2).data()));
+    rig.supervisor.tick(100);
+    rig.supervisor.tick(106);
+
+    TEST_ASSERT_EQUAL_UINT32(2, rig.uploader.calls.size());  // both uploaded — no gate,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.lastDrain().skippedSubmitted);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());
+}
+
+void test_d_only_a_terminal_success_records_submitted(void) {
+    // Scenario D: a Rejected upload is NOT recorded submitted (it did not land — gate on knowledge, not
+    // hope), and it stays queued for retry. A subsequent Duplicate on the retry DOES record it. Fail-
+    // before: marking on any result would mark Z after the rejection and then skip its own retry.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    config.backoffBaseMs = 5;  // let the retry drain open shortly after the rejection.
+    Rig rig(config);
+    rig.uploader.scripted = {UploadResult::Rejected, UploadResult::Duplicate};  // reject, then duplicate.
+    const auto z = bssidN(3);
+
+    FakeSubmittedStore subStore;
+    SubmittedManifest submitted_set(subStore);
+    TEST_ASSERT_TRUE(submitted_set.begin());
+    rig.supervisor.setSubmittedRecorder(submitted_set);
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(z.data()));
+    rig.supervisor.tick(100);  // threshold -> stop, settle.
+    rig.supervisor.tick(106);  // drain: Z rejected -> kept, NOT marked.
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().rejected);
+    TEST_ASSERT_FALSE(submitted_set.isSubmitted(z.data()));  // a rejection never records submitted,
+    TEST_ASSERT_EQUAL_UINT32(1, rig.store.size());           // Z stays queued for retry,
+    TEST_ASSERT_EQUAL_INT(0, subStore.saveCount);            // and nothing was flushed.
+
+    rig.supervisor.tick(200);  // past the backoff -> stop, settle.
+    rig.supervisor.tick(206);  // retry drain: Z duplicate -> terminal success, recorded + removed.
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().duplicate);
+    TEST_ASSERT_TRUE(submitted_set.isSubmitted(z.data()));  // the terminal duplicate records it,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());          // and it leaves the queue.
+    TEST_ASSERT_EQUAL_INT(1, subStore.saveCount);           // one flush for the marking cycle.
+}
+
+void test_d_flush_failure_is_loud_but_not_a_cycle_failure(void) {
+    // Scenario D tail: a flushSubmitted() store failure is counted submittedStoreErrors but does NOT fail
+    // the upload cycle — the upload already landed and its queue entry is already gone, so backoff still
+    // resets. Fail-before: folding the flush error into the cycle result would back off with nothing to
+    // retry. The lost record only means Y may be re-uploaded a future cycle (a degradation, not a loss).
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+    const auto y = bssidN(4);
+
+    FakeSubmittedStore subStore;
+    SubmittedManifest submitted_set(subStore);
+    TEST_ASSERT_TRUE(submitted_set.begin());
+    rig.supervisor.setSubmittedRecorder(submitted_set);
+    rig.start(0);
+
+    rig.supervisor.onCaptureReady(makeHandshake(y.data()));
+    subStore.failSave = true;   // the submitted set cannot be persisted this cycle.
+    rig.supervisor.tick(100);
+    rig.supervisor.tick(106);   // drain: Y accepted + removed; flush fails loud.
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().accepted);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().submittedStoreErrors);  // flush failure is loud,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());              // Y still left the queue (upload landed),
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.pendingActivity());  // cycle counted clean (backoff reset).
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_capture_below_threshold_is_enqueued_without_pausing_the_hunt);
@@ -690,5 +820,9 @@ int main(int, char**) {
     RUN_TEST(test_a_cracked_bssids_capture_is_dropped_never_uploaded);
     RUN_TEST(test_with_no_lookup_every_capture_is_uploaded);
     RUN_TEST(test_a_failed_remove_of_a_cracked_capture_is_a_loud_store_error);
+    RUN_TEST(test_c_submitted_capture_is_dropped_and_new_submission_is_recorded);
+    RUN_TEST(test_c_no_recorder_wired_uploads_and_records_nothing);
+    RUN_TEST(test_d_only_a_terminal_success_records_submitted);
+    RUN_TEST(test_d_flush_failure_is_loud_but_not_a_cycle_failure);
     return UNITY_END();
 }

@@ -18,6 +18,7 @@
 #include "net/cracked_lookup.h"
 #include "net/deauth.h"
 #include "net/hunt_engine.h"
+#include "net/submitted_lookup.h"
 
 #include "../support/fake_radio_sniffer.h"
 #include "../support/fake_raw_transmitter.h"
@@ -68,6 +69,23 @@ struct FakeCrackedLookup : public CrackedLookup {
     }
     bool isCracked(const uint8_t bssid[6]) const override {
         for (const auto& b : cracked) {
+            if (std::memcmp(b.data(), bssid, 6) == 0) return true;
+        }
+        return false;
+    }
+};
+
+// A fake SubmittedLookup (gate C, ADR-0065 #30): reports a fixed set of BSSIDs as already submitted to
+// wpa-sec — the read contract SubmittedManifest implements over its set membership.
+struct FakeSubmittedLookup : public SubmittedLookup {
+    std::vector<std::array<uint8_t, 6>> submitted;
+    void markSubmitted(const uint8_t bssid[6]) {
+        std::array<uint8_t, 6> b{};
+        std::memcpy(b.data(), bssid, 6);
+        submitted.push_back(b);
+    }
+    bool isSubmitted(const uint8_t bssid[6]) const override {
+        for (const auto& b : submitted) {
             if (std::memcmp(b.data(), bssid, 6) == 0) return true;
         }
         return false;
@@ -615,6 +633,92 @@ void test_all_open_degrades_to_rediscovery_not_a_spin(void) {
     TEST_ASSERT_EQUAL_UINT32(0, observer.captured.size());  // nothing was captured.
 }
 
+// --- Gate C: skip targeting an already-submitted AP (slice-0066 Scenarios A, B; ADR-0065 #30) --------
+
+void test_submitted_ap_is_never_targeted_but_unsubmitted_one_is(void) {
+    // Scenario A: X (kApA) is already submitted to wpa-sec, Y (kApB) is not, with the submitted lookup
+    // set. The engine must skip X in target selection — never tuning to it, capturing it, or deauthing it
+    // — and capture Y. Fail-before: without the doStartCapturing isSubmitted skip, X is targeted first.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeSubmittedLookup lookup;
+    lookup.markSubmitted(kApA);
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    engine.setSubmittedLookup(lookup);
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));  // discovered first (index 0) — submitted.
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6));  // discovered second (index 1) — not submitted.
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    engine.tick(35);  // settle elapsed -> kApA is submitted, so skip straight to kApB.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApB));  // never Capturing for kApA.
+    TEST_ASSERT_EQUAL_UINT8(6, sniffer.currentChannel);        // never tuned to kApA's channel 1.
+
+    deliverHandshake(sniffer, kApB, 6);
+    engine.tick(36);  // wpa-sec valid -> quiesce toward report+advance.
+    engine.tick(41);  // settle -> report kApB, advance past the enumeration -> re-discover.
+
+    TEST_ASSERT_EQUAL_UINT32(1, observer.captured.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApB, observer.captured[0].data(), 6);  // only kApB, never kApA.
+}
+
+void test_submitted_lookup_wired_but_empty_targets_every_ap(void) {
+    // Scenario B (gate-on-knowledge): a submitted lookup is wired but nothing is marked -> gate C skips
+    // nothing, both APs are captured. Proves the skip is membership-driven, never an over-eager filter.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeSubmittedLookup lookup;  // wired, but empty.
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    engine.setSubmittedLookup(lookup);
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6));
+    engine.tick(30);  // discovery ends -> quiesce.
+
+    engine.tick(35);  // capture kApA (not submitted).
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApA));
+    deliverHandshake(sniffer, kApA, 1);
+    engine.tick(36);
+    engine.tick(41);  // report kApA, advance to kApB.
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApB));
+    deliverHandshake(sniffer, kApB, 6);
+    engine.tick(42);
+    engine.tick(47);  // report kApB.
+
+    TEST_ASSERT_EQUAL_UINT32(2, observer.captured.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, observer.captured[0].data(), 6);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApB, observer.captured[1].data(), 6);
+}
+
+void test_all_submitted_degrades_to_rediscovery_not_a_spin(void) {
+    // Scenario A fall-through: every discovered AP is already submitted -> the selection loop exhausts and
+    // falls through to a fresh discovery sweep, never a busy-loop and never a capture. Fail-before:
+    // without the skip, the first submitted AP is captured instead.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeSubmittedLookup lookup;
+    lookup.markSubmitted(kApA);
+    lookup.markSubmitted(kApB);
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    engine.setSubmittedLookup(lookup);
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6));
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    engine.tick(35);  // settle elapsed -> both targets submitted, so skip all -> re-discover.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Discovering), static_cast<int>(engine.phase()));
+    TEST_ASSERT_EQUAL_UINT32(0, engine.discoveredCount());  // registry reset for the new sweep.
+    TEST_ASSERT_EQUAL_UINT32(0, observer.captured.size());  // nothing was captured.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_discovers_then_captures_then_advances);
@@ -638,5 +742,8 @@ int main(int, char**) {
     RUN_TEST(test_all_cracked_degrades_to_rediscovery_not_a_spin);
     RUN_TEST(test_open_ap_is_never_targeted_but_encrypted_one_is);
     RUN_TEST(test_all_open_degrades_to_rediscovery_not_a_spin);
+    RUN_TEST(test_submitted_ap_is_never_targeted_but_unsubmitted_one_is);
+    RUN_TEST(test_submitted_lookup_wired_but_empty_targets_every_ap);
+    RUN_TEST(test_all_submitted_degrades_to_rediscovery_not_a_spin);
     return UNITY_END();
 }

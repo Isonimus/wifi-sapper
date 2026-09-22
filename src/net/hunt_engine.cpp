@@ -7,7 +7,8 @@
 #include <cstring>  // memcpy: copy the target identity into the pull snapshot.
 
 #include "core/deadline.h"       // reached(): the wrap-safe deadline test shared across clock-driven units.
-#include "net/cracked_lookup.h"  // CrackedLookup::isCracked — the gate-B target filter (ADR-0061 #28).
+#include "net/cracked_lookup.h"    // CrackedLookup::isCracked — the gate-B target filter (ADR-0061 #28).
+#include "net/submitted_lookup.h"  // SubmittedLookup::isSubmitted — the gate-C target filter (ADR-0065 #30).
 
 namespace sapper {
 namespace {
@@ -86,6 +87,14 @@ void HuntEngine::doStartCapturing(uint32_t nowMs) {
         // Gate B (ADR-0061 #28): a BSSID wpa-sec already cracked is skipped like a channel-rejected one —
         // never tuned to, captured, or (never being capturingBssid()) deauthed. Off by default (no lookup).
         if (crackedLookup_ != nullptr && crackedLookup_->isCracked(target.bssid)) {
+            ++targetIndex_;
+            continue;
+        }
+        // Gate C (ADR-0065 #30): a BSSID we have already landed a valid handshake for at wpa-sec is
+        // skipped too — the general form of gate B (submitted ⊇ cracked), so we stop spending capture
+        // windows and deauth on it while it waits to be cracked, not just after. Complements gate B (the
+        // cracked floor stays authoritative even if this local set is lost); off by default (no lookup).
+        if (submittedLookup_ != nullptr && submittedLookup_->isSubmitted(target.bssid)) {
             ++targetIndex_;
             continue;
         }
