@@ -10,11 +10,13 @@
  * already uploaded needs no memory wipe, and "captured" is a pure on-air capture event.
  *
  * The multi-hour run is untethered (no serial visible), so each resolved capture attempt is accumulated
- * into a compact per-band histogram (net/rssi_histogram.h) persisted to LittleFS, and the histogram is
- * dumped to serial at boot when the board is reattached. A run tag (SAPPER_TEST_RSSI_RUN) starts the
- * counters fresh when it differs from the persisted file and resumes them when it matches. Both the file
- * and the dump are identity-free (per-band counts only), so §4 #25 holds by construction. A per-attempt
- * `[RSSI] rssi=…` row is still printed for the tethered smoke test.
+ * into a compact per-band histogram (net/rssi_histogram.h) persisted to LittleFS. The histogram is dumped
+ * to serial both at boot and on a periodic cadence (kDumpIntervalMs) — periodic because this board's native
+ * USB re-enumerates on reset, so a reader cannot reliably catch a boot-only dump, and a reader attached to a
+ * running board never triggers a reboot; a periodic dump is caught by simply attaching. A run tag
+ * (SAPPER_TEST_RSSI_RUN) starts the counters fresh when it differs from the persisted file and resumes them
+ * when it matches. Both the file and the dump are identity-free (per-band counts only), so §4 #25 holds by
+ * construction. A per-attempt `[RSSI] rssi=…` row is still printed for the tethered smoke test.
  */
 #include "rssi_probe.h"
 
@@ -39,6 +41,11 @@ namespace sapper {
 namespace {
 
 constexpr uint32_t kHeartbeatIntervalMs = 5000;
+/// Full-histogram dump cadence. The untethered readout must be catchable without a reboot (this board's
+/// native USB re-enumerates on reset, so a boot-only dump is unreliable to catch), so the authoritative
+/// persisted totals are re-emitted periodically. Kept under the reader's dump timeout (scripts/0068) so an
+/// attach always catches a block within one interval.
+constexpr uint32_t kDumpIntervalMs = 15000;
 /// Beacon management-frame first octet (type=management, subtype=beacon): the only frames we tap for
 /// RSSI, matching the beacon-based discovery an RSSI scorer would order on (ADR-0013).
 constexpr uint8_t kBeaconFrameControl0 = 0x80;
@@ -264,6 +271,7 @@ bool g_active = false;
 HuntEngine* g_engine = nullptr;
 HuntEngine::Phase g_lastPhase = HuntEngine::Phase::Idle;
 uint32_t g_lastHeartbeatMs = 0;
+uint32_t g_lastDumpMs = 0;
 
 /// Close out any in-flight attempt as empty — a target whose window ended without a valid handshake.
 void resolvePendingEmpty(uint32_t nowMs) {
@@ -371,13 +379,21 @@ void rssiProbePump() {
 
     if (now - g_lastHeartbeatMs >= kHeartbeatIntervalMs) {
         g_lastHeartbeatMs = now;
-        // Liveness + running tally for a tethered smoke test; distinguishes "alive, hunting" from "hung".
+        // Liveness for a tethered smoke test; distinguishes "alive, hunting" from "hung". These counters are
+        // THIS BOOT only (g_attempts/g_captured are RAM, reset at every boot) — the `session_` prefix is
+        // deliberate so they are never mistaken for the persisted totals, which live in the periodic
+        // `[RSSI] histogram` block below (a boot-counter read past a reboot is what faked a resume bug).
         // Surfaces the two degradations a silent untethered run would otherwise hide: a full RSSI table and
         // a flash that has stopped accepting flushes.
-        Serial.printf("[RSSI] waiting attempts=%lu captured=%lu%s%s\n",
+        Serial.printf("[RSSI] waiting session_attempts=%lu session_captured=%lu%s%s\n",
                       static_cast<unsigned long>(g_attempts), static_cast<unsigned long>(g_captured),
                       g_rssiOverflow.load(std::memory_order_relaxed) ? " (rssi-table-overflow)" : "",
                       g_flushFailures > 0 ? " (flush-failures)" : "");
+    }
+
+    if (now - g_lastDumpMs >= kDumpIntervalMs) {
+        g_lastDumpMs = now;
+        dumpHistogram(g_hist);  // authoritative persisted totals; catchable by attaching, no reboot needed.
     }
 }
 

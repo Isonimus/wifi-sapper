@@ -8,9 +8,10 @@
  * #8 seam is not widened; if it does, that is sufficient evidence to widen it.
  *
  * The multi-hour run is UNTETHERED: the firmware accumulates a per-band histogram to flash and dumps it to
- * serial at boot. So the normal flow is — connect this reader, then reset/power-cycle the board; it reads
- * the `[RSSI] histogram …` block the firmware prints at boot, writes the correlation table to an artifact,
- * then tails live `[RSSI] rssi=…` rows (useful for a tethered smoke test) until Ctrl-C or --minutes.
+ * serial both at boot and periodically (this board's native USB re-enumerates on reset, so a boot-only dump
+ * is unreliable to catch). So the normal flow is — connect this reader to the running board and wait; it
+ * catches the next `[RSSI] histogram …` block the firmware prints, writes the correlation table to an
+ * artifact, then tails live `[RSSI] rssi=…` rows (useful for a tethered smoke test) until Ctrl-C or --minutes.
  *
  * The dump carries no BSSID/SSID (§4 #25 holds by construction). Interactive and hardware-attached — never
  * cloud CI (ADR-0004 invariant #5). Needs no network. Deauth only your own authorized networks.
@@ -22,7 +23,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const BAUD = 115200;
-const DUMP_TIMEOUT_MS = 30000; // the board must boot and print its [RSSI] histogram block within this.
+const DUMP_TIMEOUT_MS = 30000; // must catch a periodic [RSSI] histogram block within this (cadence is ~15s).
 const BAND_LABELS = {
   0: '>= -50 (very strong)',
   1: '-50..-60 (strong)',
@@ -115,11 +116,11 @@ function readHistogram(channel) {
         return;
       }
       if (/^\[RSSI\] histogram end/.test(line)) {
+        // With periodic dumps, attaching to a running board can join a block mid-stream (after its head
+        // line, before its end). That partial block has no head, so ignore this end and keep waiting for
+        // the next complete head→…→end — a stray end is normal here, not an error.
+        if (table.tag === null) return;
         clearTimeout(timer);
-        if (table.tag === null) {
-          reject(new Error('saw [RSSI] histogram end without a head line'));
-          return;
-        }
         resolve(table);
       }
     });
@@ -162,7 +163,7 @@ async function main() {
   });
   const channel = new Channel(port);
   console.log(`opened ${path} @ ${BAUD}`);
-  console.log('>>> reset or power-cycle the board now so it prints its boot histogram...\n');
+  console.log('>>> waiting for the next periodic [RSSI] histogram block (no reset needed)...\n');
 
   let table;
   try {

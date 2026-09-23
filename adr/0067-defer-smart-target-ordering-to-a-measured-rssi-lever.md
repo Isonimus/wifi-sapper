@@ -123,3 +123,33 @@ resolves resume-vs-reset: a matching tag resumes across a field power-cycle, a d
 — RTC/reboot markers cannot do this, since a power-loss clears RTC and would wipe the very data the run is
 trying to survive. The per-attempt row is kept only for the tethered smoke test. The histogram is per-band
 counts only (no BSSID), so §4 #25 holds by construction, on flash and on the wire.
+
+## Amendment — 2026-09-23: dump the histogram periodically, not only at boot
+
+The first tethered smoke run passed on every core signal — the probe boots, arms, discovers across
+channels 1–11, captures fire, and the tapped RSSI values are real and varied (−34 to −97 dBm, not all
+`na`) over 40+ stable attempts with no `[FATAL]`. But two readout defects surfaced that a boot-only dump
+cannot solve on this hardware:
+
+1. **The boot-only dump is uncatchable on the Cardputer's native USB.** A reset re-enumerates
+   `/dev/ttyACM0`, killing any attached reader, so the dump printed ~1–2 s after reset is missed; and a
+   reader attached to a *running* board never triggers a reboot, so it never sees a dump at all. The
+   untethered readout — the whole point of persisting to flash — was therefore unreadable in practice.
+
+2. **A per-boot RAM counter was mistaken for the persisted total.** The heartbeat's `attempts=`/`captured=`
+   are RAM tallies (`g_attempts`/`g_captured`), reset to 0 at every boot and never loaded from the
+   histogram, so they climb from 0 after a reboot *even on a successful resume*. Reading them across a
+   reboot ("40 → 3") looked like a resume/persistence bug, but persistence was never actually observed to
+   fail: the histogram is flushed on every resolved attempt (temp-then-rename) and the run tag is a
+   compile-time constant identical across reboots, so `histogramHasTag` matches and resumes. The only line
+   carrying the persisted total was the boot dump — the one line defect 1 stopped us catching.
+
+Fix (this amendment's code, shipped with it): the firmware re-emits the full identity-free
+`[RSSI] histogram … end` block on a periodic cadence (`kDumpIntervalMs`, ~15 s, under the reader's dump
+timeout) in addition to boot, so the authoritative persisted totals are caught by simply attaching — no
+reset, no re-enumeration race. The misleading heartbeat counters are renamed `session_attempts`/
+`session_captured` so a boot-scoped tally is never again read as the persisted total. This is the
+instrument that also settles defect 2 empirically: watching `total_attempts` across a reboot in the
+periodic dumps shows resume working (totals continue) or failing (totals reset) without needing to catch
+the boot instant. No persisted format, seam, or invariant changes — only the serial dump cadence and a
+liveness label. §4 #25 still holds (the periodic dump is the same identity-free block).
