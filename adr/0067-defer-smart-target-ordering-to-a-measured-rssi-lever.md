@@ -82,3 +82,44 @@ hardware.
 - If the field experiment is never run, the cost is only the opportunity cost of un-optimised ordering —
   never a missed handshake. Discovery-order captures every targetable AP; it just may not capture the
   easiest ones first.
+
+## Amendment — 2026-09-22: measure the necessary condition (RSSI↔capture correlation), not a full A/B
+
+Decision 3 framed the experiment as an A/B of "RSSI-order vs discovery-order handshakes per unit time".
+The first probe built (slice-less, `SAPPER_TEST_RSSI`, `scripts/0068-rssi-probe.mjs`) instead measures
+the **necessary condition** for that A/B to ever pay off: does a stronger beacon RSSI predict a higher
+capture rate *at all*, in our environment? It runs the real unmodified `HuntEngine` in discovery order,
+taps `rx_ctrl.rssi` per beacon out-of-band in a throwaway probe sniffer (production seam untouched), and
+emits one identity-free row per capture attempt — `rssi_dbm, channel, ms_in_window, outcome` — with no
+BSSID, so §4 #25 needs no redaction here. Offline the rows bin by RSSI and compare capture rate.
+
+Why this is the right first measurement, not a deviation from the intent: an A/B is worth its two long,
+client-drift-confounded runs and its throwaway ordering prototype only if RSSI carries signal about
+capture success. If the correlation is null, RSSI-ordering cannot raise yield and the seam is not built —
+established in one run, un-confounded (strong and weak APs are measured together). If the correlation is
+strong, that is already sufficient evidence to widen the seam; the A/B becomes optional confirmation, not
+the gate. Either way the number lands in the follow-up ADR that makes the seam decision (decision 3
+unchanged in substance: measure on hardware before widening §4 #8).
+
+## Amendment — 2026-09-23: untethered run → persisted histogram, and gates deliberately off
+
+Two field realities reshaped the probe. First, the lab's handshakes are all already uploaded to wpa-sec,
+so a gated hunt would skip every AP and record nothing. This is a non-issue by construction: the probe
+builds a bare `HuntEngine` with **no** `setCrackedLookup`/`setSubmittedLookup` wired and never uploads, so
+it targets and attempts *every* encrypted AP regardless of wpa-sec state, and "captured" is a pure on-air
+capture event (fresh ANonce/SNonce every time — re-capturing an already-uploaded AP is exactly as easy as
+the first). Gates-off is not just convenient, it is *required*: the correlation needs the full AP
+population across the RSSI range, which gating would bias to the uncracked subset. **No cracked/submitted
+memory wipe is needed to run the probe.**
+
+Second, the multi-hour run is **untethered** — no laptop attached, so no serial is visible during it. The
+per-attempt serial row of the first amendment cannot be the record. So the probe now bins each resolved
+attempt on-device into a compact per-band histogram (`net/rssi_histogram.{h,cpp}`, a pure, host-tested
+unit — because a bug in an unwatched accumulator silently corrupts the whole run) and persists it to
+LittleFS with the temp-then-rename idiom the submitted/cracked stores use (power-loss safe across the
+run). On reattach the firmware dumps the identity-free histogram to serial at boot; `probe:rssi` reads
+that block and writes the correlation table. A run tag (`SAPPER_TEST_RSSI_RUN`, stored in the file)
+resolves resume-vs-reset: a matching tag resumes across a field power-cycle, a differing tag starts fresh
+— RTC/reboot markers cannot do this, since a power-loss clears RTC and would wipe the very data the run is
+trying to survive. The per-attempt row is kept only for the tethered smoke test. The histogram is per-band
+counts only (no BSSID), so §4 #25 holds by construction, on flash and on the wire.

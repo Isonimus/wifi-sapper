@@ -39,6 +39,7 @@
 #include "webhook_capture_probe.h"
 #include "rf_discover_probe.h"
 #include "rf_sniff_probe.h"
+#include "rssi_probe.h"
 #include "capture_probe.h"
 #include "hunt_hud_probe.h"
 #include "panel_probe.h"
@@ -333,6 +334,7 @@ void setup() {
     if (syncProbeBegin()) return;
     if (uploadProbeBegin()) return;
     if (huntProbeBegin()) return;
+    if (rssiProbeBegin()) return;  // armed hunt + RSSI tap: correlates beacon RSSI with capture (ADR-0067).
     if (rfDiscoverProbeBegin()) return;
     if (rfSniffProbeBegin()) return;
     if (deauthProbeBegin()) return;  // transmits deauth + captures the forced handshake (ADR-0027).
@@ -418,6 +420,11 @@ void loop() {
     }
     if (huntProbeActive()) {  // bench RF probe owns the device; the normal boot loop is skipped.
         huntProbePump();
+        delay(5);
+        return;
+    }
+    if (rssiProbeActive()) {  // RSSI-correlation probe owns the device; the normal boot loop is skipped.
+        rssiProbePump();
         delay(5);
         return;
     }
