@@ -153,3 +153,52 @@ instrument that also settles defect 2 empirically: watching `total_attempts` acr
 periodic dumps shows resume working (totals continue) or failing (totals reset) without needing to catch
 the boot instant. No persisted format, seam, or invariant changes — only the serial dump cadence and a
 liveness label. §4 #25 still holds (the periodic dump is the same identity-free block).
+
+## Amendment — 2026-09-23: first field run void — the RSSI tap was measuring the instrument, not the air
+
+The first untethered field run (tag `field-2026-09-23`, 664 resolved attempts / 11 captured) is **discarded**.
+Its table does not answer the necessary-condition question, because the RSSI tap as first built was a
+defective instrument, and root-causing the numbers showed the defects were in the probe, not the environment:
+
+- band `-60..-70` 3/3, `-70..-80` 0/6, `< -80` 0/63, and **`na` (unknown RSSI) 8/592 — 89% of all attempts**,
+  with **zero** attempts in either strong band (`≥ -50`, `-50..-60`). Eight of the eleven captures had no
+  recorded RSSI at all; only three did.
+
+Two defects, both traced to making the RSSI a *global, discovery-time* value:
+
+1. **Table-overflow blindness → the 89% `na`.** The tap kept a global per-BSSID RSSI table capped at
+   `kMaxDiscoveredAps` (64), append-only, **never reset for the life of the run**. But `HuntEngine` resets
+   `ApRegistry` and re-discovers every time it cycles its enumeration (`hunt_engine.cpp` `doEnterDiscovering`
+   → `registry_.reset()`), so across a multi-hour run it targets far more than 64 distinct BSSIDs. Once the
+   tap's table filled (early), every later target — the overwhelming majority — was looked up as
+   `kRssiUnknown`. The `(rssi-table-overflow)` heartbeat flag was almost certainly asserted for nearly the
+   whole run; nobody saw it because the run was untethered. The instrument went blind minutes in.
+
+2. **Adjacent-channel-bleed skew → zero strong, 63/72 known in `< -80`.** The per-BSSID value was
+   *latest-wins* across every parked channel. A BSSID heard strongly on its home channel was overwritten by a
+   faint cross-channel bleed reading while the radio was parked elsewhere, dragging every recorded RSSI
+   toward the noise floor. So even the non-`na` minority was biased low, which is why not one attempt landed
+   in a strong band.
+
+Fix (this amendment's code, shipped with it): the global table is removed entirely. The RSSI a target is
+binned by is now the **strongest beacon RSSI heard for that target while the engine is parked on its channel
+capturing it** — a per-attempt, on-channel value. The tap records RSSI only for the BSSID of the attempt in
+flight (`g_attemptTapBssid`, published under a release/acquire pair with `g_attemptTapActive`), only during
+its capture window, keeping the max (`g_attemptTapRssiMax`), read at resolve. This removes both defects **by
+construction**: there is no unbounded table to overflow (so no blindness), and during a capture window the
+radio is parked on the target's own channel — its beacons arrive on-channel (strong) while every other AP
+arrives only as weaker bleed, so filtering by the active BSSID and keeping the max can never record a bleed
+reading. `na` now carries a *legitimate* meaning — the target's beacon was never heard during its own
+capture window (a genuinely weak/absent signal), not instrument blindness.
+
+Why this measurement still answers the gate (decision 3 unchanged in substance): the necessary condition is
+"does a stronger signal predict a higher capture rate". The on-channel RSSI *during the capture attempt* is
+an equal-or-better proxy for that than a discovery-time value — it is the signal quality while the capture is
+actually being attempted — and a scorer's discovery RSSI would approximate it. If capture rate still does not
+rise with this clean signal, the seam is not widened; if it does, that is the evidence to widen §4 #8. The
+seam decision remains for the follow-up ADR, off a *clean* run's numbers.
+
+No persisted histogram format, no production seam, and no standing invariant changes — only the probe's
+in-RAM RSSI-collection logic. §4 #8 still holds (the tap forwards raw bytes only; RSSI never reaches the
+engine) and §4 #25 still holds (the histogram is still identity-free per-band counts). **A fresh multi-hour
+field run is required**; the voided `field-2026-09-23` data is not carried forward.

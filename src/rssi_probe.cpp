@@ -3,7 +3,9 @@
  * @brief RSSI↔capture-correlation probe (ADR-0067). Device-only, SAPPER_TEST_HOOKS-gated.
  *
  * Runs the real, unmodified HuntEngine in discovery order (armed, so captures actually fire) while a
- * throwaway RssiTapSniffer records each beacon's rx_ctrl.rssi per BSSID out-of-band. The production
+ * throwaway RssiTapSniffer records, for the target currently under capture, the strongest beacon
+ * rx_ctrl.rssi heard while the engine is parked on that target's channel (a per-attempt, on-channel value —
+ * see the tap block below for why a global discovery-time table was wrong). The production
  * RadioSniffer seam is not touched — §4 #8 (raw bytes only) holds; the RSSI never reaches the engine. The
  * engine wires NO cracked/submitted gate (no setCrackedLookup/setSubmittedLookup) and never uploads, so
  * it targets and attempts EVERY encrypted AP regardless of wpa-sec state — a lab whose handshakes are all
@@ -58,51 +60,38 @@ constexpr const char* kHistTempPath = "/rssi-probe.tmp";
 constexpr const char* kDefaultRunTag = "default";
 
 // ---- The out-of-band RSSI tap (probe-only; the production seam is untouched). ----
+//
+// A target is binned by the STRONGEST beacon RSSI heard for it while the engine is parked on its channel
+// capturing it — a per-attempt, on-channel value, not a global discovery-time table. This is deliberate
+// (ADR-0067, 4th amendment): the first design kept a global per-BSSID table and a multi-hour field run
+// exposed two fatal defects. (1) It was a fixed 64-entry (kMaxDiscoveredAps) append-only table that never
+// reset, but the engine re-discovers past 64 APs (HuntEngine resets ApRegistry each enumeration cycle), so
+// once full it went blind and every later target read back kRssiUnknown — 89% of that run. (2) Its
+// latest-wins value was corrupted by adjacent-channel bleed: a strong on-channel reading overwritten by a
+// faint cross-channel one while the radio was parked elsewhere, skewing every recorded RSSI toward the noise
+// floor. Reading only the active target, only during its on-channel capture window, and keeping the max
+// removes both by construction — no unbounded table to overflow, and bleed (always weaker than the
+// on-channel signal) can never win the max.
 
-/// One BSSID's most-recent beacon RSSI. Append-only, first-sighting-wins: a reader sees a fully-written
-/// bssid (published by the release store to g_rssiCount) and reads the latest rssi. Unlike ApRegistry —
-/// whose entries are immutable once published — this entry's rssi is deliberately mutable, a single-byte
-/// atomic overwritten in place (latest-wins), because a probe wants each BSSID's most recent signal.
-struct RssiEntry {
-    uint8_t bssid[6] = {0};
-    std::atomic<int8_t> rssi{kRssiUnknown};
-};
-
-RssiEntry g_rssi[kMaxDiscoveredAps];
-std::atomic<size_t> g_rssiCount{0};
-std::atomic<bool> g_rssiOverflow{false};
 FrameConsumer* g_tapConsumer = nullptr;  // set on the app task before the callback can fire; read-only after.
+
+/// The target whose capture window is open, as its 6-byte BSSID packed little-endian into the low 48 bits of
+/// one word (0 = no window open — an all-zero BSSID is never a real AP). Packing into a single atomic lets the
+/// driver task read the target as one indivisible load, so it can never see a half-written BSSID during the
+/// app task's window handoff (a per-byte shared buffer would be a torn read — a data race — at every boundary).
+std::atomic<uint64_t> g_attemptTarget{0};
+std::atomic<int8_t> g_attemptTapRssiMax{kRssiUnknown};  // strongest on-channel beacon RSSI this window (kRssiUnknown = none yet).
 
 bool bssidEq(const uint8_t* a, const uint8_t* b) { return std::memcmp(a, b, 6) == 0; }
 
-/// Driver-task context (like the production RX callback): record @p rssi for @p bssid, append-only.
-void recordRssi(const uint8_t* bssid, int8_t rssi) {
-    const size_t count = g_rssiCount.load(std::memory_order_acquire);
-    for (size_t i = 0; i < count; ++i) {
-        if (bssidEq(g_rssi[i].bssid, bssid)) {
-            g_rssi[i].rssi.store(rssi, std::memory_order_relaxed);  // single-byte, latest-wins.
-            return;
-        }
-    }
-    if (count >= kMaxDiscoveredAps) {
-        g_rssiOverflow.store(true, std::memory_order_relaxed);
-        return;
-    }
-    std::memcpy(g_rssi[count].bssid, bssid, 6);           // write the identity first,
-    g_rssi[count].rssi.store(rssi, std::memory_order_relaxed);
-    g_rssiCount.store(count + 1, std::memory_order_release);  // then publish it.
+/// Pack a 6-byte BSSID little-endian into the low 48 bits of a word for the single-atomic target handoff.
+uint64_t packBssid(const uint8_t* bssid) {
+    uint64_t v = 0;
+    for (size_t i = 0; i < 6; ++i) v |= static_cast<uint64_t>(bssid[i]) << (8 * i);
+    return v;
 }
 
-/// App-task context: the last beacon RSSI recorded for @p bssid, or kRssiUnknown if none.
-int8_t rssiFor(const uint8_t* bssid) {
-    const size_t count = g_rssiCount.load(std::memory_order_acquire);
-    for (size_t i = 0; i < count; ++i) {
-        if (bssidEq(g_rssi[i].bssid, bssid)) return g_rssi[i].rssi.load(std::memory_order_relaxed);
-    }
-    return kRssiUnknown;
-}
-
-/// The ESP-IDF promiscuous RX callback: read rx_ctrl.rssi, tap it for beacons, then forward the raw
+/// The ESP-IDF promiscuous RX callback: tap rx_ctrl.rssi for the target under capture, then forward the raw
 /// frame bytes to the engine exactly as Esp32RadioSniffer does (no protocol logic added to the seam; the
 /// RSSI tap is probe-only and never reaches the consumer). Runs in the Wi-Fi driver task — bounded, no
 /// allocation, no blocking (§4 #10).
@@ -111,8 +100,19 @@ void onTapRx(void* buf, wifi_promiscuous_pkt_type_t type) {
     if (g_tapConsumer == nullptr || buf == nullptr) return;
     const auto* pkt = static_cast<const wifi_promiscuous_pkt_t*>(buf);
     const uint16_t len = static_cast<uint16_t>(pkt->rx_ctrl.sig_len);
+    // Tap only the target whose capture window is open, only from its own beacons. During that window the
+    // radio is parked on the target's channel, so its beacons arrive on-channel (strong) while other APs
+    // arrive only as weaker bleed — matching the active BSSID and keeping the max yields the clean on-channel
+    // signal. The acquire pairs with latchAttempt's release, so the cleared max is seen before any update.
     if (type == WIFI_PKT_MGMT && len >= kMgmtHeaderLen && pkt->payload[0] == kBeaconFrameControl0) {
-        recordRssi(pkt->payload + kBssidOffset, static_cast<int8_t>(pkt->rx_ctrl.rssi));
+        const uint64_t target = g_attemptTarget.load(std::memory_order_acquire);
+        if (target != 0 && target == packBssid(pkt->payload + kBssidOffset)) {
+            const int8_t rssi = static_cast<int8_t>(pkt->rx_ctrl.rssi);
+            const int8_t cur = g_attemptTapRssiMax.load(std::memory_order_relaxed);
+            // kRssiUnknown (0) is out of the real (negative dBm) range, so it must be treated as "no reading
+            // yet" rather than a maximum — otherwise the sentinel would never be beaten by a real value.
+            if (cur == kRssiUnknown || rssi > cur) g_attemptTapRssiMax.store(rssi, std::memory_order_relaxed);
+        }
     }
     g_tapConsumer->onFrame(pkt->payload, len);  // raw bytes to the engine — the production contract.
 }
@@ -222,13 +222,13 @@ void dumpHistogram(const RssiHistogram& hist) {
 
 // ---- Capture-attempt pairing (app task only: pump + onCaptureReady, both under engine.tick). ----
 
-/// Latches the current capture attempt so the pump can pair it with an outcome.
+/// Latches the current capture attempt so the pump can pair it with an outcome. The RSSI is not held here:
+/// it is accumulated on the driver task into g_attemptTapRssiMax during the window and read at resolve.
 struct Attempt {
     bool active = false;
     uint8_t bssid[6] = {0};
     uint32_t startMs = 0;
     uint8_t channel = 0;
-    int8_t rssi = kRssiUnknown;
 };
 
 Attempt g_attempt;
@@ -239,19 +239,25 @@ uint32_t g_flushFailures = 0;  // persisted-histogram flush failures, surfaced i
 /// Record one resolved attempt: accumulate it into the persisted histogram, flush, and (for the tethered
 /// smoke test) print an identity-free row.
 void resolveAttempt(const Attempt& a, uint32_t nowMs, bool captured) {
+    // Close the on-channel RSSI window (clear the target so the tap stops matching) and read its strongest
+    // reading. kRssiUnknown here means the target's beacon was never heard while we were parked on it — a
+    // legitimate na (a target too weak to beacon-hear during its own capture window), not the table-overflow
+    // blindness the old global table produced.
+    g_attemptTarget.store(0, std::memory_order_release);
+    const int8_t rssi = g_attemptTapRssiMax.load(std::memory_order_acquire);
     ++g_attempts;
     if (captured) ++g_captured;
-    recordAttempt(g_hist, a.rssi, captured);
+    recordAttempt(g_hist, rssi, captured);
     // Flush every attempt: the run is untethered and may lose power, so at most the current attempt is
     // ever at risk. The file is tiny (kRssiHistogramBytes) and written far less than once a second. A
     // failure keeps the RAM counts intact (the next flush may land) but is counted and surfaced in the
     // heartbeat — a silently non-persisting run would look empty on reattach with no clue why.
     if (!saveHistogram(g_hist)) ++g_flushFailures;
-    if (a.rssi == kRssiUnknown) {
+    if (rssi == kRssiUnknown) {
         Serial.printf("[RSSI] rssi=na channel=%u ms=%lu outcome=%s\n", a.channel,
                       static_cast<unsigned long>(nowMs - a.startMs), captured ? "captured" : "empty");
     } else {
-        Serial.printf("[RSSI] rssi=%d channel=%u ms=%lu outcome=%s\n", a.rssi, a.channel,
+        Serial.printf("[RSSI] rssi=%d channel=%u ms=%lu outcome=%s\n", rssi, a.channel,
                       static_cast<unsigned long>(nowMs - a.startMs), captured ? "captured" : "empty");
     }
 }
@@ -290,7 +296,12 @@ void latchAttempt(uint32_t nowMs) {
     std::memcpy(g_attempt.bssid, bssid, 6);
     g_attempt.startMs = nowMs;
     g_attempt.channel = g_engine->parkedChannel();
-    g_attempt.rssi = rssiFor(bssid);
+    // Open the on-channel RSSI window: clear the running max, then publish the target BSSID as one atomic
+    // word. The release on g_attemptTarget pairs with the acquire in onTapRx (the driver sees the cleared max
+    // before it can match this target), and packing into one atomic means the driver never reads a
+    // half-written BSSID during the handoff.
+    g_attemptTapRssiMax.store(kRssiUnknown, std::memory_order_relaxed);
+    g_attemptTarget.store(packBssid(bssid), std::memory_order_release);
 }
 
 }  // namespace
@@ -383,11 +394,11 @@ void rssiProbePump() {
         // THIS BOOT only (g_attempts/g_captured are RAM, reset at every boot) — the `session_` prefix is
         // deliberate so they are never mistaken for the persisted totals, which live in the periodic
         // `[RSSI] histogram` block below (a boot-counter read past a reboot is what faked a resume bug).
-        // Surfaces the two degradations a silent untethered run would otherwise hide: a full RSSI table and
-        // a flash that has stopped accepting flushes.
-        Serial.printf("[RSSI] waiting session_attempts=%lu session_captured=%lu%s%s\n",
+        // Surfaces the degradation a silent untethered run would otherwise hide: a flash that has stopped
+        // accepting flushes (the old per-BSSID table and its overflow flag are gone — the RSSI is now a
+        // per-attempt on-channel window with nothing to overflow).
+        Serial.printf("[RSSI] waiting session_attempts=%lu session_captured=%lu%s\n",
                       static_cast<unsigned long>(g_attempts), static_cast<unsigned long>(g_captured),
-                      g_rssiOverflow.load(std::memory_order_relaxed) ? " (rssi-table-overflow)" : "",
                       g_flushFailures > 0 ? " (flush-failures)" : "");
     }
 
