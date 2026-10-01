@@ -28,8 +28,13 @@ static const uint8_t kClient[6] = {0x06, 0x01, 0x02, 0x03, 0x04, 0x05};
 void setUp(void) {}
 void tearDown(void) {}
 
-static void deliver(FrameConsumer& consumer, const std::vector<uint8_t>& frame) {
-    consumer.onFrame(frame.data(), static_cast<uint16_t>(frame.size()));
+// Signal levels straddling the ADR-0068 kRssiFloor (-80), for the RSSI-recording test; the default keeps
+// every other test's beacons strong so nothing about them changes.
+static constexpr int8_t kStrongRssi = -45;
+static constexpr int8_t kWeakRssi = -85;
+
+static void deliver(FrameConsumer& consumer, const std::vector<uint8_t>& frame, int8_t rssi = kStrongRssi) {
+    consumer.onFrame(frame.data(), static_cast<uint16_t>(frame.size()), rssi);
 }
 
 /// Index of the entry whose BSSID matches @p bssid, or -1 (order of discovery is not asserted).
@@ -134,6 +139,23 @@ void test_records_open_flag_from_privacy_bit(void) {
     TEST_ASSERT_FALSE(reg.at(b).isOpen);   // encrypted one not.
 }
 
+void test_records_rssi_from_the_seam_first_sighting_wins(void) {
+    // The registry records each AP's discovery-time RSSI from the value the seam forwards, so the hunt can
+    // order targets by a floor (ADR-0068 #31). First-sighting-wins like the SSID/channel: a later, stronger
+    // or weaker beacon for the same BSSID never overwrites the first reading (the registry's immutable,
+    // lock-free append-only discipline).
+    ApRegistry reg;
+    deliver(reg, buildBeacon(kApA, "Alpha", /*channel=*/1), kStrongRssi);
+    deliver(reg, buildBeacon(kApA, "Alpha", /*channel=*/1), kWeakRssi);  // same BSSID, weaker — must not win.
+    deliver(reg, buildBeacon(kApB, "Bravo", /*channel=*/6), kWeakRssi);
+
+    const int a = findAp(reg, kApA);
+    const int b = findAp(reg, kApB);
+    TEST_ASSERT_TRUE(a >= 0 && b >= 0);
+    TEST_ASSERT_EQUAL_INT8(kStrongRssi, reg.at(a).rssi);  // the first sighting's reading, kept.
+    TEST_ASSERT_EQUAL_INT8(kWeakRssi, reg.at(b).rssi);
+}
+
 void test_reset_clears_the_enumeration(void) {
     ApRegistry reg;
     deliver(reg, buildBeacon(kApA, "Alpha", /*channel=*/1));
@@ -153,6 +175,7 @@ int main(int, char**) {
     RUN_TEST(test_non_beacon_frame_is_ignored);
     RUN_TEST(test_hidden_ssid_ap_is_recorded_with_empty_name);
     RUN_TEST(test_records_open_flag_from_privacy_bit);
+    RUN_TEST(test_records_rssi_from_the_seam_first_sighting_wins);
     RUN_TEST(test_overflow_is_reported_not_silently_dropped);
     RUN_TEST(test_reset_clears_the_enumeration);
     return UNITY_END();

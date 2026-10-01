@@ -25,8 +25,12 @@ namespace sapper {
 class FrameConsumer {
 public:
     virtual ~FrameConsumer() = default;
-    /// Handle one raw 802.11 frame of @p len bytes (including any trailing FCS the radio delivered).
-    virtual void onFrame(const uint8_t* frame, uint16_t len) = 0;
+    /// Handle one raw 802.11 frame of @p len bytes (including any trailing FCS the radio delivered),
+    /// with @p rssi the receiver's reported signal strength for it (dBm, from `wifi_pkt_rx_ctrl_t.rssi`).
+    /// RSSI is receiver metadata carried alongside the raw bytes, not frame content — the seam forwards
+    /// one out-of-band datum and still interprets no protocol (§4 #8, widened by ADR-0068). A consumer
+    /// that does not order by signal (the collector) ignores it.
+    virtual void onFrame(const uint8_t* frame, uint16_t len, int8_t rssi) = 0;
 };
 
 /// Owns promiscuous mode on one fixed channel and forwards received frames to a FrameConsumer.

@@ -2,11 +2,14 @@
  * @file rssi_probe.cpp
  * @brief RSSI↔capture-correlation probe (ADR-0067). Device-only, SAPPER_TEST_HOOKS-gated.
  *
- * Runs the real, unmodified HuntEngine in discovery order (armed, so captures actually fire) while a
- * throwaway RssiTapSniffer records, for the target currently under capture, the strongest beacon
- * rx_ctrl.rssi heard while the engine is parked on that target's channel (a per-attempt, on-channel value —
- * see the tap block below for why a global discovery-time table was wrong). The production
- * RadioSniffer seam is not touched — §4 #8 (raw bytes only) holds; the RSSI never reaches the engine. The
+ * Runs the real HuntEngine, armed (so captures actually fire), in plain discovery order while a throwaway
+ * RssiTapSniffer records, for the target currently under capture, the strongest beacon rx_ctrl.rssi heard
+ * while the engine is parked on that target's channel (a per-attempt, on-channel value — see the tap block
+ * below for why a global discovery-time table was wrong). The production RadioSniffer seam is not touched —
+ * §4 #8 (raw bytes only) holds. The *measured* RSSI never reaches the engine: the seam carries an rssi
+ * argument since ADR-0068, but the probe hands the engine a fixed placeholder (kProbeEngineRssi), so the
+ * engine's always-on RSSI floor (§4 #31) stays inert and target selection keeps the plain discovery order
+ * ADR-0067's measurement depends on — only the histogram tap sees the real value. The
  * engine wires NO cracked/submitted gate (no setCrackedLookup/setSubmittedLookup) and never uploads, so
  * it targets and attempts EVERY encrypted AP regardless of wpa-sec state — a lab whose handshakes are all
  * already uploaded needs no memory wipe, and "captured" is a pure on-air capture event.
@@ -48,6 +51,13 @@ constexpr uint32_t kHeartbeatIntervalMs = 5000;
 /// persisted totals are re-emitted periodically. Kept under the reader's dump timeout (scripts/0068) so an
 /// attach always catches a block within one interval.
 constexpr uint32_t kDumpIntervalMs = 15000;
+/// The RSSI the probe hands the engine across the ADR-0068-widened seam. A FIXED placeholder, never the
+/// measured value: the production target-ordering floor is always on (§4 #31), so forwarding the real rssi
+/// would make the engine reorder its own target selection by band and bias the per-band capture histogram
+/// this probe measures. A uniform value puts every AP in one partition, leaving the floor inert so the
+/// engine keeps the plain discovery order ADR-0067's measurement depends on. The measured rx_ctrl.rssi
+/// still reaches the histogram tap — just not the engine. Any above-floor value serves; -50 is well clear.
+constexpr int8_t kProbeEngineRssi = -50;
 /// Beacon management-frame first octet (type=management, subtype=beacon): the only frames we tap for
 /// RSSI, matching the beacon-based discovery an RSSI scorer would order on (ADR-0013).
 constexpr uint8_t kBeaconFrameControl0 = 0x80;
@@ -93,7 +103,8 @@ uint64_t packBssid(const uint8_t* bssid) {
 
 /// The ESP-IDF promiscuous RX callback: tap rx_ctrl.rssi for the target under capture, then forward the raw
 /// frame bytes to the engine exactly as Esp32RadioSniffer does (no protocol logic added to the seam; the
-/// RSSI tap is probe-only and never reaches the consumer). Runs in the Wi-Fi driver task — bounded, no
+/// measured RSSI is tapped for the histogram only — the engine gets a fixed placeholder, not the measured
+/// value, so its floor stays inert, see the forward below). Runs in the Wi-Fi driver task — bounded, no
 /// allocation, no blocking (§4 #10).
 void onTapRx(void* buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA) return;  // MISC sig_len is not a frame length.
@@ -114,7 +125,10 @@ void onTapRx(void* buf, wifi_promiscuous_pkt_type_t type) {
             if (cur == kRssiUnknown || rssi > cur) g_attemptTapRssiMax.store(rssi, std::memory_order_relaxed);
         }
     }
-    g_tapConsumer->onFrame(pkt->payload, len);  // raw bytes to the engine — the production contract.
+    // Raw bytes to the engine. The seam now carries an rssi (ADR-0068 §4 #8), but the probe forwards a
+    // FIXED placeholder, not the measured value: the engine's always-on floor (§4 #31) would otherwise
+    // reorder target selection and bias this probe's histogram. The measured rssi went to the tap above.
+    g_tapConsumer->onFrame(pkt->payload, len, kProbeEngineRssi);
 }
 
 /// A throwaway RadioSniffer clone of Esp32RadioSniffer that installs the RSSI-tapping callback instead of

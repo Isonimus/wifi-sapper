@@ -54,8 +54,8 @@ public:
         std::memcpy(bssid_, bssid, sizeof(bssid_));
     }
 
-    void onFrame(const uint8_t* frame, uint16_t len) override {
-        collector_.ingest(frame, len);
+    void onFrame(const uint8_t* frame, uint16_t len, int8_t /*rssi*/) override {
+        collector_.ingest(frame, len);  // the deauth probe measures self-heard TX, not signal — rssi unused.
         if (isOwnDeauth(frame, len)) ++selfHeard_;
     }
 

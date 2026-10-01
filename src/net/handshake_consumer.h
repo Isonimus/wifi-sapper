@@ -23,7 +23,9 @@ namespace sapper {
 class HandshakeConsumer : public FrameConsumer {
 public:
     explicit HandshakeConsumer(HandshakeCollector& collector) : collector_(collector) {}
-    void onFrame(const uint8_t* frame, uint16_t len) override { collector_.ingest(frame, len); }
+    /// Capture does not order by signal, so the forwarded @p rssi is unused here — the collector judges
+    /// frames by their 802.11 content alone (ADR-0068 widened the seam only for discovery-time ordering).
+    void onFrame(const uint8_t* frame, uint16_t len, int8_t /*rssi*/) override { collector_.ingest(frame, len); }
 
 private:
     HandshakeCollector& collector_;

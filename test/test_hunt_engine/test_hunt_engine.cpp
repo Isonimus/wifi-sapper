@@ -36,6 +36,14 @@ static const uint8_t kApC[6] = {0x02, 0x01, 0x02, 0x03, 0x04, 0x05};
 static const uint8_t kClient[6] = {0x06, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
 static uint8_t kHopChannels[3] = {1, 6, 11};
 
+// Signal levels straddling the ADR-0068 kRssiFloor (-80) for the RSSI-floor ordering tests. kStrongRssi and
+// kVeryStrongRssi are both above the floor (kVeryStrongRssi the stronger, to prove no strongest-first sort
+// within a partition); kWeakRssi is below it. The default deliver() rssi is strong, so every other test's
+// APs share the above-floor partition and keep their plain discovery-order sequence.
+static constexpr int8_t kVeryStrongRssi = -30;
+static constexpr int8_t kStrongRssi = -45;
+static constexpr int8_t kWeakRssi = -85;
+
 // Short windows keep the deterministic tick sequence readable; the logic is clock-driven, not
 // wall-clock, so the absolute values only need to be internally consistent.
 static HuntConfig testConfig() {
@@ -719,6 +727,100 @@ void test_all_submitted_degrades_to_rediscovery_not_a_spin(void) {
     TEST_ASSERT_EQUAL_UINT32(0, observer.captured.size());  // nothing was captured.
 }
 
+// --- RSSI-floor target ordering (slice-0069 Scenarios A, B, C; ADR-0068 #31) ------------------------
+
+// Walk `count` capture windows to their timeout (no handshake delivered) and return the order in which the
+// engine entered Capturing — the attempt order target selection produced across both floor partitions.
+// Mirrors the round-robin walk's cadence; the pass flip happens inside doStartCapturing, needing no extra
+// tick, so the same per-target cadence covers it. Expects the engine already snapshotted (post discovery
+// tick) and about to leave its first quiesce at @p startMs.
+static std::vector<std::array<uint8_t, 6>> recordCaptureAttemptOrder(HuntEngine& engine, uint32_t startMs,
+                                                                     int count) {
+    std::vector<std::array<uint8_t, 6>> order;
+    uint32_t now = startMs;
+    const HuntConfig cfg = testConfig();
+    for (int i = 0; i < count; ++i) {
+        engine.tick(now);  // settle elapsed -> start capturing the next selected target.
+        TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+        std::array<uint8_t, 6> b{};
+        std::memcpy(b.data(), engine.capturingBssid(), 6);
+        order.push_back(b);
+        now += cfg.captureWindowMs;
+        engine.tick(now);  // window times out -> quiesce toward advance.
+        now += cfg.settleMs;
+    }
+    return order;
+}
+
+void test_strong_ap_is_attempted_before_a_weaker_one(void) {
+    // Scenario A: W (kApA) is weak (< -80) and discovered first; S (kApB) is strong (>= -80) and discovered
+    // second. The floor must attempt the strong partition first, so S is captured before W despite being
+    // discovered later — inverting discovery order. Fail-before: without the floor skip, W is attempted
+    // first (plain discovery order).
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Weak", 1), kWeakRssi);      // index 0 — below the floor.
+    sniffer.deliver(buildBeacon(kApB, "Strong", 6), kStrongRssi);  // index 1 — at or above the floor.
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    const std::vector<std::array<uint8_t, 6>> order = recordCaptureAttemptOrder(engine, 35, 2);
+    TEST_ASSERT_EQUAL_UINT32(2, order.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApB, order[0].data(), 6);  // strong S first, though discovered later.
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, order[1].data(), 6);  // weak W deprioritised to the second pass.
+}
+
+void test_weak_ap_is_still_captured_when_nothing_stronger_remains(void) {
+    // Scenario B (deprioritise, never skip): the only discovered AP is weak (< -80). Pass 1 (strong) finds
+    // nothing and flips to pass 2, which still attempts the weak AP, so its handshake is captured — no
+    // targetable handshake is forfeited. Fail-before: a floor that *skipped* the weak tail (never flipping
+    // to pass 2) would re-discover and capture nothing.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Weak", 1), kWeakRssi);  // the only AP, below the floor.
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    engine.tick(35);  // settle elapsed -> pass 1 empty, flip to pass 2, capture the weak AP.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApA));  // the weak AP is attempted, not skipped.
+
+    deliverHandshake(sniffer, kApA, 1);
+    engine.tick(36);  // wpa-sec valid -> quiesce toward report+advance.
+    engine.tick(41);  // settle -> report the capture.
+    TEST_ASSERT_EQUAL_UINT32(1, observer.captured.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, observer.captured[0].data(), 6);  // the weak handshake landed.
+}
+
+void test_discovery_order_is_kept_within_a_partition_no_rssi_sort(void) {
+    // Scenario C: S1 (kApA) strong but the weaker of the two strong APs, discovered first; S2 (kApB) strong
+    // and stronger, discovered second; W (kApC) weak, third. The attempt order must be S1, S2 (discovery
+    // order within the strong partition — NOT strongest-first, which would put S2 before S1), then W (the
+    // weak partition). Fail-before: a strongest-first sort would order S2 before S1.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+
+    TEST_ASSERT_TRUE(engine.begin(0));
+    sniffer.deliver(buildBeacon(kApA, "Strong1", 1), kStrongRssi);       // index 0 — strong, the weaker one.
+    sniffer.deliver(buildBeacon(kApB, "Strong2", 6), kVeryStrongRssi);   // index 1 — strong, the stronger one.
+    sniffer.deliver(buildBeacon(kApC, "Weak", 11), kWeakRssi);           // index 2 — below the floor.
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+
+    const std::vector<std::array<uint8_t, 6>> order = recordCaptureAttemptOrder(engine, 35, 3);
+    TEST_ASSERT_EQUAL_UINT32(3, order.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, order[0].data(), 6);  // S1 before S2: discovery order, no sort.
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApB, order[1].data(), 6);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApC, order[2].data(), 6);  // weak partition last.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_discovers_then_captures_then_advances);
@@ -745,5 +847,8 @@ int main(int, char**) {
     RUN_TEST(test_submitted_ap_is_never_targeted_but_unsubmitted_one_is);
     RUN_TEST(test_submitted_lookup_wired_but_empty_targets_every_ap);
     RUN_TEST(test_all_submitted_degrades_to_rediscovery_not_a_spin);
+    RUN_TEST(test_strong_ap_is_attempted_before_a_weaker_one);
+    RUN_TEST(test_weak_ap_is_still_captured_when_nothing_stronger_remains);
+    RUN_TEST(test_discovery_order_is_kept_within_a_partition_no_rssi_sort);
     return UNITY_END();
 }

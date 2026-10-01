@@ -63,6 +63,13 @@ struct HuntConfig {
     uint32_t deauthIntervalMs = 2000;
 };
 
+/// The RSSI partition floor for target ordering (ADR-0068 #31): an AP at or above it is attempted before
+/// any below it. -80 dBm is the measured knee from the `field-2026-10-01` run
+/// (artifacts/0068-field-2026-10-01.txt) — capture rate was 48% in the -70..-80 band and 2% below -80.
+/// A constant, not a HuntConfig field: it is a measured default with no present need to vary per instance
+/// (KISS); a future tuning pass would supersede this value, not make it runtime-configurable.
+constexpr int8_t kRssiFloor = -80;
+
 /**
  * @brief Drives the endless discover→capture→discover loop over the capture seams.
  *
@@ -114,8 +121,9 @@ public:
     /// Aim the router away and leave promiscuous mode. The caller stops ticking after this.
     void stop();
 
-    /// Driver-task context: forward one raw frame to the active sink, nothing else (ADR-0015 #2).
-    void onFrame(const uint8_t* frame, uint16_t len) override;
+    /// Driver-task context: forward one raw frame (and its @p rssi) to the active sink, nothing else
+    /// (ADR-0015 #2). RSSI is receiver metadata passed straight through; the engine parses no protocol.
+    void onFrame(const uint8_t* frame, uint16_t len, int8_t rssi) override;
 
     // --- Observation (app task), for the probe and the host tests. ---
     Phase phase() const { return phase_; }
@@ -171,6 +179,7 @@ private:
     uint32_t quiesceUntilMs_ = 0;   // Quiescing settle end.
     size_t targetCount_ = 0;        // snapshot of registry.count() at discovery's end.
     size_t targetIndex_ = 0;        // round-robin cursor into the snapshot.
+    bool belowFloorPass_ = false;   // false = attempting the >= kRssiFloor partition, true = the below one (ADR-0068 #31).
     uint8_t parkedChannel_ = 0;     // the channel the radio last accepted.
     uint32_t deauthDueMs_ = 0;      // next-burst deadline while Capturing (armed); wrap-safe via reached().
     uint32_t deauthTxOk_ = 0;       // deauth/disassoc frames the seam accepted.

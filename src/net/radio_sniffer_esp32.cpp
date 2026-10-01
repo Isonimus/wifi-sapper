@@ -33,8 +33,11 @@ void onPromiscuousRx(void* buf, wifi_promiscuous_pkt_type_t type) {
     FrameConsumer* consumer = g_consumer.load(std::memory_order_acquire);
     if (consumer == nullptr || buf == nullptr) return;
     const auto* pkt = static_cast<const wifi_promiscuous_pkt_t*>(buf);
-    // sig_len is the on-air frame length including the trailing FCS; forwarded raw (ADR-0011).
-    consumer->onFrame(pkt->payload, static_cast<uint16_t>(pkt->rx_ctrl.sig_len));
+    // sig_len is the on-air frame length including the trailing FCS; forwarded raw (ADR-0011). rssi is the
+    // receiver's signal strength for this frame — forwarded as metadata alongside the raw bytes so the
+    // registry can order by signal (ADR-0068, §4 #8 widened); the seam still parses nothing.
+    consumer->onFrame(pkt->payload, static_cast<uint16_t>(pkt->rx_ctrl.sig_len),
+                      static_cast<int8_t>(pkt->rx_ctrl.rssi));
 }
 
 }  // namespace

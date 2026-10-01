@@ -75,49 +75,71 @@ void HuntEngine::doEnterDiscovering(uint32_t nowMs) {
 
 void HuntEngine::doStartCapturing(uint32_t nowMs) {
     // Reached only with the router aimed away (from a quiesce), so retargeting the collector is safe.
-    while (targetIndex_ < targetCount_) {
-        const DiscoveredAp& target = registry_.at(targetIndex_);
-        // Skip an open network (ADR-0063 #29): an unencrypted BSS has no WPA 4-way handshake to capture,
-        // so tuning to it only wastes a capture window (and deauth airtime). Always on — an intrinsic
-        // beacon property, not the opt-in external state gate B consults below.
-        if (target.isOpen) {
-            ++targetIndex_;
+    // RSSI floor (ADR-0068 #31): two passes over the enumeration in discovery order. Pass 1
+    // (belowFloorPass_ == false) attempts only APs at or above kRssiFloor; when it exhausts, we flip to
+    // pass 2 and re-walk from the top attempting only the below-floor tail. Deprioritise, never skip — the
+    // weak partition is still attempted when nothing stronger remains, so no targetable handshake is
+    // forfeited (ADR-0068 decision 4). Discovery order is preserved within each partition — no RSSI sort
+    // (decision 5): the field run's strongest band was client-less, so sorting strongest-first would
+    // attack dead airtime; a binary floor treats every in-partition AP equally.
+    for (;;) {
+        while (targetIndex_ < targetCount_) {
+            const DiscoveredAp& target = registry_.at(targetIndex_);
+            // Not this pass's partition — skip now, attempt on the other pass (the floor's whole point).
+            if ((target.rssi < kRssiFloor) != belowFloorPass_) {
+                ++targetIndex_;
+                continue;
+            }
+            // Skip an open network (ADR-0063 #29): an unencrypted BSS has no WPA 4-way handshake to
+            // capture, so tuning to it only wastes a capture window (and deauth airtime). Always on — an
+            // intrinsic beacon property, not the opt-in external state gate B consults below.
+            if (target.isOpen) {
+                ++targetIndex_;
+                continue;
+            }
+            // Gate B (ADR-0061 #28): a BSSID wpa-sec already cracked is skipped like a channel-rejected
+            // one — never tuned to, captured, or (never being capturingBssid()) deauthed. Off by default.
+            if (crackedLookup_ != nullptr && crackedLookup_->isCracked(target.bssid)) {
+                ++targetIndex_;
+                continue;
+            }
+            // Gate C (ADR-0065 #30): a BSSID we have already landed a valid handshake for at wpa-sec is
+            // skipped too — the general form of gate B (submitted ⊇ cracked), so we stop spending capture
+            // windows and deauth on it while it waits to be cracked, not just after. Complements gate B
+            // (the cracked floor stays authoritative even if this local set is lost); off by default.
+            if (submittedLookup_ != nullptr && submittedLookup_->isSubmitted(target.bssid)) {
+                ++targetIndex_;
+                continue;
+            }
+            if (retuneTo(target.channel)) {
+                collector_.retarget(target.bssid, target.channel);
+                activeSink_.store(&handshakeConsumer_, std::memory_order_release);
+                phase_ = Phase::Capturing;
+                phaseDeadlineMs_ = nowMs + config_.captureWindowMs;
+                deauthDueMs_ = nowMs;  // armed: fire the first deauth burst on the first Capturing tick.
+                return;
+            }
+            ++targetIndex_;  // radio rejected this target's channel — skip it, never capture off-channel.
+        }
+        // This partition is exhausted. On the strong pass, drop to the below-floor one and re-walk from the
+        // top; on the weak pass, the whole enumeration is spent — sweep afresh (ADR-0068 #31).
+        if (!belowFloorPass_) {
+            belowFloorPass_ = true;
+            targetIndex_ = 0;
             continue;
         }
-        // Gate B (ADR-0061 #28): a BSSID wpa-sec already cracked is skipped like a channel-rejected one —
-        // never tuned to, captured, or (never being capturingBssid()) deauthed. Off by default (no lookup).
-        if (crackedLookup_ != nullptr && crackedLookup_->isCracked(target.bssid)) {
-            ++targetIndex_;
-            continue;
-        }
-        // Gate C (ADR-0065 #30): a BSSID we have already landed a valid handshake for at wpa-sec is
-        // skipped too — the general form of gate B (submitted ⊇ cracked), so we stop spending capture
-        // windows and deauth on it while it waits to be cracked, not just after. Complements gate B (the
-        // cracked floor stays authoritative even if this local set is lost); off by default (no lookup).
-        if (submittedLookup_ != nullptr && submittedLookup_->isSubmitted(target.bssid)) {
-            ++targetIndex_;
-            continue;
-        }
-        if (retuneTo(target.channel)) {
-            collector_.retarget(target.bssid, target.channel);
-            activeSink_.store(&handshakeConsumer_, std::memory_order_release);
-            phase_ = Phase::Capturing;
-            phaseDeadlineMs_ = nowMs + config_.captureWindowMs;
-            deauthDueMs_ = nowMs;  // armed: fire the first deauth burst on the first Capturing tick.
-            return;
-        }
-        ++targetIndex_;  // radio rejected this target's channel — skip it, never capture off-channel.
+        break;
     }
-    doEnterDiscovering(nowMs);  // no capturable target remained; sweep afresh.
+    doEnterDiscovering(nowMs);  // no capturable target remained in either partition; sweep afresh.
 }
 
 void HuntEngine::advanceTarget(uint32_t nowMs) {
+    // Always re-enter doStartCapturing: it owns partition exhaustion (flip to the below-floor pass, or
+    // re-discover when both are spent — ADR-0068 #31). Short-circuiting to doEnterDiscovering here, as this
+    // did before the floor, would skip the weak partition whenever the last strong target was the one just
+    // captured — forfeiting handshakes the "deprioritise, never skip" rule promises to still attempt.
     ++targetIndex_;
-    if (targetIndex_ < targetCount_) {
-        doStartCapturing(nowMs);
-    } else {
-        doEnterDiscovering(nowMs);  // whole enumeration cycled once; re-discover.
-    }
+    doStartCapturing(nowMs);
 }
 
 void HuntEngine::tick(uint32_t nowMs) {
@@ -130,6 +152,7 @@ void HuntEngine::tick(uint32_t nowMs) {
             if (reached(nowMs, phaseDeadlineMs_)) {
                 targetCount_ = registry_.count();  // snapshot; the table is append-only past here.
                 targetIndex_ = 0;
+                belowFloorPass_ = false;  // a new enumeration starts on the strong partition (ADR-0068 #31).
                 // Every phase change clears a sink, so it goes through one settle (ADR-0015 #4).
                 enterQuiesce(nowMs, targetCount_ == 0 ? Resume::Discovering : Resume::CaptureFromIndex);
             }
@@ -176,9 +199,9 @@ void HuntEngine::stop() {
     phase_ = Phase::Idle;
 }
 
-void HuntEngine::onFrame(const uint8_t* frame, uint16_t len) {
+void HuntEngine::onFrame(const uint8_t* frame, uint16_t len, int8_t rssi) {
     FrameConsumer* sink = activeSink_.load(std::memory_order_acquire);
-    if (sink != nullptr) sink->onFrame(frame, len);
+    if (sink != nullptr) sink->onFrame(frame, len, rssi);
 }
 
 const uint8_t* HuntEngine::capturingBssid() const {

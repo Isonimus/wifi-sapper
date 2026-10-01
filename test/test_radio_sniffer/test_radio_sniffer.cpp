@@ -28,9 +28,12 @@ static const uint8_t kClient[6] = {0x06, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
 void setUp(void) {}
 void tearDown(void) {}
 
-// Deliver a frame the way the radio would: through the FrameConsumer seam, not by calling ingest().
+// Deliver a frame the way the radio would: through the FrameConsumer seam, not by calling ingest(). The
+// seam carries an RSSI (ADR-0068 §4 #8); HandshakeConsumer ignores it (capture judges by frame content),
+// so any value serves — this suite asserts nothing about it.
+static constexpr int8_t kAnyRssi = -40;
 static void deliver(FrameConsumer& consumer, const std::vector<uint8_t>& frame) {
-    consumer.onFrame(frame.data(), static_cast<uint16_t>(frame.size()));
+    consumer.onFrame(frame.data(), static_cast<uint16_t>(frame.size()), kAnyRssi);
 }
 
 void test_onframe_delivers_frames_to_collector(void) {

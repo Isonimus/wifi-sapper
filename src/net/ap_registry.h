@@ -28,13 +28,21 @@ namespace sapper {
 /// environment; a fuller band sets overflowed() rather than silently dropping an AP (ADR-0013).
 constexpr size_t kMaxDiscoveredAps = 64;
 
+/// The RSSI an entry carries before a beacon has set it — the weakest possible value, so an entry that
+/// was somehow never populated sorts into the deprioritised below-floor partition rather than being
+/// treated as strong (ADR-0068 fail-toward-later-but-never-missed). Every recorded AP overwrites it with
+/// the signal the seam forwarded. (Not the probe's `kRssiUnknown` 0-dBm sentinel in rssi_histogram.h: a
+/// production entry always has a real reading, so there is no "unknown" to distinguish from 0 dBm here.)
+constexpr int8_t kRssiUnset = INT8_MIN;
+
 /// One discovered access point. `channel` is the beacon's DS-Parameter-Set channel, or the sweep
 /// channel it was heard on when that element is absent (0 only if neither was known).
 struct DiscoveredAp {
     uint8_t bssid[6] = {0};
     char ssid[33] = {0};  ///< Empty for a hidden network.
     uint8_t channel = 0;
-    bool isOpen = false;  ///< Open (unencrypted) BSS from the beacon Privacy bit — skipped in the hunt (ADR-0063).
+    bool isOpen = false;   ///< Open (unencrypted) BSS from the beacon Privacy bit — skipped in the hunt (ADR-0063).
+    int8_t rssi = kRssiUnset;  ///< Discovery-time (first-sighting) RSSI from the seam — orders the hunt (ADR-0068).
 };
 
 /**
@@ -47,9 +55,10 @@ struct DiscoveredAp {
  */
 class ApRegistry : public FrameConsumer {
 public:
-    /// Record a beacon's AP (see class contract). Runs in the driver-task callback on device — a
-    /// bounded, allocation-free parse, within §4 invariant #10 (ADR-0011 decision #3).
-    void onFrame(const uint8_t* frame, uint16_t len) override;
+    /// Record a beacon's AP (see class contract) with @p rssi its discovery-time signal strength. Runs in
+    /// the driver-task callback on device — a bounded, allocation-free parse, within §4 invariant #10
+    /// (ADR-0011 decision #3). The RSSI is stored verbatim; the seam interprets no protocol (ADR-0068).
+    void onFrame(const uint8_t* frame, uint16_t len, int8_t rssi) override;
 
     /// The channel the sweep is currently parked on, used as the fallback when a beacon carries no DS
     /// Parameter Set element. Set by the hop driver (app task) on each hop; read by onFrame.

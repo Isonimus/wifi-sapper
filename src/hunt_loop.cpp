@@ -203,6 +203,9 @@ uint32_t g_deauthHbDueMs = 0;
 // path, not a crack (slice-0018 Scenario G).
 const uint8_t kStimulusBssid[6] = {0x02, 0x53, 0x41, 0x50, 0x50, 0x52};
 const uint8_t kStimulusClient[6] = {0x06, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
+// A strong signal for the synthetic stimulus beacon so it lands in the above-floor partition and the
+// engine targets it (ADR-0068 #31) — the HUD stimulus relies on the engine capturing kStimulusBssid.
+constexpr int8_t kStimulusRssi = -40;
 
 // pcap on-the-wire is little-endian (kPcapMagicMicroseconds). Read the fields we need directly.
 uint16_t readLe16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8)); }
@@ -556,12 +559,12 @@ void huntLoopInjectHudStimulus() {
     uint8_t beacon[64];
     uint16_t bl = 0;
     buildStimulusBeacon(beacon, bl);
-    g_engine->onFrame(beacon, bl);
+    g_engine->onFrame(beacon, bl, kStimulusRssi);
 
     uint8_t frame[160];
     uint16_t len = 0;
     appendEapol(frame, len, kStimulusBssid, kStimulusClient, 0x0088, /*fromAp=*/true);   // M1 (Ack) only.
-    g_engine->onFrame(frame, len);
+    g_engine->onFrame(frame, len, kStimulusRssi);
 }
 
 void huntLoopInjectStimulus() {

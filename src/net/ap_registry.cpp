@@ -20,7 +20,7 @@ int ApRegistry::indexOf(const uint8_t* bssid) const {
     return -1;
 }
 
-void ApRegistry::onFrame(const uint8_t* frame, uint16_t len) {
+void ApRegistry::onFrame(const uint8_t* frame, uint16_t len, int8_t rssi) {
     if (!isBeacon(frame, len)) return;  // discovery reads beacons; ignore everything else.
     const uint8_t* bssid = frameBssid(frame, len);
     if (bssid == nullptr) return;  // too short to carry a BSSID.
@@ -43,6 +43,7 @@ void ApRegistry::onFrame(const uint8_t* frame, uint16_t len) {
     // sweeping only when the beacon does not state one (ADR-0013 decision #3).
     slot.channel = (advertised != 0) ? advertised : currentChannel_.load(std::memory_order_relaxed);
     slot.isOpen = beaconIsOpen(frame, len);  // recorded here so the hunt can skip an open AP (ADR-0063 #29).
+    slot.rssi = rssi;  // discovery-time (first-sighting) signal — orders the hunt by a floor (ADR-0068 #31).
 
     count_.store(n + 1, std::memory_order_release);
 }

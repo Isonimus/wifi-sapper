@@ -18,6 +18,11 @@
 
 namespace sapper_test {
 
+/// The RSSI deliver() stamps on a frame when a test does not specify one. Strong (above the ADR-0068
+/// kRssiFloor of -80), so a test that does not care about signal has all its beacons in the above-floor
+/// partition and sees the plain discovery-order target sequence the floor leaves unchanged there.
+constexpr int8_t kDefaultDeliverRssi = -40;
+
 class FakeRadioSniffer : public sapper::RadioSniffer {
 public:
     bool begin(uint8_t channel, sapper::FrameConsumer& consumer) override {
@@ -39,10 +44,11 @@ public:
 
     void stop() override { started_ = false; }
 
-    /// Deliver one raw frame into the installed consumer, as the promiscuous callback would.
-    void deliver(const std::vector<uint8_t>& frame) {
+    /// Deliver one raw frame into the installed consumer, as the promiscuous callback would, stamping it
+    /// with @p rssi (the receiver metadata the real seam forwards — ADR-0068 §4 #8).
+    void deliver(const std::vector<uint8_t>& frame, int8_t rssi = kDefaultDeliverRssi) {
         if (started_ && consumer_ != nullptr) {
-            consumer_->onFrame(frame.data(), static_cast<uint16_t>(frame.size()));
+            consumer_->onFrame(frame.data(), static_cast<uint16_t>(frame.size()), rssi);
         }
     }
 
