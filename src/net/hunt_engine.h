@@ -70,6 +70,21 @@ struct HuntConfig {
 /// (KISS); a future tuning pass would supersede this value, not make it runtime-configurable.
 constexpr int8_t kRssiFloor = -80;
 
+/// Never-captured-AP backoff (ADR-0070 #32): an AP that yields no wpa-sec-valid handshake in this many
+/// consecutive capture windows is treated as client-less/PMF (demonstrated unproductivity) and skipped in
+/// target selection for a cadence — reclaiming the windows the RSSI floor cannot (a strong client-less AP
+/// sits in the floor's first-attempted partition, so #31 cannot help it). Architecture-derived over the
+/// `field-2026-10-01` run, not a measurement (LEDGER tuning), like dwell/settle/deauth-cadence.
+constexpr uint16_t kBackoffMissThreshold = 3;
+/// Enumeration cycles a backed-off AP is suppressed before one re-attempt (ADR-0070 #32). Deprioritise for
+/// a cadence, never permanently skip: a client that associates later is still caught within this bound, and
+/// a still-empty retry re-suppresses it (one window per cadence, not a renewed N-window run).
+constexpr uint32_t kBackoffCadenceCycles = 5;
+/// The most APs the backoff table tracks at once — one discovery sweep's worth (ADR-0070 #32). Beyond it
+/// the least-penalised entry is evicted; a mis-eviction only drops a backoff (the AP is re-attempted),
+/// never a missed capture, so the bound fails toward attempting.
+constexpr size_t kMaxBackoffEntries = kMaxDiscoveredAps;
+
 /**
  * @brief Drives the endless discover→capture→discover loop over the capture seams.
  *
@@ -161,6 +176,20 @@ private:
     /// Build (pure) and transmit one broadcast frame of @p subtype at @p bssid; tally the outcome.
     void transmitDeauthFrame(ManagementSubtype subtype, const uint8_t bssid[6]);
 
+    /// Record how the capture window that just ended for @p bssid resolved, for the never-captured backoff
+    /// (ADR-0070 #32): @p captured true clears the AP's miss record (rehabilitated), false increments its
+    /// consecutive-miss count and, at kBackoffMissThreshold, suppresses it for kBackoffCadenceCycles cycles.
+    /// App task only (the Quiescing-resume handler), never onFrame — §4 #8/#10 hold.
+    void registerCaptureOutcome(const uint8_t* bssid, bool captured);
+    /// Whether @p bssid is currently in backoff (its suppression horizon is still ahead of the cycle
+    /// counter), so target selection skips it this cycle (ADR-0070 #32). App task only.
+    bool isBackedOff(const uint8_t* bssid) const;
+    /// Index of @p bssid in the packed backoff table, or -1 if not tracked (ADR-0070 #32).
+    int indexOfBackoff(const uint8_t* bssid) const;
+    /// Insert @p bssid into the backoff table (miss count 0), evicting the least-penalised entry if it is
+    /// full; returns its index (ADR-0070 #32). Eviction fails toward attempting — see kMaxBackoffEntries.
+    int insertBackoff(const uint8_t* bssid);
+
     RadioSniffer& sniffer_;
     ApRegistry& registry_;
     CaptureReadyObserver& observer_;
@@ -180,10 +209,22 @@ private:
     size_t targetCount_ = 0;        // snapshot of registry.count() at discovery's end.
     size_t targetIndex_ = 0;        // round-robin cursor into the snapshot.
     bool belowFloorPass_ = false;   // false = attempting the >= kRssiFloor partition, true = the below one (ADR-0068 #31).
+    uint32_t cycleCounter_ = 0;     // enumeration-cycle count (bumped at each discovery snapshot); drives backoff expiry (ADR-0070 #32).
     uint8_t parkedChannel_ = 0;     // the channel the radio last accepted.
     uint32_t deauthDueMs_ = 0;      // next-burst deadline while Capturing (armed); wrap-safe via reached().
     uint32_t deauthTxOk_ = 0;       // deauth/disassoc frames the seam accepted.
     uint32_t deauthTxFail_ = 0;     // deauth/disassoc frames the seam rejected.
+
+    /// One tracked AP's capture-attempt history for the never-captured backoff (ADR-0070 #32). The table is
+    /// a packed array scanned linearly (<= kMaxDiscoveredAps entries, app-task only), so no index structure
+    /// earns its keep at this size (KISS).
+    struct BackoffEntry {
+        uint8_t bssid[6] = {0};
+        uint16_t consecutiveMisses = 0;  // empty capture windows in a row; reset only by a capture.
+        uint32_t backoffUntilCycle = 0;  // skipped while cycleCounter_ < this; 0 = not currently backed off.
+    };
+    BackoffEntry backoff_[kMaxBackoffEntries];
+    size_t backoffCount_ = 0;  // occupied entries, packed in [0, backoffCount_).
 };
 
 }  // namespace sapper

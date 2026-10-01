@@ -821,6 +821,193 @@ void test_discovery_order_is_kept_within_a_partition_no_rssi_sort(void) {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(kApC, order[2].data(), 6);  // weak partition last.
 }
 
+// --- Never-captured-AP backoff (slice-0071 Scenarios A-D; ADR-0070 #32) -----------------------------
+
+struct CycleAp {
+    const uint8_t* bssid;
+    int channel;
+};
+
+static bool orderContains(const std::vector<std::array<uint8_t, 6>>& order, const uint8_t* bssid) {
+    for (const auto& b : order) {
+        if (std::memcmp(b.data(), bssid, 6) == 0) return true;
+    }
+    return false;
+}
+
+// Run one full discover -> capture-every-selected-target -> re-discover cycle. Delivers a beacon for each AP
+// in `present`, runs discovery to its deadline, then walks every capture window the selection produces,
+// delivering a wpa-sec-valid handshake for any attempted target whose bssid is in `productive` (the rest
+// time out empty). Returns the bssids that entered Capturing this cycle, in attempt order. Precondition: the
+// engine is Discovering with its window based at *now; postcondition: the same, ready for the next cycle.
+static std::vector<std::array<uint8_t, 6>> runCycle(HuntEngine& engine, FakeRadioSniffer& sniffer,
+                                                    uint32_t& now, const std::vector<CycleAp>& present,
+                                                    const std::vector<const uint8_t*>& productive) {
+    const HuntConfig cfg = testConfig();
+    for (const CycleAp& ap : present) sniffer.deliver(buildBeacon(ap.bssid, "Net", ap.channel));
+    now += cfg.discoverWindowMs;
+    engine.tick(now);  // discovery deadline -> snapshot (a new enumeration cycle) -> quiesce toward capture.
+
+    std::vector<std::array<uint8_t, 6>> attempted;
+    for (;;) {
+        now += cfg.settleMs;
+        engine.tick(now);  // resolve the quiesce -> Capturing the next target, or Discovering (cycle done).
+        if (engine.phase() == HuntEngine::Phase::Discovering) break;
+        TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+        std::array<uint8_t, 6> b{};
+        std::memcpy(b.data(), engine.capturingBssid(), 6);
+        attempted.push_back(b);
+
+        bool isProductive = false;
+        for (const uint8_t* p : productive) {
+            if (std::memcmp(p, b.data(), 6) == 0) {
+                isProductive = true;
+                break;
+            }
+        }
+        if (isProductive) {
+            deliverHandshake(sniffer, b.data(), sniffer.currentChannel);
+            now += 1;
+            engine.tick(now);  // wpa-sec valid -> quiesce toward report + advance.
+        } else {
+            now += cfg.captureWindowMs;
+            engine.tick(now);  // window times out -> quiesce toward advance (no report).
+        }
+    }
+    return attempted;
+}
+
+void test_never_capturing_ap_is_backed_off_after_the_threshold(void) {
+    // Scenario A: kApA beacons every cycle but never completes a handshake; kApB always does. After
+    // kBackoffMissThreshold empty windows kApA is skipped in target selection (its windows reclaimed) while
+    // kApB is still attempted every cycle. Fail-before: without the backoff skip kApA is attempted forever.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    const std::vector<CycleAp> present = {{kApA, 1}, {kApB, 6}};
+    const std::vector<const uint8_t*> onlyB = {kApB};
+    uint32_t now = 0;
+
+    // The threshold cycles: kApA is attempted (and misses) each time, kApB captured each time.
+    for (uint16_t c = 0; c < kBackoffMissThreshold; ++c) {
+        const auto order = runCycle(engine, sniffer, now, present, onlyB);
+        TEST_ASSERT_TRUE(orderContains(order, kApA));  // still attempted while below the threshold.
+        TEST_ASSERT_TRUE(orderContains(order, kApB));
+    }
+    // The next cycle: kApA has hit the threshold, so it is now skipped; kApB is still attempted.
+    const auto afterBackoff = runCycle(engine, sniffer, now, present, onlyB);
+    TEST_ASSERT_FALSE(orderContains(afterBackoff, kApA));  // backed off — its window is reclaimed.
+    TEST_ASSERT_TRUE(orderContains(afterBackoff, kApB));
+}
+
+void test_backed_off_ap_is_reattempted_after_the_cadence(void) {
+    // Scenario B (deprioritise for a cadence, never permanently skip): once kApA is backed off it is skipped
+    // for the cadence, then attempted again; the still-empty retry re-suppresses it (one window per cadence).
+    // Fail-before: a permanent skip would never re-attempt kApA.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    const std::vector<CycleAp> present = {{kApA, 1}, {kApB, 6}};
+    const std::vector<const uint8_t*> onlyB = {kApB};
+    uint32_t now = 0;
+
+    // Drive kApA into backoff: its horizon is set on the threshold-th miss cycle.
+    for (uint16_t c = 0; c < kBackoffMissThreshold; ++c) runCycle(engine, sniffer, now, present, onlyB);
+
+    // Suppressed for the next (kBackoffCadenceCycles - 1) cycles ...
+    for (uint32_t c = 0; c < kBackoffCadenceCycles - 1; ++c) {
+        const auto order = runCycle(engine, sniffer, now, present, onlyB);
+        TEST_ASSERT_FALSE(orderContains(order, kApA));
+    }
+    // ... re-attempted on the cadence boundary (the single retry window) ...
+    const auto retry = runCycle(engine, sniffer, now, present, onlyB);
+    TEST_ASSERT_TRUE(orderContains(retry, kApA));
+    // ... and, the retry being empty too, suppressed again the very next cycle (one window per cadence).
+    const auto reSuppressed = runCycle(engine, sniffer, now, present, onlyB);
+    TEST_ASSERT_FALSE(orderContains(reSuppressed, kApA));
+}
+
+void test_capture_clears_the_backoff_miss_count(void) {
+    // Scenario C: kApA accrues misses below the threshold, then captures — which resets its count, so it
+    // takes a fresh full threshold of misses to back off again (it is never backed off within this run).
+    // Fail-before: without the capture-clear the pre-capture misses persist and kApA backs off early.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    const std::vector<CycleAp> present = {{kApA, 1}, {kApB, 6}};
+    const std::vector<const uint8_t*> bothProductive = {kApA, kApB};
+    const std::vector<const uint8_t*> onlyB = {kApB};
+    uint32_t now = 0;
+
+    // Two empty windows for kApA (misses -> 2, one below the threshold of 3) ...
+    runCycle(engine, sniffer, now, present, onlyB);
+    runCycle(engine, sniffer, now, present, onlyB);
+    // ... then a capture, which resets kApA's miss count to zero ...
+    const auto captured = runCycle(engine, sniffer, now, present, bothProductive);
+    TEST_ASSERT_TRUE(orderContains(captured, kApA));
+    // ... so two more empty windows (misses -> 2 again, not 4) still leave it below the threshold: kApA is
+    // attempted on the cycle where, without the reset, it would already be backed off.
+    runCycle(engine, sniffer, now, present, onlyB);
+    const auto stillAttempted = runCycle(engine, sniffer, now, present, onlyB);
+    TEST_ASSERT_TRUE(orderContains(stillAttempted, kApA));
+}
+
+void test_productive_hunt_is_never_backed_off(void) {
+    // Scenario D (gated on misses): APs that capture within the threshold are never backed off — the pre-ADR
+    // target sequence holds. Both APs capture every cycle and both stay attempted well past the
+    // threshold+cadence span. Proves backoff is miss-driven, never an over-eager filter.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    const std::vector<CycleAp> present = {{kApA, 1}, {kApB, 6}};
+    const std::vector<const uint8_t*> both = {kApA, kApB};
+    uint32_t now = 0;
+
+    const uint32_t cycles = kBackoffMissThreshold + kBackoffCadenceCycles + 2;
+    for (uint32_t c = 0; c < cycles; ++c) {
+        const auto order = runCycle(engine, sniffer, now, present, both);
+        TEST_ASSERT_TRUE(orderContains(order, kApA));
+        TEST_ASSERT_TRUE(orderContains(order, kApB));
+    }
+}
+
+void test_all_backed_off_degrades_to_rediscovery_not_a_spin(void) {
+    // Scenario D fall-through: once every discovered AP is backed off, the selection loop exhausts both floor
+    // passes and falls through to a fresh discovery sweep — never a busy-loop, never a capture.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    const std::vector<CycleAp> present = {{kApA, 1}, {kApB, 6}};
+    const std::vector<const uint8_t*> none = {};
+    uint32_t now = 0;
+
+    // Both APs never capture: after the threshold both are backed off.
+    for (uint16_t c = 0; c < kBackoffMissThreshold; ++c) {
+        const auto order = runCycle(engine, sniffer, now, present, none);
+        TEST_ASSERT_EQUAL_UINT32(2, order.size());  // both still attempted while below the threshold.
+    }
+    // The next cycle: both backed off -> selection skips all -> re-discovery, no capture, no spin.
+    const auto afterBackoff = runCycle(engine, sniffer, now, present, none);
+    TEST_ASSERT_EQUAL_UINT32(0, afterBackoff.size());  // nothing attempted.
+    TEST_ASSERT_EQUAL_UINT32(0, observer.captured.size());
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Discovering), static_cast<int>(engine.phase()));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_discovers_then_captures_then_advances);
@@ -850,5 +1037,10 @@ int main(int, char**) {
     RUN_TEST(test_strong_ap_is_attempted_before_a_weaker_one);
     RUN_TEST(test_weak_ap_is_still_captured_when_nothing_stronger_remains);
     RUN_TEST(test_discovery_order_is_kept_within_a_partition_no_rssi_sort);
+    RUN_TEST(test_never_capturing_ap_is_backed_off_after_the_threshold);
+    RUN_TEST(test_backed_off_ap_is_reattempted_after_the_cadence);
+    RUN_TEST(test_capture_clears_the_backoff_miss_count);
+    RUN_TEST(test_productive_hunt_is_never_backed_off);
+    RUN_TEST(test_all_backed_off_degrades_to_rediscovery_not_a_spin);
     return UNITY_END();
 }

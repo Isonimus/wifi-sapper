@@ -111,6 +111,15 @@ void HuntEngine::doStartCapturing(uint32_t nowMs) {
                 ++targetIndex_;
                 continue;
             }
+            // Never-captured-AP backoff (ADR-0070 #32): an AP that yielded no handshake in
+            // kBackoffMissThreshold consecutive windows is skipped for a cadence — reclaiming the windows a
+            // strong client-less/PMF AP spends every cycle, which the RSSI floor cannot (#31: such an AP is
+            // in the first-attempted partition). Deprioritise for a cadence, never permanently skip: the
+            // suppression lifts after kBackoffCadenceCycles cycles, then the AP is retried.
+            if (isBackedOff(target.bssid)) {
+                ++targetIndex_;
+                continue;
+            }
             if (retuneTo(target.channel)) {
                 collector_.retarget(target.bssid, target.channel);
                 activeSink_.store(&handshakeConsumer_, std::memory_order_release);
@@ -142,6 +151,59 @@ void HuntEngine::advanceTarget(uint32_t nowMs) {
     doStartCapturing(nowMs);
 }
 
+int HuntEngine::indexOfBackoff(const uint8_t* bssid) const {
+    for (size_t i = 0; i < backoffCount_; ++i) {
+        if (std::memcmp(backoff_[i].bssid, bssid, 6) == 0) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool HuntEngine::isBackedOff(const uint8_t* bssid) const {
+    const int idx = indexOfBackoff(bssid);
+    return idx >= 0 && backoff_[idx].backoffUntilCycle > cycleCounter_;
+}
+
+int HuntEngine::insertBackoff(const uint8_t* bssid) {
+    size_t slot;
+    if (backoffCount_ < kMaxBackoffEntries) {
+        slot = backoffCount_++;
+    } else {
+        // Table full: evict the least-penalised entry — the smallest suppression horizon, so a
+        // capture-cleared (horizon 0) or already-expired slot goes before an actively-backed-off one.
+        slot = 0;
+        for (size_t i = 1; i < backoffCount_; ++i) {
+            if (backoff_[i].backoffUntilCycle < backoff_[slot].backoffUntilCycle) slot = i;
+        }
+    }
+    BackoffEntry& entry = backoff_[slot];
+    std::memcpy(entry.bssid, bssid, 6);
+    entry.consecutiveMisses = 0;
+    entry.backoffUntilCycle = 0;
+    return static_cast<int>(slot);
+}
+
+void HuntEngine::registerCaptureOutcome(const uint8_t* bssid, bool captured) {
+    int idx = indexOfBackoff(bssid);
+    if (captured) {
+        // A productive AP: clear its history so it is treated as fully productive from here (ADR-0070 #2).
+        // The now-inert slot (horizon 0) stays — it is the first the eviction scan reclaims.
+        if (idx >= 0) {
+            backoff_[idx].consecutiveMisses = 0;
+            backoff_[idx].backoffUntilCycle = 0;
+        }
+        return;
+    }
+    // An empty capture window. Track the AP (inserting, evicting the least-penalised slot if full), count
+    // the miss, and at the threshold suppress it for the cadence. The count resets only on a capture, so a
+    // still-empty retry after the cadence immediately re-crosses the threshold — one window per cadence.
+    if (idx < 0) idx = insertBackoff(bssid);
+    BackoffEntry& entry = backoff_[static_cast<size_t>(idx)];
+    if (entry.consecutiveMisses < UINT16_MAX) ++entry.consecutiveMisses;
+    if (entry.consecutiveMisses >= kBackoffMissThreshold) {
+        entry.backoffUntilCycle = cycleCounter_ + kBackoffCadenceCycles;
+    }
+}
+
 void HuntEngine::tick(uint32_t nowMs) {
     switch (phase_) {
         case Phase::Idle:
@@ -153,6 +215,7 @@ void HuntEngine::tick(uint32_t nowMs) {
                 targetCount_ = registry_.count();  // snapshot; the table is append-only past here.
                 targetIndex_ = 0;
                 belowFloorPass_ = false;  // a new enumeration starts on the strong partition (ADR-0068 #31).
+                ++cycleCounter_;  // a new enumeration cycle: advances every AP's backoff horizon (ADR-0070 #32).
                 // Every phase change clears a sink, so it goes through one settle (ADR-0015 #4).
                 enterQuiesce(nowMs, targetCount_ == 0 ? Resume::Discovering : Resume::CaptureFromIndex);
             }
@@ -182,9 +245,11 @@ void HuntEngine::tick(uint32_t nowMs) {
                 case Resume::ReportThenAdvance:
                     // Safe read: the router is aimed away and settled, so no onFrame is mid-ingest.
                     observer_.onCaptureReady(collector_.handshake());
+                    registerCaptureOutcome(collector_.handshake().bssid, /*captured=*/true);  // rehabilitate (ADR-0070 #32).
                     advanceTarget(nowMs);
                     return;
                 case Resume::AdvanceNoReport:
+                    registerCaptureOutcome(collector_.handshake().bssid, /*captured=*/false);  // an empty window (ADR-0070 #32).
                     advanceTarget(nowMs);
                     return;
             }
