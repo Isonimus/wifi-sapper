@@ -1,0 +1,18 @@
+RSSI-to-capture correlation (ADR-0067) — identity-free, no BSSID recorded
+generated: 2026-10-01T11:31:16.207Z
+run tag:   field-2026-10-01
+
+attempts total: 1330    captured total: 117
+
+band                    captured / total   rate
+----                    ----------------   ----
+>= -50 (very strong)         0 / 68       0.0%
+-50..-60 (strong)            0 / 1        0.0%
+-60..-70 (moderate)         42 / 55       76.4%
+-70..-80 (weak)             59 / 123      48.0%
+< -80 (very weak)           16 / 808      2.0%
+rssi=na (unknown)            0 / 275      0.0%
+
+Read: a monotonically higher rate toward stronger bands is the signal that RSSI-ordering
+would raise yield (justifies widening §4 #8). A flat rate across bands is the null result
+that kills RSSI-ordering. Put the table in the follow-up seam-decision ADR.
