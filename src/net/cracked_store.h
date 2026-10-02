@@ -33,6 +33,12 @@ namespace sapper {
 struct CrackedEntry {
     CrackedResult result;              ///< BSSID (the map key), ESSID, and the recovered password.
     uint32_t firstSeenCrackedMs = 0;   ///< millis() when first stored; lower == older for eviction.
+    /// Wall-clock epoch (seconds) of the last real crack/re-crack — the rotated-PSK re-verification timer
+    /// (ADR-0072). Distinct from the millis() eviction key above: stamped by apply(New|Changed) from the
+    /// manifest's cached verification clock, never by apply(Unchanged). 0 == never verified in wall-clock
+    /// terms (a migrated pre-CRK2 record or a first-window entry), which is due as soon as a real clock
+    /// exists. Persisted in the CRK2 record layout.
+    uint32_t lastVerifiedEpoch = 0;
 };
 
 /// Where the account's cracked mirror persists between syncs. Backed by LittleFS on-device and an

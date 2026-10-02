@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "net/cracked_manifest.h"
+#include "net/reverification.h"  // kReverifyIntervalSec / kMinRealEpoch for the cadence tests (ADR-0072).
 #include "support/fake_cracked_store.h"
 
 using namespace sapper;
@@ -188,6 +189,71 @@ void test_is_cracked_is_manifest_membership(void) {
     TEST_ASSERT_TRUE((manifest.find(absent) != nullptr) == manifest.isCracked(absent));
 }
 
+// --- Rotated-PSK re-verification cadence (ADR-0072, §4 #33). ---
+
+/// A valid wall-clock epoch (well above the real-clock threshold) to key the cadence tests on.
+static constexpr uint32_t kBaseEpoch = kMinRealEpoch + 1000000u;
+
+// Scenario A: a cracked entry gone stale against the verification clock is reported not-cracked, so gates
+// A/B re-enable it; one within the interval is still reported cracked.
+void test_stale_cracked_entry_is_reverification_eligible(void) {
+    FakeCrackedStore store;
+    CrackedManifest manifest(store);
+    TEST_ASSERT_TRUE(manifest.begin());
+
+    const uint8_t bssid[6] = {0xaa, 0, 0, 0, 0, 1};
+    manifest.setVerificationClock(kBaseEpoch);
+    manifest.apply(makeResult(1, "Net1", "pw1"), 1000);   // cracked, verified at kBaseEpoch.
+    TEST_ASSERT_TRUE(manifest.isCracked(bssid));           // fresh → still a member (skipped).
+
+    manifest.setVerificationClock(kBaseEpoch + kReverifyIntervalSec - 1);
+    TEST_ASSERT_TRUE(manifest.isCracked(bssid));           // one second inside the interval → still fresh.
+
+    manifest.setVerificationClock(kBaseEpoch + kReverifyIntervalSec);
+    TEST_ASSERT_FALSE(manifest.isCracked(bssid));          // interval elapsed → due, reported not-cracked.
+}
+
+// Scenario C: apply stamps the re-verification timer on a real crack (New) and re-crack (Changed), but
+// NOT on Unchanged — the hourly re-download of a known crack must not reset the timer, or nothing would
+// ever go stale (ADR-0072 decision 4). This is the central correctness point of the cadence.
+void test_apply_stamps_the_timer_except_on_unchanged(void) {
+    FakeCrackedStore store;
+    CrackedManifest manifest(store);
+    TEST_ASSERT_TRUE(manifest.begin());
+    const uint8_t bssid[6] = {0xaa, 0, 0, 0, 0, 1};
+
+    manifest.setVerificationClock(kBaseEpoch);
+    TEST_ASSERT_EQUAL(static_cast<int>(ApplyOutcome::New),
+                      static_cast<int>(manifest.apply(makeResult(1, "Net1", "pw1"), 1000)));
+    TEST_ASSERT_EQUAL_UINT32(kBaseEpoch, manifest.find(bssid)->lastVerifiedEpoch);  // New stamps.
+
+    // A re-download of the SAME crack at a later clock: Unchanged, timer must stay put.
+    manifest.setVerificationClock(kBaseEpoch + 50000);
+    TEST_ASSERT_EQUAL(static_cast<int>(ApplyOutcome::Unchanged),
+                      static_cast<int>(manifest.apply(makeResult(1, "Net1", "pw1"), 5000)));
+    TEST_ASSERT_EQUAL_UINT32(kBaseEpoch, manifest.find(bssid)->lastVerifiedEpoch);  // NOT re-stamped.
+
+    // A rotated PSK (Changed) is a real re-crack: re-stamp fresh at the current clock.
+    TEST_ASSERT_EQUAL(static_cast<int>(ApplyOutcome::Changed),
+                      static_cast<int>(manifest.apply(makeResult(1, "Net1", "pw2"), 9000)));
+    TEST_ASSERT_EQUAL_UINT32(kBaseEpoch + 50000, manifest.find(bssid)->lastVerifiedEpoch);  // re-stamped.
+}
+
+// Scenario D: before the first NTP sync (clock below kMinRealEpoch) the cadence is inert — every member is
+// reported cracked exactly as before the cadence existed, so a clockless device never re-verifies.
+void test_cracked_cadence_is_inert_without_a_real_clock(void) {
+    FakeCrackedStore store;
+    CrackedManifest manifest(store);
+    TEST_ASSERT_TRUE(manifest.begin());
+    const uint8_t bssid[6] = {0xaa, 0, 0, 0, 0, 1};
+
+    manifest.apply(makeResult(1, "Net1", "pw1"), 1000);  // stamped with the default ~0 clock (no sync yet).
+    TEST_ASSERT_TRUE(manifest.isCracked(bssid));          // member reported cracked (pre-cadence behaviour).
+
+    manifest.setVerificationClock(kMinRealEpoch - 1);     // still below the real-clock threshold.
+    TEST_ASSERT_TRUE(manifest.isCracked(bssid));          // never stale without a real clock.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_apply_new_bssid_is_new_and_stored);
@@ -200,5 +266,8 @@ int main(int, char**) {
     RUN_TEST(test_begin_fails_loud_on_store_error);
     RUN_TEST(test_flush_persists_entries_and_fresh_flag);
     RUN_TEST(test_flush_fails_loud_on_store_error);
+    RUN_TEST(test_stale_cracked_entry_is_reverification_eligible);
+    RUN_TEST(test_apply_stamps_the_timer_except_on_unchanged);
+    RUN_TEST(test_cracked_cadence_is_inert_without_a_real_clock);
     return UNITY_END();
 }

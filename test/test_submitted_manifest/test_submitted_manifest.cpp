@@ -11,6 +11,7 @@
 #include <cstring>
 #include <vector>
 
+#include "net/reverification.h"  // kReverifyIntervalSec / kMinRealEpoch for the cadence tests (ADR-0072).
 #include "net/submitted_manifest.h"
 
 #include "../support/fake_submitted_store.h"
@@ -128,6 +129,72 @@ void test_save_failure_is_surfaced(void) {
     TEST_ASSERT_FALSE(m.flushSubmitted());  // a store write failure is surfaced, not swallowed.
 }
 
+// --- Rotated-PSK re-verification cadence (ADR-0072, §4 #33). ---
+
+/// A valid wall-clock epoch (well above the real-clock threshold) to key the cadence tests on.
+static constexpr uint32_t kBaseEpoch = kMinRealEpoch + 1000000u;
+
+// Scenario A: a submitted entry gone stale against the verification clock is reported not-submitted, so
+// gate C re-enables it; one within the interval is still reported submitted.
+void test_stale_submitted_entry_is_reverification_eligible(void) {
+    FakeSubmittedStore store;
+    SubmittedManifest m(store);
+    TEST_ASSERT_TRUE(m.begin());
+
+    uint8_t x[6];
+    bssidOf(1, x);
+    m.setVerificationClock(kBaseEpoch);
+    m.markSubmitted(x, 100);                        // verified at kBaseEpoch.
+    TEST_ASSERT_TRUE(m.isSubmitted(x));             // fresh → still a member (skipped).
+
+    m.setVerificationClock(kBaseEpoch + kReverifyIntervalSec - 1);
+    TEST_ASSERT_TRUE(m.isSubmitted(x));             // one second inside the interval → still fresh.
+
+    m.setVerificationClock(kBaseEpoch + kReverifyIntervalSec);
+    TEST_ASSERT_FALSE(m.isSubmitted(x));            // interval elapsed → due, reported not-submitted.
+}
+
+// Scenario B: re-marking a held BSSID (a terminal re-upload) re-stamps the re-verification timer and
+// re-suppresses it, while the uploadedAt eviction key is left untouched.
+void test_remark_bumps_the_reverification_timer_keeping_uploadedAt(void) {
+    FakeSubmittedStore store;
+    SubmittedManifest m(store);
+    TEST_ASSERT_TRUE(m.begin());
+
+    uint8_t x[6];
+    bssidOf(1, x);
+    m.setVerificationClock(kBaseEpoch);
+    m.markSubmitted(x, 100);                        // uploadedAt=100, verified=kBaseEpoch.
+
+    m.setVerificationClock(kBaseEpoch + kReverifyIntervalSec);
+    TEST_ASSERT_FALSE(m.isSubmitted(x));            // stale → due for re-verification.
+
+    m.markSubmitted(x, 777);                        // the re-upload re-marks at the current clock.
+    TEST_ASSERT_TRUE(m.isSubmitted(x));             // re-suppressed: fresh again for another interval.
+    TEST_ASSERT_EQUAL_UINT32(1, m.size());          // still one record (membership, not a second row).
+
+    TEST_ASSERT_TRUE(m.flushSubmitted());
+    TEST_ASSERT_EQUAL_UINT32(100, store.entries()[0].uploadedAt);  // eviction key unchanged (not 777).
+    TEST_ASSERT_EQUAL_UINT32(kBaseEpoch + kReverifyIntervalSec,
+                             store.entries()[0].lastVerifiedEpoch);  // re-verification timer bumped.
+}
+
+// Scenario D: before the first NTP sync (clock below kMinRealEpoch) the cadence is inert — every member is
+// reported submitted exactly as before the cadence existed, so a clockless device never re-verifies.
+void test_cadence_is_inert_without_a_real_clock(void) {
+    FakeSubmittedStore store;
+    SubmittedManifest m(store);
+    TEST_ASSERT_TRUE(m.begin());
+
+    uint8_t x[6];
+    bssidOf(1, x);
+    m.markSubmitted(x, 100);                        // marked with the default ~0 clock (no sync yet).
+    TEST_ASSERT_TRUE(m.isSubmitted(x));             // member reported submitted (pre-cadence behaviour).
+
+    m.setVerificationClock(kMinRealEpoch - 1);      // still below the real-clock threshold.
+    TEST_ASSERT_TRUE(m.isSubmitted(x));             // never stale without a real clock.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_marks_and_reads_membership);
@@ -136,5 +203,8 @@ int main(int, char**) {
     RUN_TEST(test_bounds_and_evicts_oldest);
     RUN_TEST(test_load_failure_is_surfaced);
     RUN_TEST(test_save_failure_is_surfaced);
+    RUN_TEST(test_stale_submitted_entry_is_reverification_eligible);
+    RUN_TEST(test_remark_bumps_the_reverification_timer_keeping_uploadedAt);
+    RUN_TEST(test_cadence_is_inert_without_a_real_clock);
     return UNITY_END();
 }

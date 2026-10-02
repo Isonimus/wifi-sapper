@@ -32,6 +32,12 @@ namespace sapper {
 struct SubmittedEntry {
     uint8_t bssid[6] = {0};
     uint32_t uploadedAt = 0;  ///< millis() when first recorded; lower == older for eviction.
+    /// Wall-clock epoch (seconds) of the last submission — the rotated-PSK re-verification timer
+    /// (ADR-0072). Distinct from the millis() eviction key above: stamped by markSubmitted (both a new and
+    /// a held BSSID) from the manifest's cached verification clock, so a re-upload re-suppresses the
+    /// network while uploadedAt (the eviction order) is left intact. 0 == never verified in wall-clock
+    /// terms (a migrated pre-SUB2 record or a first-window entry). Persisted in the SUB2 record layout.
+    uint32_t lastVerifiedEpoch = 0;
 };
 
 /// Where the submitted set persists between drains. Backed by LittleFS on-device and an in-RAM fake on

@@ -84,8 +84,16 @@ bool LittleFsCrackedStore::load(CrackedEntry* out, size_t capacity, size_t& coun
     }
 
     // Validate magic bytes.
-    if (headerBuf[0] != 'C' || headerBuf[1] != 'R' || headerBuf[2] != 'K' || headerBuf[3] != '1') {
+    if (headerBuf[0] != 'C' || headerBuf[1] != 'R' || headerBuf[2] != 'K') {
         Serial.println("[ERROR] cracked manifest bad magic");
+        f.close();
+        return false;
+    }
+    // Accept both the pre-ADR-0072 CRK1 layout and the current CRK2 (adds lastVerifiedEpoch per record). An
+    // unknown version stays a loud failure, never a silent reinterpret (quality bar §3).
+    const bool isV2 = headerBuf[3] == '2';
+    if (headerBuf[3] != '1' && !isV2) {
+        Serial.println("[ERROR] cracked manifest bad version");
         f.close();
         return false;
     }
@@ -135,6 +143,20 @@ bool LittleFsCrackedStore::load(CrackedEntry* out, size_t capacity, size_t& coun
             return false;
         }
         entry.firstSeenCrackedMs = readU32LE(buf);
+
+        // Read lastVerifiedEpoch (4 bytes, uint32 LE) — CRK2 only. A CRK1 record lacks it; default it to 0
+        // (never verified in wall-clock terms), due as soon as a real clock exists: the one-time
+        // post-upgrade re-verify burst (ADR-0072 decision 7).
+        if (isV2) {
+            if (f.read(buf, 4) != 4) {
+                Serial.println("[ERROR] cracked manifest short record (verified)");
+                f.close();
+                return false;
+            }
+            entry.lastVerifiedEpoch = readU32LE(buf);
+        } else {
+            entry.lastVerifiedEpoch = 0;
+        }
     }
 
     f.close();
@@ -166,7 +188,7 @@ bool LittleFsCrackedStore::save(const CrackedEntry* entries, size_t count, bool 
     headerBuf[0] = 'C';
     headerBuf[1] = 'R';
     headerBuf[2] = 'K';
-    headerBuf[3] = '1';
+    headerBuf[3] = '2';  // always write the current layout; a prior CRK1 file is migrated on this save.
     headerBuf[4] = freshManifest ? 1 : 0;
     writeU16LE(&headerBuf[5], static_cast<uint16_t>(count));
 
@@ -210,6 +232,16 @@ bool LittleFsCrackedStore::save(const CrackedEntry* entries, size_t count, bool 
         writeU32LE(tsBuf, entry.firstSeenCrackedMs);
         if (f.write(tsBuf, 4) != 4) {
             Serial.println("[ERROR] cracked manifest temp record write failed (timestamp)");
+            f.close();
+            LittleFS.remove(kCrackedTempPath);
+            return false;
+        }
+
+        // Write lastVerifiedEpoch (4 bytes, uint32 LE) — the re-verification timer (ADR-0072, CRK2).
+        uint8_t verBuf[4];
+        writeU32LE(verBuf, entry.lastVerifiedEpoch);
+        if (f.write(verBuf, 4) != 4) {
+            Serial.println("[ERROR] cracked manifest temp record write failed (verified)");
             f.close();
             LittleFS.remove(kCrackedTempPath);
             return false;

@@ -26,6 +26,7 @@
 
 #include "net/cracked_lookup.h"
 #include "net/cracked_store.h"
+#include "net/reverification.h"  // reverifyDue(): the rotated-PSK staleness test (ADR-0072).
 
 namespace sapper {
 
@@ -79,8 +80,20 @@ public:
     const CrackedEntry* find(const uint8_t bssid[6]) const;
 
     /// CrackedLookup (ADR-0059): "have we already recovered this BSSID's PSK?" — manifest membership
-    /// over the same find() read path, so the upload/targeting gates never grow a parallel parse.
-    bool isCracked(const uint8_t bssid[6]) const override { return find(bssid) != nullptr; }
+    /// over the same find() read path, so the upload/targeting gates never grow a parallel parse. Now
+    /// re-verification-aware (ADR-0072 decision 2): a held entry gone stale against the cached verification
+    /// clock answers *false*, so gate A (drain drop) and gate B (target skip) both re-enable it for one
+    /// re-capture/re-upload pass. Inert until setVerificationClock is fed a real epoch (kMinRealEpoch
+    /// guard), so the pre-cadence behaviour holds verbatim before the first NTP sync.
+    bool isCracked(const uint8_t bssid[6]) const override {
+        const CrackedEntry* e = find(bssid);
+        return e != nullptr && !reverifyDue(e->lastVerifiedEpoch, nowEpoch_);
+    }
+
+    /// Feed the current wall-clock epoch for the re-verification cadence (ADR-0072 decision 3). The device
+    /// loop sets it from std::time(nullptr); the pure manifest never reads a clock itself (host-testable).
+    /// App-task only, like every other manifest access (§4 #8/#10 untouched — never on the onFrame path).
+    void setVerificationClock(uint32_t nowEpoch) { nowEpoch_ = nowEpoch; }
 
     /// The @p i-th mirrored entry (0..size()-1), or nullptr if out of range. Lets a surface enumerate
     /// the whole account — the Maintenance dashboard (ADR-0039) — through this seam rather than parsing
@@ -97,6 +110,7 @@ private:
     CrackedEntry entries_[kMaxCrackedEntries];
     size_t count_ = 0;
     bool fresh_ = true;
+    uint32_t nowEpoch_ = 0;  ///< cached wall-clock for the re-verification cadence (ADR-0072); 0 = no real clock yet.
 };
 
 }  // namespace sapper

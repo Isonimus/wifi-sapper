@@ -9,6 +9,7 @@
 #include <Arduino.h>
 
 #include <cstring>
+#include <ctime>  // std::time: the wall-clock feed for the rotated-PSK re-verification cadence (ADR-0072).
 #include <new>
 
 #include "config/active_board.h"
@@ -364,6 +365,14 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
 void huntLoopPump() {
     if (!g_running) return;
     const uint32_t now = millis();
+    // Feed the real wall-clock to the rotated-PSK re-verification cadence (ADR-0072, §4 #33). std::time is
+    // ~0 until the first STA window runs syncClock() (NTP), below kMinRealEpoch, so the cadence is inert
+    // until then — the manifests guard on it. Set before the engine/supervisor tick so this iteration's
+    // target selection and drain see the current clock. The gates read it on the app task only; onFrame is
+    // untouched (§4 #8/#10).
+    const uint32_t nowEpoch = static_cast<uint32_t>(std::time(nullptr));
+    g_manifest.setVerificationClock(nowEpoch);
+    g_submitted.setVerificationClock(nowEpoch);
     g_engine->tick(now);
     g_supervisor->tick(now);   // publishes DrainStarted/DrainCompleted (and runs a due sync) onto the bus.
     g_ledSurface.tick(now);    // after the supervisor, so a status published this iteration shows now.

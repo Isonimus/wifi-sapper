@@ -21,8 +21,12 @@ constexpr const char* kSubmittedTempPath = "/submitted.tmp";
 /// File header: 4 magic bytes + 2 count bytes (LE). No fresh flag (submitted has none; ADR-0065 #1).
 constexpr size_t kHeaderLen = 6;
 
-/// Per-record on-disk layout: BSSID(6) + uploadedAt(4, uint32 LE) = 10 bytes.
-constexpr size_t kRecordLen = 10;
+/// Per-record on-disk layout, SUB1 (pre-ADR-0072): BSSID(6) + uploadedAt(4, uint32 LE) = 10 bytes.
+constexpr size_t kRecordLenV1 = 10;
+
+/// Per-record on-disk layout, SUB2 (ADR-0072): SUB1 + lastVerifiedEpoch(4, uint32 LE) = 14 bytes. A SUB1
+/// file still loads (back-compat, decision 7): its records lack the epoch and default it to 0.
+constexpr size_t kRecordLenV2 = 14;
 
 void writeU16LE(uint8_t* buf, uint16_t val) {
     buf[0] = static_cast<uint8_t>(val & 0xFF);
@@ -79,11 +83,20 @@ bool LittleFsSubmittedStore::load(SubmittedEntry* out, size_t capacity, size_t& 
         f.close();
         return false;
     }
-    if (headerBuf[0] != 'S' || headerBuf[1] != 'U' || headerBuf[2] != 'B' || headerBuf[3] != '1') {
+    if (headerBuf[0] != 'S' || headerBuf[1] != 'U' || headerBuf[2] != 'B') {
         Serial.println("[ERROR] submitted set bad magic");
         f.close();
         return false;
     }
+    // Accept both the pre-ADR-0072 SUB1 layout and the current SUB2 (adds lastVerifiedEpoch). An unknown
+    // version stays a loud failure, never a silent reinterpret (quality bar §3).
+    const bool isV2 = headerBuf[3] == '2';
+    if (headerBuf[3] != '1' && !isV2) {
+        Serial.println("[ERROR] submitted set bad version");
+        f.close();
+        return false;
+    }
+    const size_t recordLen = isV2 ? kRecordLenV2 : kRecordLenV1;
     const uint16_t recordCount = readU16LE(&headerBuf[4]);
     if (recordCount > capacity) {
         Serial.println("[ERROR] submitted set overrun");
@@ -92,14 +105,18 @@ bool LittleFsSubmittedStore::load(SubmittedEntry* out, size_t capacity, size_t& 
     }
 
     for (uint16_t i = 0; i < recordCount; ++i) {
-        uint8_t buf[kRecordLen];
-        if (f.read(buf, kRecordLen) != kRecordLen) {
+        uint8_t buf[kRecordLenV2];
+        if (f.read(buf, recordLen) != recordLen) {
             Serial.println("[ERROR] submitted set short record");
             f.close();
             return false;
         }
         std::memcpy(out[i].bssid, buf, 6);
         out[i].uploadedAt = readU32LE(&buf[6]);
+        // SUB1 records carry no re-verification timer — default it to 0 (never verified in wall-clock
+        // terms), which is due as soon as a real clock exists: the one-time post-upgrade re-verify burst
+        // (ADR-0072 decision 7). A SUB2 record carries the stamp.
+        out[i].lastVerifiedEpoch = isV2 ? readU32LE(&buf[10]) : 0u;
     }
 
     f.close();
@@ -127,7 +144,7 @@ bool LittleFsSubmittedStore::save(const SubmittedEntry* entries, size_t count) {
     headerBuf[0] = 'S';
     headerBuf[1] = 'U';
     headerBuf[2] = 'B';
-    headerBuf[3] = '1';
+    headerBuf[3] = '2';  // always write the current layout; a prior SUB1 file is migrated on this save.
     writeU16LE(&headerBuf[4], static_cast<uint16_t>(count));
     if (f.write(headerBuf, sizeof(headerBuf)) != sizeof(headerBuf)) {
         Serial.println("[ERROR] submitted set temp header write failed");
@@ -137,10 +154,11 @@ bool LittleFsSubmittedStore::save(const SubmittedEntry* entries, size_t count) {
     }
 
     for (size_t i = 0; i < count; ++i) {
-        uint8_t buf[kRecordLen];
+        uint8_t buf[kRecordLenV2];
         std::memcpy(buf, entries[i].bssid, 6);
         writeU32LE(&buf[6], entries[i].uploadedAt);
-        if (f.write(buf, kRecordLen) != kRecordLen) {
+        writeU32LE(&buf[10], entries[i].lastVerifiedEpoch);  // the re-verification timer (ADR-0072).
+        if (f.write(buf, kRecordLenV2) != kRecordLenV2) {
             Serial.println("[ERROR] submitted set temp record write failed");
             f.close();
             LittleFS.remove(kSubmittedTempPath);

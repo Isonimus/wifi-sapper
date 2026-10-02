@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "net/reverification.h"  // reverifyDue(): the rotated-PSK staleness test (ADR-0072).
 #include "net/submitted_lookup.h"
 #include "net/submitted_store.h"
 
@@ -53,8 +54,16 @@ public:
     void markSubmitted(const uint8_t bssid[6], uint32_t nowMs) override;
 
     /// SubmittedLookup (ADR-0065 #2): "have we already landed a valid handshake for this BSSID?" —
-    /// set membership. The engine's gate-C target filter and the drain's gate-C drop read this.
+    /// set membership. The engine's gate-C target filter and the drain's gate-C drop read this. Now
+    /// re-verification-aware (ADR-0072 decision 2): a held entry gone stale against the cached verification
+    /// clock answers *false*, re-enabling gate C at both sites for one re-capture/re-upload. Inert until
+    /// setVerificationClock is fed a real epoch (kMinRealEpoch guard) — pre-cadence behaviour before NTP.
     bool isSubmitted(const uint8_t bssid[6]) const override;
+
+    /// Feed the current wall-clock epoch for the re-verification cadence (ADR-0072 decision 3). The device
+    /// loop sets it from std::time(nullptr); the pure manifest never reads a clock itself (host-testable).
+    /// App-task only, like every other manifest access (§4 #8/#10 untouched — never on the onFrame path).
+    void setVerificationClock(uint32_t nowEpoch) { nowEpoch_ = nowEpoch; }
 
     /// Persist the current entries to the store. Returns false on a store error.
     bool flushSubmitted() override;
@@ -70,6 +79,7 @@ private:
     SubmittedStore& store_;
     SubmittedEntry entries_[kMaxSubmittedEntries];
     size_t count_ = 0;
+    uint32_t nowEpoch_ = 0;  ///< cached wall-clock for the re-verification cadence (ADR-0072); 0 = no real clock yet.
 };
 
 }  // namespace sapper

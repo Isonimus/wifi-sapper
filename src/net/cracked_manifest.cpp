@@ -46,10 +46,16 @@ ApplyOutcome CrackedManifest::apply(const CrackedResult& result, uint32_t nowMs)
     const size_t existing = indexOf(result.bssid);
     if (existing < count_) {
         if (std::strcmp(entries_[existing].result.password, result.password) == 0) {
-            return ApplyOutcome::Unchanged;  // Same AP, same password — a re-download of a known crack.
+            // Same AP, same password — a re-download of a known crack. Deliberately does NOT re-stamp
+            // lastVerifiedEpoch: the hourly sync re-downloads every known crack, so a bump here would reset
+            // the re-verification timer every hour and nothing would ever go stale (ADR-0072 decision 4).
+            return ApplyOutcome::Unchanged;
         }
-        // Rotated PSK: update the recovered secret (and essid) in place, keep the original first-seen.
+        // Rotated PSK: update the recovered secret (and essid) in place, keep the original first-seen. A
+        // real re-crack, so stamp the re-verification timer fresh — this network is now verified again and
+        // suppressed for another interval (ADR-0072 decision 4).
         entries_[existing].result = result;
+        entries_[existing].lastVerifiedEpoch = nowEpoch_;
         return ApplyOutcome::Changed;
     }
 
@@ -62,6 +68,10 @@ ApplyOutcome CrackedManifest::apply(const CrackedResult& result, uint32_t nowMs)
     }
     entries_[slot].result = result;
     entries_[slot].firstSeenCrackedMs = nowMs;
+    // Stamp the re-verification timer from the cached wall-clock (ADR-0072): a freshly cracked (or
+    // post-wipe re-seeded) entry is verified now, so it is suppressed for a full interval — no re-seed
+    // storm. A pre-NTP nowEpoch_ (< kMinRealEpoch) stamps ~0, treated as due once a real clock exists.
+    entries_[slot].lastVerifiedEpoch = nowEpoch_;
     return ApplyOutcome::New;
 }
 
