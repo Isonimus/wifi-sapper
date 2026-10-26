@@ -56,6 +56,33 @@ void test_head_renders_disarmed_and_never_synced(void) {
     TEST_ASSERT_NOT_NULL(std::strstr(out, "never synced"));
 }
 
+void test_head_filesystem_healthy_by_default(void) {
+    // A unit that has never reformatted (the breadcrumb count is zero) shows the healthy line and no
+    // warning (ADR-0074 decision 4).
+    DashboardStats stats = {};  // fsReformatCount = 0.
+    char out[kDashboardHeadBufSize];
+    TEST_ASSERT_GREATER_THAN(0u, buildDashboardHead(stats, out, sizeof(out)));
+    TEST_ASSERT_NOT_NULL(std::strstr(out, "Filesystem: healthy"));
+    TEST_ASSERT_NULL(std::strstr(out, "reformatted"));
+}
+
+void test_head_renders_the_reformat_breadcrumb(void) {
+    // A non-zero breadcrumb surfaces the silent-wipe-turned-loud: a red warning naming the count and
+    // that persisted data was lost (ADR-0074 decision 4). Plural count.
+    DashboardStats stats = {};
+    stats.fsReformatCount = 2;
+    char out[kDashboardHeadBufSize];
+    TEST_ASSERT_GREATER_THAN(0u, buildDashboardHead(stats, out, sizeof(out)));
+    TEST_ASSERT_NOT_NULL(std::strstr(out, "reformatted 2 times (persisted data lost)"));
+    TEST_ASSERT_NOT_NULL(std::strstr(out, "class='warn'"));
+    TEST_ASSERT_NULL(std::strstr(out, "Filesystem: healthy"));
+
+    // Singular: one reformat reads "1 time", not "1 times".
+    stats.fsReformatCount = 1;
+    TEST_ASSERT_GREATER_THAN(0u, buildDashboardHead(stats, out, sizeof(out)));
+    TEST_ASSERT_NOT_NULL(std::strstr(out, "reformatted 1 time (persisted data lost)"));
+}
+
 void test_row_renders_essid_and_plaintext_psk(void) {
     // ADR-0039 decision 5: the dashboard is the operator's local results viewer, so the row carries the
     // recovered plaintext PSK on purpose. This asserts the PSK reaches the page — a redaction "hardening"
@@ -145,6 +172,8 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_head_renders_the_summary_stats);
     RUN_TEST(test_head_renders_disarmed_and_never_synced);
+    RUN_TEST(test_head_filesystem_healthy_by_default);
+    RUN_TEST(test_head_renders_the_reformat_breadcrumb);
     RUN_TEST(test_row_renders_essid_and_plaintext_psk);
     RUN_TEST(test_row_html_escapes_a_crafted_essid);
     RUN_TEST(test_controls_expose_a_post_resume_and_a_config_link);

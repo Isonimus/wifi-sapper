@@ -9,6 +9,8 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 
+#include "net/filesystem_mount.h"
+
 #include <cstdint>
 #include <cstring>
 
@@ -52,9 +54,10 @@ uint32_t readU32LE(const uint8_t* buf) {
 }  // namespace
 
 bool LittleFsSubmittedStore::begin() {
-    // Silent on failure like the capture/cracked stores' begin(): the caller (hunt_loop) logs the one
-    // [FATAL]. LittleFS.begin is idempotent — another store may already have mounted this filesystem.
-    if (!LittleFS.begin(/*formatOnFail=*/true)) return false;
+    // Mount through the one seam (ADR-0074, §4 #34): fails loud + breadcrumbs on a corrupt partition,
+    // never a silent reformat. Only a dead filesystem returns Failed; the caller (hunt_loop) logs the
+    // one [FATAL]. Idempotent: another store may already have mounted this filesystem.
+    if (ensureFilesystemMounted() == MountOutcome::Failed) return false;
     mounted_ = true;
     return true;
 }

@@ -9,6 +9,8 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 
+#include "net/filesystem_mount.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -54,7 +56,9 @@ bool LittleFsCaptureStore::formatPath(char* out, size_t cap, uint32_t id,
 }
 
 bool LittleFsCaptureStore::begin() {
-    if (!LittleFS.begin(/*formatOnFail=*/true)) return false;  // fail loud: no place to persist.
+    // Mount through the one seam (ADR-0074, §4 #34): fails loud + breadcrumbs on a corrupt partition,
+    // never a silent reformat. Only a dead filesystem returns Failed; the caller (hunt_loop) logs [FATAL].
+    if (ensureFilesystemMounted() == MountOutcome::Failed) return false;
     LittleFS.mkdir(kCaptureDir);
     mounted_ = true;
 

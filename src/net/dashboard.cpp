@@ -49,6 +49,19 @@ bool escapeHtml(const char* src, size_t srcCap, char* out, size_t outSize) {
 size_t buildDashboardHead(const DashboardStats& stats, char* out, size_t outSize) {
     if (out == nullptr || outSize == 0) return 0;
 
+    // The filesystem-health breadcrumb (ADR-0074 decision 4): healthy by default, a red warning line
+    // once the data partition has been reformatted after a corrupt mount (persisted data was lost).
+    // Precomputed so the one-shot head snprintf stays a single call; reuses the existing .warn style.
+    char fsLine[96];
+    if (stats.fsReformatCount == 0) {
+        std::snprintf(fsLine, sizeof(fsLine), "Filesystem: healthy");
+    } else {
+        std::snprintf(fsLine, sizeof(fsLine),
+                      "<span class='warn'>Filesystem: reformatted %lu time%s (persisted data lost)</span>",
+                      static_cast<unsigned long>(stats.fsReformatCount),
+                      stats.fsReformatCount == 1 ? "" : "s");
+    }
+
     const int written = std::snprintf(
         out, outSize,
         "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -62,12 +75,13 @@ size_t buildDashboardHead(const DashboardStats& stats, char* out, size_t outSize
         "<li>Captures queued for upload: %zu</li>"
         "<li>Deauth: %s</li>"
         "<li>Sync history: %s</li>"
+        "<li>%s</li>"
         "</ul>"
         "<p class='warn'>Recovered passwords are shown in clear below. This viewer is served over the "
         "device's own maintenance access point (ADR-0039).</p>"
         "<table><tr><th>Network</th><th>Password</th></tr>",
         stats.recoveredCount, stats.captureQueueDepth, stats.deauthArmed ? "ARMED" : "disarmed",
-        stats.everSynced ? "completed at least once" : "never synced");
+        stats.everSynced ? "completed at least once" : "never synced", fsLine);
 
     // snprintf returns what it *would* have written: >= outSize means it truncated. Serve nothing
     // rather than a half-page (§3, fail loud); clear out[0] so a careless caller cannot send garbage.

@@ -43,6 +43,12 @@ struct DashboardStats {
     /// scheduler holds (cracked_store.h), wiped by the reboot that enters Maintenance, so it could only
     /// ever read back as a dishonest zero here. The dashboard shows persisted state only (ADR-0039 #1).
     bool everSynced = false;
+    /// How many times this unit's LittleFS data partition has been reformatted after a failed mount
+    /// (ADR-0074 decision 4, the durable NVS `fshealth` breadcrumb). Zero on a healthy unit; non-zero
+    /// means persisted data was lost at least once, so the operator who physically holds the device
+    /// sees the silent-wipe-turned-loud here, not only in a serial log. A rising count across visits
+    /// is the recurring-corruption signal (a dying chip, or a bug).
+    uint32_t fsReformatCount = 0;
 };
 
 /// Buffer size the caller gives buildDashboardHead(). The head is fixed-shape (~1 KB); 2 KB leaves

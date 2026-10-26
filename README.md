@@ -110,8 +110,9 @@ serving a dashboard of everything it has recovered, plus two controls (ADR-0043)
    **Maintenance dashboard passphrase** — the one you set in the setup form. If you never set one, it
    uses **`sapper-setup`**.
 2. Open **`http://192.168.4.1/`** in a browser. The page lists each recovered network and **its password
-   in clear**, plus how many handshakes are queued for upload, whether deauth is armed, and whether the
-   device has ever synced. A board with a screen also shows the AP name, the URL, and the recovered count
+   in clear**, plus how many handshakes are queued for upload, whether deauth is armed, whether the
+   device has ever synced, and (if its storage was ever reformatted after corruption) a warning that
+   persisted data was lost (ADR-0074). A board with a screen also shows the AP name, the URL, and the recovered count
    on its panel (but not the passwords — the screen is over-the-shoulder visible).
 3. The dashboard has two controls at the bottom:
    - **Resume & hunt** — reboots the device back into hunting (it also syncs cracked results on its first

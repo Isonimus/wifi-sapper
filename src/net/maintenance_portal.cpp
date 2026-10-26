@@ -13,6 +13,7 @@
 
 #include "net/captive_portal.h"      // kSoftApPassword — the published fallback AP passphrase.
 #include "net/dashboard.h"           // buildDashboardHead, appendCrackedRow, kDashboardControls/Foot
+#include "net/filesystem_mount.h"    // filesystemReformatCount: the durable FS-health breadcrumb (ADR-0074)
 #include "net/provisioning_form.h"   // SetupFormModel, buildSetupForm, resolveProvisioningUpdate
 
 namespace sapper {
@@ -99,6 +100,7 @@ void MaintenancePortal::handleRoot() {
     stats.captureQueueDepth = m_queueDepth;
     stats.deauthArmed = m_creds.deauthEnabled;
     stats.everSynced = !m_manifest.isFresh();  // the persisted fresh flag, not a RAM last-sync status.
+    stats.fsReformatCount = filesystemReformatCount();  // the durable NVS breadcrumb (ADR-0074 decision 4).
 
     char head[kDashboardHeadBufSize];
     if (buildDashboardHead(stats, head, sizeof(head)) == 0) {

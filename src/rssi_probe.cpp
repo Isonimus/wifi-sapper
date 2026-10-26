@@ -37,6 +37,7 @@
 
 #include "net/ap_registry.h"
 #include "net/channel_list_arg.h"
+#include "net/filesystem_mount.h"
 #include "net/hunt_engine.h"
 #include "net/radio_sniffer.h"
 #include "net/raw_transmitter_esp32.h"
@@ -343,7 +344,9 @@ bool rssiProbeBegin() {
         return false;
     }
 
-    if (!LittleFS.begin(/*formatOnFail=*/true)) {
+    // Mount through the one seam (ADR-0074, §4 #34): a corrupt partition is loud + breadcrumbed, never
+    // silently reformatted, even on a bench probe. Only a dead filesystem returns Failed.
+    if (ensureFilesystemMounted() == MountOutcome::Failed) {
         Serial.println("[FATAL] rssi probe could not mount LittleFS");
         return false;
     }
