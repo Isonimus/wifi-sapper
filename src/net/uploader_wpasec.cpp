@@ -9,9 +9,6 @@
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 
-#include <memory>
-#include <new>
-
 #include "net/wpasec_response.h"
 #include "net/wpasec_root_ca.h"
 
@@ -23,36 +20,45 @@ constexpr uint16_t kWpaSecPort = 443;
 constexpr const char* kBoundary = "----WifiSapperBoundary";
 constexpr uint32_t kTlsTimeoutMs = 15000;
 constexpr uint32_t kResponseIdleTimeoutMs = 5000;
-// wpa-sec returns hcxpcapngtool's verbose summary — a few KB, chunked. Buffer it whole (bounded) on
-// the heap, not the loop-task stack, then hand it to the pure, host-tested classifier. If a response
-// ever exceeds the bound it is truncated, which can only *lose* a success signal (→ Rejected → retry),
-// never invent one — the parse stays fail-closed (quality bar §3).
-constexpr size_t kMaxResponseLen = 16384;
+// The reply is classified by streaming (ADR-0076, §4 #35), not buffered whole: the former 16KB `new`
+// failed on the no-PSRAM S3 under TLS memory pressure (largest contiguous block measured at 7668 B), so
+// every reply misclassified Rejected and no capture was ever marked submitted. Read the TLS bytes into
+// this small fixed stack buffer and feed them to the pure, host-tested classifier chunk by chunk — no heap
+// allocation sized to the response.
+constexpr size_t kResponseChunkLen = 256;
+// Hard ceiling on bytes read, so a server trickling bytes forever cannot hold this synchronous upload open
+// indefinitely (the per-gap idle timeout alone would not bound a slow-drip stream). Far above the measured
+// ~4.3 KB reply, so a real response is never truncated; hitting it just stops the read and classifies what
+// arrived (fail-closed — Rejected and retry if the decisive token had not yet been seen).
+constexpr size_t kMaxResponseBytes = 32768;
 
-/// Read the full response off TLS into a heap buffer and classify it (net/wpasec_response.h).
+/// Stream the response off TLS through the pure classifier (net/wpasec_response.h) — no heap alloc.
 UploadResult readAndClassify(WiFiClientSecure& client, size_t uploadLen) {
-    std::unique_ptr<char[]> buf(new (std::nothrow) char[kMaxResponseLen]);
-    if (!buf) {
-        Serial.println("[ERROR] wpa-sec response buffer alloc failed");
-        return UploadResult::Rejected;  // cannot read the reply — fail closed and retry.
-    }
+    WpaSecResponseClassifier classifier;
     size_t n = 0;
     uint32_t lastMs = millis();
-    while ((client.connected() || client.available()) && n < kMaxResponseLen - 1) {
-        if (client.available()) {
-            buf[n++] = static_cast<char>(client.read());
+    char chunk[kResponseChunkLen];
+    // Stop early once the verdict is terminal (a duplicate); otherwise read to the end so a late dedup
+    // line still outranks an earlier positive count (ADR-0076 #2).
+    while ((client.connected() || client.available()) && !classifier.terminal() && n < kMaxResponseBytes) {
+        const int r =
+            client.available() ? client.read(reinterpret_cast<uint8_t*>(chunk), sizeof(chunk)) : 0;
+        if (r > 0) {
+            classifier.feed(chunk, static_cast<size_t>(r));
+            n += static_cast<size_t>(r);
             lastMs = millis();
         } else {
+            // No bytes available, or read() returned 0/<0 (a transient TLS condition): advance toward the
+            // idle timeout and yield — never busy-spin, which would starve the task watchdog and reboot.
             if (millis() - lastMs > kResponseIdleTimeoutMs) break;
             delay(10);
         }
     }
-    buf[n] = '\0';
 #ifdef SAPPER_TEST_HOOKS
     Serial.printf("[UPLOAD] resp uploadBytes=%u respBytes=%u\n", static_cast<unsigned>(uploadLen),
                   static_cast<unsigned>(n));
 #endif
-    return classifyWpaSecResponse(buf.get());
+    return classifier.result();
 }
 
 }  // namespace

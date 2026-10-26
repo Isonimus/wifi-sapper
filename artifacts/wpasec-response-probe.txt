@@ -1,0 +1,18 @@
+wpa-sec response-buffer sizing probe (ADR-pending) — identity-free, numbers only
+generated: 2026-10-26T15:42:56.410Z
+samples:   2
+
+idx  largestBlock  freeHeap  respBytes  dupAt  writtenAt  uploadBytes
+  1          7668     12900       4346     -1       2115          996
+  2          7668     11276       4344     -1       2113          996
+
+largestBlock at alloc site: 7668..7668 B  (shipped buffer needs 16384 B)
+  -> the 16KB new does NOT fit (root cause confirmed)
+response length:            4344..4346 B  (2 distinct value(s))
+decisive-token max offset:  2115 B  (a buffer must exceed this or option B truncates the signal)
+
+LEAN: A (stream-classify). The reply is stable (~4346 B), but B must buffer it whole, so B
+      needs ~4864 B contiguous — too thin a margin under the 7668 B worst-case block that just
+      failed the 16KB alloc. A allocates nothing (O(1)), removing the fault class.
+
+Put this table in the fix ADR (docs/quality-bar §4: decisions cite measured data, not estimates).
