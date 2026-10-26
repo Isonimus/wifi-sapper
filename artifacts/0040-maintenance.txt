@@ -1,0 +1,2 @@
+[STATE] phase=maintenance heap_free=67772 heap_max=31732 disp=240x135
+[MAINT] ssid=Sapper-Maint-XXXX url=http://192.168.4.1/ recovered=27
