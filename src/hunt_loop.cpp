@@ -7,6 +7,7 @@
 #ifndef UNIT_TEST
 
 #include <Arduino.h>
+#include <esp_heap_caps.h>  // heap_caps_malloc(MALLOC_CAP_SPIRAM): PSRAM placement of the cracked manifest (ADR-0080).
 
 #include <cstring>
 #include <ctime>  // std::time: the wall-clock feed for the rotated-PSK re-verification cadence (ADR-0072).
@@ -72,7 +73,17 @@ WpaSecUploader g_uploader;
 // Serial "surface" that reports each sync. The manifest and the sync each hold a ~27KB fixed buffer at
 // file scope (the RAM the LEDGER's bound item tracks); comparable to the upload path's pcap buffers.
 LittleFsCrackedStore g_crackedStore;
-CrackedManifest g_manifest(g_crackedStore);
+#ifndef BOARD_HAS_PSRAM
+// No-PSRAM boards keep the cracked manifest as a static .bss object, exactly as it shipped (ADR-0080):
+// its ~28KB storage is reserved at link time. g_manifest points at it so every use below is uniform.
+CrackedManifest g_manifestStorage(g_crackedStore);
+CrackedManifest* g_manifest = &g_manifestStorage;
+#else
+// PSRAM boards place the ~28KB manifest object in PSRAM at runtime (ADR-0080): the classic-ESP32 static
+// DRAM budget cannot hold it in .bss (the .dram0.bss overflow slice-0079 measured). The pointer is a
+// tiny DRAM global; the object is allocated in huntLoopBegin() before first use, failing loud on a null.
+CrackedManifest* g_manifest = nullptr;
+#endif
 WpaSecCrackedFetcher g_fetcher;
 SyncScheduler g_scheduler;
 
@@ -255,10 +266,24 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         Serial.println("[FATAL] cracked store (LittleFS) mount failed");
         return false;
     }
+#ifdef BOARD_HAS_PSRAM
+    // ADR-0080: place the ~28KB cracked manifest in PSRAM (the classic-ESP32 DRAM budget cannot hold it in
+    // .bss). Fail loud on a null alloc: a PSRAM board that cannot allocate PSRAM is broken, and a silent
+    // DRAM fallback is exactly the 28KB block that overflowed the link, so there is nothing safe to fall
+    // back to. Allocated once, before the manifest is first used below.
+    if (g_manifest == nullptr) {
+        void* manifestMem = heap_caps_malloc(sizeof(CrackedManifest), MALLOC_CAP_SPIRAM);
+        if (manifestMem == nullptr) {
+            Serial.println("[FATAL] cracked manifest PSRAM allocation failed");
+            return false;
+        }
+        g_manifest = new (manifestMem) CrackedManifest(g_crackedStore);
+    }
+#endif
     // Load the account mirror into the manifest now, at boot, so the first sync's fresh-vs-known decision
     // reflects flash, not an empty map. A real load failure is fatal (fail loud, §3); a *missing* file is
     // success (a fresh, empty manifest — the first-boot state), so this only trips on genuine corruption.
-    if (!g_manifest.begin()) {
+    if (!g_manifest->begin()) {
         Serial.println("[FATAL] cracked manifest load failed");
         return false;
     }
@@ -289,17 +314,17 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         HuntEngine(g_sniffer, g_registry, g_relay, g_hopChannels, 3, HuntConfig{},
                    g_deauthArmed ? &g_rawTx : nullptr);
     g_station = new (g_stationStorage) Esp32StationControl(g_creds.ssid, g_creds.pass);
-    g_sync = new (g_syncStorage) CrackedSync(g_fetcher, g_manifest, g_creds.key, g_bus);
+    g_sync = new (g_syncStorage) CrackedSync(g_fetcher, *g_manifest, g_creds.key, g_bus);
     g_session = new (g_sessionStorage) ScheduledSyncSession(g_scheduler, *g_sync);
     g_supervisor = new (g_supervisorStorage)
         UploadSupervisor(*g_engine, g_queue, g_uploader, *g_station, g_creds.key, config, g_session, &g_bus);
     g_relay.setTarget(*g_supervisor);
     // ADR-0059 gate A: let the drain drop captures for networks we have already recovered instead of
     // re-uploading them. The manifest (loaded above, refreshed hourly by the sync) is the CrackedLookup.
-    g_supervisor->setCrackedLookup(g_manifest);
+    g_supervisor->setCrackedLookup(*g_manifest);
     // ADR-0061 gate B (§4 #28): stop the hunt even *targeting* an already-cracked AP — no capture window,
     // no deauth spent on a network we are done with. Same seam, at target selection instead of the drain.
-    g_engine->setCrackedLookup(g_manifest);
+    g_engine->setCrackedLookup(*g_manifest);
     // ADR-0065 gate C (§4 #30): the general form of gates A/B keyed on the local submitted set. The drain
     // records each terminal upload and drops an already-submitted queued capture; the engine skips an
     // already-submitted target — reclaiming the capture windows/deauth otherwise spent between submission
@@ -371,7 +396,7 @@ void huntLoopPump() {
     // target selection and drain see the current clock. The gates read it on the app task only; onFrame is
     // untouched (§4 #8/#10).
     const uint32_t nowEpoch = static_cast<uint32_t>(std::time(nullptr));
-    g_manifest.setVerificationClock(nowEpoch);
+    g_manifest->setVerificationClock(nowEpoch);
     g_submitted.setVerificationClock(nowEpoch);
     g_engine->tick(now);
     g_supervisor->tick(now);   // publishes DrainStarted/DrainCompleted (and runs a due sync) onto the bus.

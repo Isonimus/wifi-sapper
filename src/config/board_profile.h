@@ -59,18 +59,25 @@ struct BoardProfile {
     int8_t batteryAdcPin;
     int8_t lcdCs, lcdDc, lcdRst, lcdBl;
     int8_t sdCs, sdMosi, sdMiso, sdClk;
-    /// A per-board entry button that could poll for Maintenance entry (ADR-0053). Active-low (reads LOW
-    /// when pressed). Superseded as the *reference-board* entry path by ADR-0057: the Cardputer ADV has
-    /// no runtime-pressable button wired to GPIO0 — GPIO0 is a boot strap only (holding it at
-    /// reset-release enters ROM download mode, and post-boot it reads a floating/high strap, never a
-    /// press), so the ADV declares -1 and enters Maintenance by a runtime keyboard 'm' press that reboots.
-    /// The field is kept for a future board that genuinely wires a pollable button (e.g. an M5Stick side
-    /// button), whose per-board entry gesture is deferred to slice-8 (ADR-0057 decision 7). -1 means "no
+    /// A per-board entry button that polls for Maintenance entry. Active-low (reads LOW when pressed).
+    /// Superseded as the *reference-board* entry path by ADR-0057: the Cardputer ADV has no
+    /// runtime-pressable button wired to GPIO0 — GPIO0 is a boot strap only (holding it at reset-release
+    /// enters ROM download mode, and post-boot it reads a floating/high strap, never a press), so the ADV
+    /// declares -1 and enters Maintenance by a runtime keyboard 'm' press that reboots. The field is the
+    /// entry button for a board that genuinely wires a pollable non-strapping button (the M5StickC Plus2's
+    /// BtnB side button, GPIO39); the per-board entry gesture is now a deliberate debounced *hold* of this
+    /// pin, decided in ADR-0078 and selected at compile time by `input` (not board identity). -1 means "no
     /// pollable entry button." Unlike the peripheral pins this one *gates a mode*, so it carries a `-1`
     /// default member initializer: a future board profile that forgets it defaults to "absent" (no
     /// spurious Maintenance entry / PSK exposure), not to GPIO0 — the one pin where an accidental zero
     /// would be behavioural.
     int8_t bootButtonPin = -1;
+
+    /// A software power-latch (keep-alive) pin some boards need asserted HIGH in `setup()` or they power
+    /// off the moment the power button is released (the M5StickC Plus2's GPIO4). A board fact in the sense
+    /// ADR-0002 defines ("the GPIO/bus pins the engine and peripherals need"); -1 = no latch to hold (the
+    /// USB-powered Cardputer), so its boot is unchanged. Carries a -1 default like `bootButtonPin`.
+    int8_t powerHoldPin = -1;
 };
 
 }  // namespace sapper

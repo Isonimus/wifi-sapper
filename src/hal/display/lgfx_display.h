@@ -11,7 +11,23 @@
 
 #include "config/board_profile.h"
 #include "hal/display/display_hal.h"
+
+// The active board's LovyanGFX config class is selected by the same SAPPER_BOARD_* flag as its profile
+// (ADR-0002 #2). This selection is device-only (it pulls LovyanGFX), so it lives here rather than in the
+// native-lane-visible active_board.h.
+#if defined(SAPPER_BOARD_CARDPUTER)
 #include "hal/display/lgfx_cardputer.h"
+namespace sapper {
+using ActiveLgfxPanel = LGFX_Cardputer;
+}
+#elif defined(SAPPER_BOARD_M5STICKC_PLUS2)
+#include "hal/display/lgfx_m5stickc_plus2.h"
+namespace sapper {
+using ActiveLgfxPanel = LGFX_M5StickCPlus2;
+}
+#else
+#error "No SAPPER_BOARD_* panel config selected — define one in platformio.ini build_flags"
+#endif
 
 namespace sapper {
 
@@ -31,7 +47,7 @@ public:
 
 private:
     const BoardProfile& m_profile;
-    LGFX_Cardputer m_panel;
+    ActiveLgfxPanel m_panel;
     lgfx::LGFX_Sprite m_canvas{&m_panel};
     uint16_t m_width = 0;
     uint16_t m_height = 0;

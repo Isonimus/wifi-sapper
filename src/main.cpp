@@ -12,8 +12,11 @@
 #include <WiFi.h>
 
 #include <cstdio>
+#include <new>             // placement new: PSRAM placement of the Maintenance cracked manifest (ADR-0080).
+#include <esp_heap_caps.h>  // heap_caps_malloc(MALLOC_CAP_SPIRAM): the PSRAM allocation itself (ADR-0080).
 
 #include "config/active_board.h"
+#include "config/button_hold.h"
 #include "config/firmware_version.h"
 #include "config/maintenance_intent.h"
 #include "hal/display/display_hal.h"
@@ -193,12 +196,33 @@ void runMaintenance(const ProvisioningRecord& creds, IDisplay& panel) {
     // `static`, NOT a stack local: CrackedManifest embeds `CrackedEntry entries_[kMaxCrackedEntries]`
     // (256 × ~112 B ≈ 28 KB), which overflows the ~8 KB loopTask stack the instant it is constructed —
     // a stack-canary panic in the ctor, measured on-device (this is why Maintenance rebooted before the
-    // SoftAP ever came up once ADR-0057 finally made it reachable). Static storage (.bss) mirrors the
-    // hunt path's file-scope g_manifest global (hunt_loop.cpp). runMaintenance runs once and does not
-    // return on the happy path, so a static local is the natural lifetime; the store is static too so
-    // the manifest's reference to it stays valid even on the early-return fault path below.
+    // SoftAP ever came up once ADR-0057 finally made it reachable). It mirrors the hunt path's g_manifest
+    // (hunt_loop.cpp): static .bss on a no-PSRAM board, PSRAM heap on a PSRAM board (ADR-0080). runMaintenance
+    // runs once and does not return on the happy path, so a static local is the natural lifetime; the store is
+    // static too so the manifest's reference to it stays valid even on the early-return fault path below.
     static LittleFsCrackedStore crackedStore;
-    static CrackedManifest manifest(crackedStore);
+#ifndef BOARD_HAS_PSRAM
+    // No-PSRAM boards keep the manifest a static .bss object, exactly as it shipped (ADR-0080).
+    static CrackedManifest manifestStorage(crackedStore);
+    CrackedManifest& manifest = manifestStorage;
+#else
+    // PSRAM boards place the ~28KB manifest in PSRAM (ADR-0080): the classic-ESP32 DRAM budget cannot hold it
+    // in .bss (the .dram0.bss overflow slice-0079 measured). Allocated once. Fail loud on a null alloc and
+    // reboot: a PSRAM board that cannot allocate 28KB from 2MB is broken, and a DRAM fallback is the very
+    // block that overflowed the link, so there is nothing safe to continue with (unlike the load-fault below,
+    // which keeps the viewer up on an empty manifest).
+    static CrackedManifest* manifestPtr = nullptr;
+    if (manifestPtr == nullptr) {
+        void* manifestMem = heap_caps_malloc(sizeof(CrackedManifest), MALLOC_CAP_SPIRAM);
+        if (manifestMem == nullptr) {
+            Serial.println("[FATAL] maintenance: cracked manifest PSRAM allocation failed");
+            delay(50);  // let the [FATAL] line flush before the reset (as every ESP.restart() below does).
+            ESP.restart();
+        }
+        manifestPtr = new (manifestMem) CrackedManifest(crackedStore);
+    }
+    CrackedManifest& manifest = *manifestPtr;
+#endif
     if (!crackedStore.begin() || !manifest.begin()) {
         Serial.println("[FATAL] maintenance: could not load recovered results");
     }
@@ -274,6 +298,12 @@ void runStationBoot(const ProvisioningRecord& creds, IDisplay* panel) {
                 if (kActiveBoard.input == InputKind::Keyboard && !g_keyboard.begin()) {
                     Serial.println("[KB] keyboard init failed — runtime Maintenance entry unavailable");
                 }
+                // Prepare the entry button on a button board so loop() can watch for the Maintenance hold
+                // (ADR-0078). The Stick's BtnB is an input-only pad with an external pull-up, so it reads as
+                // INPUT, never INPUT_PULLUP (which would error on an input-only pad — dragon-ball measurement).
+                if (kActiveBoard.input == InputKind::Buttons && kActiveBoard.bootButtonPin >= 0) {
+                    pinMode(kActiveBoard.bootButtonPin, INPUT);
+                }
                 return;
             }
         }
@@ -287,9 +317,35 @@ void runStationBoot(const ProvisioningRecord& creds, IDisplay* panel) {
     }
 }
 
+/// The per-board Maintenance-entry gesture, polled by loop() in Ready (ADR-0078). Selected at compile
+/// time by the active profile's InputKind (capability, not board identity — ADR-0002): a keyboard board
+/// returns the TCA8418 `m`-press (ADR-0057); a button board returns a deliberate debounced hold of the
+/// entry button (pure `decideButtonHold`); any other board has no runtime entry. Returns true at most
+/// once per gesture, after which loop() persists the reboot-intent and restarts.
+bool maintenanceEntryRequested() {
+    if constexpr (kActiveBoard.input == InputKind::Keyboard) {
+        return g_keyboard.maintenanceKeyPressed();
+    } else if constexpr (kActiveBoard.input == InputKind::Buttons) {
+        if (kActiveBoard.bootButtonPin < 0) return false;  // Buttons board with no declared entry button.
+        static ButtonHoldState holdState;  // one hold-timer for the single entry button.
+        const bool pressed = digitalRead(kActiveBoard.bootButtonPin) == LOW;  // active-low pad.
+        return decideButtonHold(pressed, millis(), kMaintenanceHoldMs, holdState);
+    } else {
+        return false;  // None/Touch: no entry gesture built yet (ADR-0078 scope).
+    }
+}
+
 }  // namespace
 
 void setup() {
+    // Assert the board's software power-latch before anything else or the device powers off the moment the
+    // power button is released (the M5StickC Plus2's GPIO4). A board with no latch (powerHoldPin == -1, the
+    // USB-powered Cardputer) is unchanged — this is a no-op there (ADR-0002 board fact, ADR-0078/slice-0079).
+    if (kActiveBoard.powerHoldPin >= 0) {
+        pinMode(kActiveBoard.powerHoldPin, OUTPUT);
+        digitalWrite(kActiveBoard.powerHoldPin, HIGH);
+    }
+
     Serial.begin(115200);
     delay(200);  // let the S3 USB-CDC endpoint enumerate before the first line
 
@@ -460,11 +516,12 @@ void loop() {
         }
     } else if (g_phase == Phase::Ready) {
         huntLoopPump();  // the shipped endless hunt→enqueue→drain→upload loop (ADR-0017 decision #8).
-        // Runtime Maintenance entry (ADR-0057): a Maintenance-key press persists the reboot-intent and
-        // restarts; the clean boot reads the intent and routes to Maintenance via the boot gate — never
-        // a live radio swap (§4 #21). The poll is cheap (an ISR flag) until the keyboard signals a key.
-        if (g_keyboard.maintenanceKeyPressed()) {
-            Serial.println("[MAINT] Maintenance key pressed — rebooting into Maintenance");
+        // Runtime Maintenance entry (ADR-0057 intent path, ADR-0078 per-board gesture): the board's entry
+        // gesture (keyboard `m`-press or button hold) persists the reboot-intent and restarts; the clean
+        // boot reads the intent and routes to Maintenance via the boot gate — never a live radio swap
+        // (§4 #21). The poll is cheap (an ISR flag on keyboard boards; a pin read on button boards).
+        if (maintenanceEntryRequested()) {
+            Serial.println("[MAINT] Maintenance gesture — rebooting into Maintenance");
             g_maintenanceIntentWord = kMaintenanceIntentMagic;
             delay(50);  // let the line flush before the reset.
             ESP.restart();

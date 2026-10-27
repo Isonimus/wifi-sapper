@@ -17,6 +17,12 @@ namespace sapper {
 inline constexpr const BoardProfile& kActiveBoard = kCardputerProfile;
 }
 #define SAPPER_BOARD_HAS_DISPLAY 1
+#elif defined(SAPPER_BOARD_M5STICKC_PLUS2)
+#include "config/boards/m5stickc_plus2.h"
+namespace sapper {
+inline constexpr const BoardProfile& kActiveBoard = kM5StickCPlus2Profile;
+}
+#define SAPPER_BOARD_HAS_DISPLAY 1
 #else
 #error "No SAPPER_BOARD_* selected — define one in platformio.ini build_flags"
 #endif

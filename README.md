@@ -98,12 +98,14 @@ maintenance access point uses the default `sapper-setup` password.
 
 ### Maintenance mode (results dashboard)
 
-To read the recovered passwords off the device without a serial console, **press the `m` key while
-the device is hunting** (ADR-0057). The device saves a one-shot "enter Maintenance" flag and reboots
-into Maintenance — there is no timing window to catch; press whenever you like. On the Cardputer ADV
-there is no runtime button wired to GPIO0 (GPIO0 is a boot strap only, used for firmware flashing), so
-the keyboard is the entry input. Instead of hunting, the device then comes up as a Wi-Fi access point
-serving a dashboard of everything it has recovered, plus two controls (ADR-0043):
+To read the recovered passwords off the device without a serial console, trigger Maintenance **while
+the device is hunting**: the entry gesture is per board (ADR-0057, ADR-0078). On the **Cardputer ADV**
+press the **`m` key** (there is no runtime button wired to GPIO0, which is a boot strap only used for
+firmware flashing, so the keyboard is the entry input). On the **M5StickC Plus2**, which has no keyboard,
+**hold the BtnB side button for about 2 seconds**. Either gesture saves a one-shot "enter Maintenance"
+flag and reboots into Maintenance; there is no timing window to catch, so trigger it whenever you like.
+Instead of hunting, the device then comes up as a Wi-Fi access point serving a dashboard of everything it
+has recovered, plus two controls (ADR-0043):
 
 1. It raises the SoftAP **`Sapper-Maint-XXXX`** — a distinct name from the setup portal's `Sapper-XXXX`
    (ADR-0055), so you can always tell Maintenance apart from the setup/STA-fail portal. Join it with your
@@ -175,18 +177,23 @@ work at any time without disturbing the hunt.
 
 ## Flashing a board
 
-The firmware is built and flashed with [PlatformIO](https://platformio.org). The only board
-profile that ships today is the reference **M5Stack Cardputer ADV** (ESP32-S3, no PSRAM), built
-as the `cardputer` environment; broadening to other boards (CYD, M5Stick, bare ESP32) is a tracked
-follow-up ([`LEDGER.md`](LEDGER.md), slice-8). The display driver (LovyanGFX) auto-detects the
-panel, so a screen is optional — a screenless board runs the same binary.
+The firmware is built and flashed with [PlatformIO](https://platformio.org). Two board profiles
+ship today: the reference **M5Stack Cardputer ADV** (ESP32-S3, no PSRAM), built as the `cardputer`
+environment, and the **M5StickC Plus2** (classic ESP32-PICO-V3-02, 2 MB PSRAM, 8 MB flash), built
+as the `m5stickc_plus2` environment. Broadening to further boards (CYD, T-embed, bare ESP32) is a
+tracked follow-up ([`LEDGER.md`](LEDGER.md), slice-8). The display driver (LovyanGFX) auto-detects
+the panel, so a screen is optional: a screenless board runs the same binary.
 
-1. Connect the board over USB-C. The Cardputer's ESP32-S3 exposes a **native USB-CDC** serial port
-   (no external UART bridge), so it enumerates directly.
-2. Build and flash the shipped firmware:
+1. Connect the board over USB-C.
+   - The Cardputer's ESP32-S3 exposes a **native USB-CDC** serial port (no external UART bridge), so
+     it enumerates directly and does not reset when a serial monitor opens.
+   - The M5StickC Plus2 uses a **CH340 USB-to-serial bridge**, which does reset the board (via
+     DTR/RTS) when a serial port opens. That is normal, and it is how the bench verifies wake the unit.
+2. Build and flash the shipped firmware (substitute your board's env for `cardputer`):
 
    ```
-   pio run -e cardputer -t upload
+   pio run -e cardputer -t upload          # Cardputer ADV
+   pio run -e m5stickc_plus2 -t upload     # M5StickC Plus2
    ```
 
    If the board does not auto-reset into its bootloader, hold **BOOT (GPIO0)** while tapping
@@ -197,10 +204,11 @@ panel, so a screen is optional — a screenless board runs the same binary.
    pio run -e cardputer -t monitor
    ```
 
-After flashing, a device with no saved network comes up in the **captive setup portal** — continue
-with [Provisioning](#provisioning-first-boot) above. The `cardputer_testhooks` environment is the
-bench-verify build only (it carries the serial *stimulus* vocabulary and the compile-time probes);
-never deploy it, and see [Building & verifying](#building--verifying) for what each verify needs.
+After flashing, a device with no saved network comes up in the **captive setup portal**: continue
+with [Provisioning](#provisioning-first-boot) above. Each board also has a `*_testhooks` environment
+(`cardputer_testhooks`, `m5stickc_plus2_testhooks`), the bench-verify build only (it carries the
+serial *stimulus* vocabulary and the compile-time probes); never deploy it, and see
+[Building & verifying](#building--verifying) for what each verify needs.
 
 ## Serial control channel (observation)
 
