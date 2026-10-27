@@ -34,10 +34,11 @@ inline constexpr const BoardProfile& kActiveBoard = kTEmbedProfile;
 namespace sapper {
 inline constexpr const BoardProfile& kActiveBoard = kEsp32_3248S035CProfile;
 }
-// SAPPER_BOARD_HAS_DISPLAY is deliberately NOT defined: the CYD ships headless this slice (hasDisplay=false),
-// so no LGFX_* class is compiled and the HAL resolves to NullDisplay (ADR-0002 #4). The 320x480 ST7796 panel
-// is a later slice needing a canvas-free renderer (ADR-0082 context). An undefined macro evaluates to 0 in the
-// `#if SAPPER_BOARD_HAS_DISPLAY` guards, which is the screenless branch — no #ifdef juggling needed.
+#define SAPPER_BOARD_HAS_DISPLAY 1
+// The ST7796 320x480 panel is lit via the direct-to-panel renderer (ADR-0084, slice-0085): the env also
+// sets SAPPER_DISPLAY_DIRECT_PANEL, which picks DirectPanelDisplay over the sprite-backed LgfxDisplay (a
+// full-frame 320x480 sprite is 307200 B, infeasible on this no-PSRAM board's ~110 KB largest free block,
+// ADR-0082). slice-0083 shipped this board headless; the display is the additive slice-0085.
 #else
 #error "No SAPPER_BOARD_* selected — define one in platformio.ini build_flags"
 #endif

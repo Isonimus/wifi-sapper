@@ -374,7 +374,16 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     // Wire the status-HUD/toast surface iff a display was passed and the active board has a panel
     // (ADR-0025). A passive surface like the LED: it subscribes to the bus and renders on its own tick.
     // A screenless board or a null display leaves it off — the screen is optional, like the webhook.
-    if (display != nullptr && kActiveBoard.hasDisplay) {
+#if defined(SAPPER_DISPLAY_DIRECT_PANEL)
+    // Not on a direct-panel board yet (ADR-0084): the Esp32ScreenRenderer is the sprite-era renderer — it
+    // full-clears each heartbeat and is laid out for 240x135, so on a 320x480 direct panel it would render
+    // cornered and flash ~1 Hz. The boot splash and the Maintenance panel (drawn-once, main.cpp) still light
+    // the panel; the live HUD's 320x480 re-layout + flicker-free region-repaint is a follow-on slice (LEDGER).
+    constexpr bool kWireLiveHud = false;
+#else
+    constexpr bool kWireLiveHud = true;
+#endif
+    if (display != nullptr && kActiveBoard.hasDisplay && kWireLiveHud) {
         g_screenRenderer = new (g_screenRendererStorage) Esp32ScreenRenderer(*display);
         g_screen = new (g_screenStorage) ScreenToastSurface(*g_screenRenderer);
         if (!g_bus.subscribe(*g_screen)) {
@@ -383,6 +392,8 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         }
         g_screen->setHuntSource(*g_engine);  // live-hunt HUD pulls the snapshot each tick (ADR-0033, §4 #18).
         Serial.println("[SCREEN] enabled (status HUD + live hunt + cracked toast)");
+    } else if (display != nullptr && kActiveBoard.hasDisplay) {
+        Serial.println("[SCREEN] splash + maintenance only (live HUD deferred on direct-panel board, LEDGER)");
     } else {
         Serial.println("[SCREEN] disabled (no display)");
     }

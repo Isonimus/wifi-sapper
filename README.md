@@ -189,7 +189,7 @@ firmware is headless-first, so a screenless or LED-less board runs the same bina
 | **M5Stack Cardputer ADV** *(reference)* | ESP32-S3 | none | 8 MB | 1.14" 240x135 | press `m` key | `cardputer` |
 | **M5StickC Plus2** | ESP32-PICO-V3-02 | 2 MB quad | 8 MB | 1.14" 240x135 | hold BtnB ~2 s | `m5stickc_plus2` |
 | **LilyGo T-embed** | ESP32-S3 | 8 MB octal | 16 MB | 1.9" 320x170 | hold encoder push ~2 s | `t_embed` |
-| **ESP32-3248S035C (CYD)** | ESP32-D0WD-V3 | none | 4 MB | none *(ST7796 320x480: Slice B)* | hold BOOT ~2 s | `cyd_3248s035c` |
+| **ESP32-3248S035C (CYD)** | ESP32-D0WD-V3 | none | 4 MB | 3.5" 320x480 ST7796 | hold BOOT ~2 s | `cyd_3248s035c` |
 
 **USB serial.** The two ESP32-S3 boards (Cardputer, T-embed) expose a **native USB-CDC / USB-Serial-JTAG**
 port, so they enumerate directly and do not reset when a serial monitor opens. The M5StickC Plus2 and the
@@ -200,10 +200,14 @@ and how the bench verifies wake it.
 M5StickC Plus2 a single red LED, and the T-embed and CYD have no LED wired yet (the T-embed's APA102 and
 the CYD's 3-GPIO RGB are deferred, [`LEDGER.md`](LEDGER.md)).
 
-The CYD ships **headless** this slice: it is the first board that is both no-PSRAM and a classic ESP32, so
-its two cracked-manifest buffers are placed in the internal DRAM heap one-at-a-time (ADR-0082) rather than
-static `.bss`, which overflows. Lighting its 3.5" 320x480 ST7796 panel + GT911 touch is an additive
-follow-up (Slice B, [`LEDGER.md`](LEDGER.md)), as is broadening to a bare ESP32.
+The CYD is the first board that is both no-PSRAM and a classic ESP32, so its two cracked-manifest buffers
+are placed in the internal DRAM heap one-at-a-time (ADR-0082) rather than static `.bss`, which overflows.
+Its 3.5" 320x480 ST7796 panel is lit via a **direct-to-panel renderer** (ADR-0084): a full-frame RGB565
+canvas would be 307 KB against this board's ~110 KB largest free block, so drawing goes straight to the
+panel with no offscreen buffer. It is presented in **landscape (480x320)** to match the other boards. The
+boot splash and the Maintenance panel render on it today; the **live hunt HUD** (which needs re-laying-out
+for landscape and a flicker-free region-repaint) and **GT911 capacitive touch** are additive follow-ups
+([`LEDGER.md`](LEDGER.md)), as is broadening to a bare ESP32.
 
 ## Flashing a board
 
@@ -219,7 +223,7 @@ is configured per board, so a screen is optional: a screenless board runs the sa
    pio run -e cardputer -t upload          # Cardputer ADV
    pio run -e m5stickc_plus2 -t upload     # M5StickC Plus2
    pio run -e t_embed -t upload            # LilyGo T-embed
-   pio run -e cyd_3248s035c -t upload      # ESP32-3248S035C (CYD), headless
+   pio run -e cyd_3248s035c -t upload      # ESP32-3248S035C (CYD), ST7796 320x480
    ```
 
    If the board does not auto-reset into its bootloader, hold **BOOT (GPIO0)** while tapping

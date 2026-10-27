@@ -280,10 +280,16 @@ async function main() {
     const [, w, h, nbytes] = dm.map(Number);
     const hex = hexLines.join('');
     const bytes = Buffer.from(hex, 'hex');
-    if (bytes.length !== nbytes) {
+    if (nbytes === 0) {
+      // A direct-to-panel board has no offscreen canvas (DirectPanelDisplay, ADR-0084), so the dump is
+      // empty by design and the boot-face proof is PHOTOGRAPHIC, not a serial-dumped PNG (§4 #22/#38). This
+      // is not a failure: the error-check half below (no [FATAL]/[ERROR], heap stable) still runs; there is
+      // simply no PNG artifact. Confirm the splash / panel-proof frame by eye on the physical panel.
+      if (bytes.length !== 0) fail(`dump declared bytes=0 but received ${bytes.length} bytes`);
+      console.log(`no canvas on this board (direct-to-panel, ADR-0084): confirm the boot face by photograph`);
+    } else if (bytes.length !== nbytes) {
       fail(`dump length ${bytes.length} != declared ${nbytes}`);
-    }
-    if (bytes.length >= w * h * 2) {
+    } else if (bytes.length >= w * h * 2) {
       mkdirSync(ARTIFACT_DIR, { recursive: true });
       writeFileSync(ARTIFACT_PNG, rgb565ToPng(w, h, bytes));
       writeFileSync(ARTIFACT_STATE, `${state1}\n${state2}\n`);

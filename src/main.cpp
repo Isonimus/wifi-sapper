@@ -50,17 +50,27 @@
 #include "sync_probe.h"
 #include "upload_probe.h"
 #if SAPPER_BOARD_HAS_DISPLAY
+#if defined(SAPPER_DISPLAY_DIRECT_PANEL)
+#include "hal/display/direct_panel_display.h"   // ADR-0084: panel too large for a full-frame sprite, no PSRAM
+#else
 #include "hal/display/lgfx_display.h"
+#endif
 #endif
 
 namespace {
 using namespace sapper;
 
-/// The active display, resolved at compile time from the board's capability (ADR-0002 #4).
-/// A screenless board compiles no LGFX_* class and gets the null display.
+/// The active display, resolved at compile time from the board's capability (ADR-0002 #4). A screenless
+/// board compiles no LGFX_* class and gets the null display; a display board whose panel is too large for a
+/// full-frame sprite and has no PSRAM gets the buffer-free direct renderer (SAPPER_DISPLAY_DIRECT_PANEL,
+/// ADR-0084); every other display board keeps the sprite-backed LgfxDisplay.
 IDisplay& display() {
 #if SAPPER_BOARD_HAS_DISPLAY
+#if defined(SAPPER_DISPLAY_DIRECT_PANEL)
+    static DirectPanelDisplay instance(kActiveBoard);
+#else
     static LgfxDisplay instance(kActiveBoard);
+#endif
 #else
     static NullDisplay instance;
 #endif

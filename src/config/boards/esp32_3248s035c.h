@@ -10,14 +10,13 @@
  * one-at-a-time (the hunt and Maintenance phases are mutually exclusive, so only one is ever live), which
  * the `cyd_3248s035c` env selects with `-DSAPPER_MANIFEST_HEAP_INTERNAL`.
  *
- * slice-0083 is the HEADLESS hunter: `hasDisplay = false`, so no `LGFX_*` class is compiled and the HAL
- * resolves to the NullDisplay (ADR-0002 #4). This deliberately defers the ST7796 320x480 panel to a later
- * slice: the full-frame-sprite display HAL would try to `createSprite(320, 480)` = 300 KB in one heap block,
- * infeasible on a no-PSRAM classic ESP32, so lighting this panel needs a canvas-free/banded renderer (a new
- * ADR, Slice B). Headless-first is exactly what the appliance is built for (CLAUDE.md), so a working hunter
- * ships now and the panel is a separate, additive slice. `hasDisplay = false` also means no spurious
- * `[FATAL] display init failed` (ADR-0045): the NullDisplay's begin() returns true, the designed screenless
- * state, not an error.
+ * slice-0083 shipped this board HEADLESS; slice-0085 lights the ST7796 320x480 panel via the
+ * direct-to-panel renderer (ADR-0084): `hasDisplay = true` and `-DSAPPER_DISPLAY_DIRECT_PANEL` (set in the
+ * env) select `DirectPanelDisplay`, which draws straight to the panel over SPI with no offscreen canvas. The
+ * full-frame-sprite HAL (`LgfxDisplay`) is infeasible here: a `createSprite(320, 480)` is 307200 B against
+ * this no-PSRAM board's ~110 KB largest free block (ADR-0082). A real panel init failure still fails loud
+ * then safe (ADR-0045): `DirectPanelDisplay::begin()` returns false and `panelAfterInit` routes every
+ * surface to the NullDisplay, so the headless-first hunt runs on regardless of the screen.
  *
  * Maintenance entry reuses ADR-0078 (`InputKind::Buttons` + `decideButtonHold`) on GPIO0, the BOOT button.
  * GPIO0 note (the one a later operator will try to "fix"): `bootButtonPin` is deliberately 0. On this board
@@ -33,10 +32,14 @@
  * USB is a CH340 UART bridge on /dev/ttyUSB (resets on port open, like the Stick's CH9102), NOT a native
  * USB-CDC like the two S3 boards, so the env sets no ARDUINO_USB_* flags.
  *
- * Deferred on this board (recorded here as data for later slices, not wired in slice-0083):
- *  - ST7796 3.5" 320x480 SPI panel + GT911 capacitive touch (I2C): the display + touch bring-up is Slice B,
- *    which needs the canvas-free renderer ADR before any pin is confirmed on the physical panel (ADR-0041/0042).
- *    Pins are therefore left -1 here rather than guessed from a retailer pinout (ADR-0002 §5).
+ * Deferred on this board (recorded here as data for later slices):
+ *  - GT911 capacitive touch (I2C): a separate input seam with no consumer yet (Maintenance entry is the
+ *    BOOT-hold), deferred by slice-0085 rather than wire a speculative input path (LEDGER). Candidate I2C
+ *    pins are in the LEDGER, to be probe-confirmed (ADR-0002 §5).
+ *  - The live hunt HUD on this 320x480 panel: the shared Esp32ScreenRenderer is the sprite-era renderer
+ *    (full-clears each heartbeat, laid out for 240x135), so it is not wired on a direct-panel board yet
+ *    (hunt_loop gates it); its 320x480 re-layout + flicker-free region-repaint is a follow-on slice
+ *    (LEDGER). The boot splash and the Maintenance panel (drawn-once) do light the panel this slice.
  *  - RGB status LED: three separate common-anode GPIOs (active-low), which the single-`ledPin` LedKind model
  *    does not cover (the same reason the T-embed's 2-wire APA102 is deferred); `led = None` until a slice
  *    wires it (LEDGER).
@@ -51,15 +54,15 @@ namespace sapper {
 
 inline constexpr BoardProfile kEsp32_3248S035CProfile = {
     .name = "ESP32-3248S035C (CYD)",
-    .hasDisplay = false,                // headless hunter this slice; ST7796 320x480 panel is Slice B (ADR-0082 context)
-    .display = {.width = 0, .height = 0, .rotation = 0, .colorBits = 0},  // meaningful only when hasDisplay is true
+    .hasDisplay = true,                 // ST7796 320x480 lit via the direct-to-panel renderer (ADR-0084, slice-0085)
+    .display = {.width = 480, .height = 320, .rotation = 1, .colorBits = 16},  // RGB565 landscape (like the other boards); rotation 1 candidate, 3 if upside-down
     .input = InputKind::Buttons,        // GPIO0 BOOT button, read as a hold (ADR-0078), like the T-embed's encoder push
     .storage = StorageKind::LittleFs,   // recovered manifest + stores live on flash LittleFS (no SD wired yet)
     .hasPsram = false,                  // classic ESP32-D0WD-V3, no PSRAM (confirmed on device by esptool Features)
     .led = LedKind::None,               // 3-GPIO common-anode RGB; single-ledPin model does not cover it (deferred)
     .ledPin = -1,
     .batteryAdcPin = -1,                // USB-powered dev board, no battery gauge
-    .lcdCs = -1, .lcdDc = -1, .lcdRst = -1, .lcdBl = -1,   // ST7796 panel pins confirmed in Slice B via the panel probe
+    .lcdCs = 15, .lcdDc = 2, .lcdRst = -1, .lcdBl = 27,    // ST7796 pins, probe-confirmed 2026-10-27 (real pins live in lgfx_cyd.h)
     .sdCs = -1, .sdMosi = -1, .sdMiso = -1, .sdClk = -1,   // TF slot present on the board, not wired this slice
     .bootButtonPin = 0,                 // BOOT button (GPIO0), active-low; the Maintenance-entry hold (ADR-0078)
     .powerHoldPin = -1,                 // USB-powered, no software power latch (unlike the Stick's GPIO4)

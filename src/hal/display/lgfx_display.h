@@ -20,27 +20,7 @@
 // forgets its panel config still hits the hard #error below (the safety net is preserved).
 #if SAPPER_BOARD_HAS_DISPLAY
 
-// The active board's LovyanGFX config class is selected by the same SAPPER_BOARD_* flag as its profile
-// (ADR-0002 #2). This selection is device-only (it pulls LovyanGFX), so it lives here rather than in the
-// native-lane-visible active_board.h.
-#if defined(SAPPER_BOARD_CARDPUTER)
-#include "hal/display/lgfx_cardputer.h"
-namespace sapper {
-using ActiveLgfxPanel = LGFX_Cardputer;
-}
-#elif defined(SAPPER_BOARD_M5STICKC_PLUS2)
-#include "hal/display/lgfx_m5stickc_plus2.h"
-namespace sapper {
-using ActiveLgfxPanel = LGFX_M5StickCPlus2;
-}
-#elif defined(SAPPER_BOARD_T_EMBED)
-#include "hal/display/lgfx_t_embed.h"
-namespace sapper {
-using ActiveLgfxPanel = LGFX_T_embed;
-}
-#else
-#error "No SAPPER_BOARD_* panel config selected — define one in platformio.ini build_flags"
-#endif
+#include "hal/display/lgfx_panel_select.h"   // ActiveLgfxPanel — the board's LovyanGFX config, shared with DirectPanelDisplay
 
 namespace sapper {
 

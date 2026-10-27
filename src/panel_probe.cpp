@@ -28,6 +28,9 @@ constexpr uint32_t kHeartbeatIntervalMs = 2000;
 
 bool g_active = false;
 uint32_t g_lastHeartbeatMs = 0;
+// True on a direct-to-panel board (no offscreen canvas, DirectPanelDisplay/ADR-0084): its proof is the
+// physical panel photographed, not a serial `dump` (§4 #22/#38), so the guidance below says so.
+bool g_photographic = false;
 
 void fillRect(IDisplay& d, int x0, int y0, int w, int h, uint16_t color) {
     for (int y = y0; y < y0 + h; ++y) {
@@ -79,7 +82,10 @@ bool panelProbeBegin(IDisplay& display) {
     drawBringupFrame(display);
     display.present();
     g_active = true;
-    Serial.println("[PANEL] verify: bring-up frame rendered — send `dump` to capture the panel proof");
+    g_photographic = display.canvasByteLength() == 0;  // no canvas to dump (ADR-0084): photograph the panel
+    Serial.println(g_photographic
+        ? "[PANEL] verify: bring-up frame rendered on the panel — confirm by photograph (no canvas dump on this board)"
+        : "[PANEL] verify: bring-up frame rendered — send `dump` to capture the panel proof");
     return true;
 }
 
@@ -91,7 +97,9 @@ void panelProbePump() {
     const uint32_t now = millis();
     if (now - g_lastHeartbeatMs >= kHeartbeatIntervalMs) {
         g_lastHeartbeatMs = now;
-        Serial.printf("[PANEL] waiting elapsed=%lums (send `dump` to capture the panel proof)\n",
+        Serial.printf(g_photographic
+                          ? "[PANEL] frame held elapsed=%lums (confirm by photograph; no canvas dump)\n"
+                          : "[PANEL] waiting elapsed=%lums (send `dump` to capture the panel proof)\n",
                       static_cast<unsigned long>(now));
     }
 }
