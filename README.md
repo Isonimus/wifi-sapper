@@ -205,9 +205,11 @@ are placed in the internal DRAM heap one-at-a-time (ADR-0082) rather than static
 Its 3.5" 320x480 ST7796 panel is lit via a **direct-to-panel renderer** (ADR-0084): a full-frame RGB565
 canvas would be 307 KB against this board's ~110 KB largest free block, so drawing goes straight to the
 panel with no offscreen buffer. It is presented in **landscape (480x320)** to match the other boards. The
-boot splash and the Maintenance panel render on it today; the **live hunt HUD** (which needs re-laying-out
-for landscape and a flicker-free region-repaint) and **GT911 capacitive touch** are additive follow-ups
-([`LEDGER.md`](LEDGER.md)), as is broadening to a bare ESP32.
+boot splash, the **live hunt HUD**, and the Maintenance panel all render on it: because there is no offscreen
+buffer, the HUD avoids flicker by repainting only changed fields rather than clearing the whole panel each
+frame (a second renderer laid out for 480x320, ADR-0086, leaving the other boards' renderer untouched).
+**GT911 capacitive touch** is an additive follow-up ([`LEDGER.md`](LEDGER.md)), as is broadening to a bare
+ESP32.
 
 ## Flashing a board
 

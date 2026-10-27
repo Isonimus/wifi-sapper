@@ -34,7 +34,7 @@
 #include "net/uploader_wpasec.h"
 #include "surface/led_driver_esp32.h"
 #include "surface/led_status_surface.h"
-#include "surface/screen_renderer_esp32.h"
+#include "surface/active_screen_renderer.h"
 #include "surface/screen_toast_surface.h"
 #include "surface/webhook_notifier.h"
 #include "surface/webhook_transport_esp32.h"
@@ -178,9 +178,13 @@ WebhookNotifier* g_webhook = nullptr;
 // LED, but it renders engine facts as text on the panel. Wired only when huntLoopBegin is given a
 // display and the active board has one; the renderer binds the display by reference and the surface
 // binds the renderer by reference, so both are placement-new'd once the display is known.
-alignas(Esp32ScreenRenderer) uint8_t g_screenRendererStorage[sizeof(Esp32ScreenRenderer)];
+// ActiveScreenRenderer is the board's device renderer, selected on SAPPER_DISPLAY_DIRECT_PANEL (ADR-0086 / §4
+// #39): DirectPanelScreenRenderer on a direct-panel board (region-repaint for the buffer-free panel), else the
+// sprite-era Esp32ScreenRenderer unchanged. Both implement the same ScreenRenderer seam, so the wiring below
+// is one code path for every display board.
+alignas(ActiveScreenRenderer) uint8_t g_screenRendererStorage[sizeof(ActiveScreenRenderer)];
 alignas(ScreenToastSurface) uint8_t g_screenStorage[sizeof(ScreenToastSurface)];
-Esp32ScreenRenderer* g_screenRenderer = nullptr;
+ActiveScreenRenderer* g_screenRenderer = nullptr;
 ScreenToastSurface* g_screen = nullptr;
 
 // CrackedSync and the session bind to the wpa-sec key, so they are placement-new'd once credentials are
@@ -374,17 +378,12 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     // Wire the status-HUD/toast surface iff a display was passed and the active board has a panel
     // (ADR-0025). A passive surface like the LED: it subscribes to the bus and renders on its own tick.
     // A screenless board or a null display leaves it off — the screen is optional, like the webhook.
-#if defined(SAPPER_DISPLAY_DIRECT_PANEL)
-    // Not on a direct-panel board yet (ADR-0084): the Esp32ScreenRenderer is the sprite-era renderer — it
-    // full-clears each heartbeat and is laid out for 240x135, so on a 320x480 direct panel it would render
-    // cornered and flash ~1 Hz. The boot splash and the Maintenance panel (drawn-once, main.cpp) still light
-    // the panel; the live HUD's 320x480 re-layout + flicker-free region-repaint is a follow-on slice (LEDGER).
-    constexpr bool kWireLiveHud = false;
-#else
-    constexpr bool kWireLiveHud = true;
-#endif
-    if (display != nullptr && kActiveBoard.hasDisplay && kWireLiveHud) {
-        g_screenRenderer = new (g_screenRendererStorage) Esp32ScreenRenderer(*display);
+    // The HUD is wired on every display board, each getting the renderer its panel can afford: a
+    // direct-panel board (ADR-0084) draws through DirectPanelScreenRenderer (region-repaint, no whole-panel
+    // flash), every other board through the unchanged sprite-era Esp32ScreenRenderer (ActiveScreenRenderer,
+    // ADR-0086 / §4 #39). slice-0085's direct-panel HUD gate is retired by slice-0087.
+    if (display != nullptr && kActiveBoard.hasDisplay) {
+        g_screenRenderer = new (g_screenRendererStorage) ActiveScreenRenderer(*display);
         g_screen = new (g_screenStorage) ScreenToastSurface(*g_screenRenderer);
         if (!g_bus.subscribe(*g_screen)) {
             Serial.println("[FATAL] event bus subscription failed (screen surface)");
@@ -392,8 +391,6 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         }
         g_screen->setHuntSource(*g_engine);  // live-hunt HUD pulls the snapshot each tick (ADR-0033, §4 #18).
         Serial.println("[SCREEN] enabled (status HUD + live hunt + cracked toast)");
-    } else if (display != nullptr && kActiveBoard.hasDisplay) {
-        Serial.println("[SCREEN] splash + maintenance only (live HUD deferred on direct-panel board, LEDGER)");
     } else {
         Serial.println("[SCREEN] disabled (no display)");
     }
