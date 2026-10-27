@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="#supported-boards">Boards</a> •
   <a href="#provisioning-first-boot">Provisioning</a> •
   <a href="#normal-operation">Operation</a> •
   <a href="#flashing-a-board">Flashing</a> •
@@ -177,27 +178,48 @@ when armed), and `[WEBHOOK]` (a push was sent). `[ERROR]`/`[FATAL]` mark faults.
 `ping`/`state`/`dump` commands (see [Serial control channel](#serial-control-channel-observation))
 work at any time without disturbing the hunt.
 
+## Supported boards
+
+Four board profiles ship today. The capture→upload→sync engine is identical across all of them; the
+rows differ only in hardware the surfaces adapt to (panel, PSRAM, the Maintenance entry gesture). The
+firmware is headless-first, so a screenless or LED-less board runs the same binary.
+
+| Board | MCU | PSRAM | Flash | Display | Maintenance entry | PlatformIO env |
+|---|---|---|---|---|---|---|
+| **M5Stack Cardputer ADV** *(reference)* | ESP32-S3 | none | 8 MB | 1.14" 240x135 | press `m` key | `cardputer` |
+| **M5StickC Plus2** | ESP32-PICO-V3-02 | 2 MB quad | 8 MB | 1.14" 240x135 | hold BtnB ~2 s | `m5stickc_plus2` |
+| **LilyGo T-embed** | ESP32-S3 | 8 MB octal | 16 MB | 1.9" 320x170 | hold encoder push ~2 s | `t_embed` |
+| **ESP32-3248S035C (CYD)** | ESP32-D0WD-V3 | none | 4 MB | none *(ST7796 320x480: Slice B)* | hold BOOT ~2 s | `cyd_3248s035c` |
+
+**USB serial.** The two ESP32-S3 boards (Cardputer, T-embed) expose a **native USB-CDC / USB-Serial-JTAG**
+port, so they enumerate directly and do not reset when a serial monitor opens. The M5StickC Plus2 and the
+CYD use a **CH340 USB-to-serial bridge**, which resets the board (via DTR/RTS) when a port opens — normal,
+and how the bench verifies wake it.
+
+**Status LED** (see the [colour table](#normal-operation)): the Cardputer drives a WS2812 RGB LED, the
+M5StickC Plus2 a single red LED, and the T-embed and CYD have no LED wired yet (the T-embed's APA102 and
+the CYD's 3-GPIO RGB are deferred, [`LEDGER.md`](LEDGER.md)).
+
+The CYD ships **headless** this slice: it is the first board that is both no-PSRAM and a classic ESP32, so
+its two cracked-manifest buffers are placed in the internal DRAM heap one-at-a-time (ADR-0082) rather than
+static `.bss`, which overflows. Lighting its 3.5" 320x480 ST7796 panel + GT911 touch is an additive
+follow-up (Slice B, [`LEDGER.md`](LEDGER.md)), as is broadening to a bare ESP32.
+
 ## Flashing a board
 
-The firmware is built and flashed with [PlatformIO](https://platformio.org). Three board profiles
-ship today: the reference **M5Stack Cardputer ADV** (ESP32-S3, no PSRAM), built as the `cardputer`
-environment; the **M5StickC Plus2** (classic ESP32-PICO-V3-02, 2 MB PSRAM, 8 MB flash), built as the
-`m5stickc_plus2` environment; and the **LilyGo T-embed** (ESP32-S3, 8 MB octal PSRAM, 16 MB flash,
-rotary encoder), built as the `t_embed` environment. Broadening to further boards (CYD, bare ESP32)
-is a tracked follow-up ([`LEDGER.md`](LEDGER.md), slice-8). The display driver (LovyanGFX) auto-detects
-the panel, so a screen is optional: a screenless board runs the same binary.
+The firmware is built and flashed with [PlatformIO](https://platformio.org). Pick your board's
+environment from the [Supported boards](#supported-boards) table above. The display driver (LovyanGFX)
+is configured per board, so a screen is optional: a screenless board runs the same binary.
 
-1. Connect the board over USB-C.
-   - The Cardputer's and the T-embed's ESP32-S3 expose a **native USB-CDC** serial port (no external
-     UART bridge), so they enumerate directly and do not reset when a serial monitor opens.
-   - The M5StickC Plus2 uses a **CH340 USB-to-serial bridge**, which does reset the board (via
-     DTR/RTS) when a serial port opens. That is normal, and it is how the bench verifies wake the unit.
+1. Connect the board over USB-C (see the USB serial note under [Supported boards](#supported-boards)
+   for how each board enumerates).
 2. Build and flash the shipped firmware (substitute your board's env for `cardputer`):
 
    ```
    pio run -e cardputer -t upload          # Cardputer ADV
    pio run -e m5stickc_plus2 -t upload     # M5StickC Plus2
    pio run -e t_embed -t upload            # LilyGo T-embed
+   pio run -e cyd_3248s035c -t upload      # ESP32-3248S035C (CYD), headless
    ```
 
    If the board does not auto-reset into its bootloader, hold **BOOT (GPIO0)** while tapping
@@ -210,7 +232,7 @@ the panel, so a screen is optional: a screenless board runs the same binary.
 
 After flashing, a device with no saved network comes up in the **captive setup portal**: continue
 with [Provisioning](#provisioning-first-boot) above. Each board also has a `*_testhooks` environment
-(`cardputer_testhooks`, `m5stickc_plus2_testhooks`), the bench-verify build only (it carries the
+(`cardputer_testhooks`, `m5stickc_plus2_testhooks`, `t_embed_testhooks`, `cyd_3248s035c_testhooks`), the bench-verify build only (it carries the
 serial *stimulus* vocabulary and the compile-time probes); never deploy it, and see
 [Building & verifying](#building--verifying) for what each verify needs.
 

@@ -197,31 +197,39 @@ void runMaintenance(const ProvisioningRecord& creds, IDisplay& panel) {
     // (256 × ~112 B ≈ 28 KB), which overflows the ~8 KB loopTask stack the instant it is constructed —
     // a stack-canary panic in the ctor, measured on-device (this is why Maintenance rebooted before the
     // SoftAP ever came up once ADR-0057 finally made it reachable). It mirrors the hunt path's g_manifest
-    // (hunt_loop.cpp): static .bss on a no-PSRAM board, PSRAM heap on a PSRAM board (ADR-0080). runMaintenance
-    // runs once and does not return on the happy path, so a static local is the natural lifetime; the store is
-    // static too so the manifest's reference to it stays valid even on the early-return fault path below.
+    // (hunt_loop.cpp): PSRAM heap on a PSRAM board (ADR-0080), internal DRAM heap on a no-PSRAM classic ESP32
+    // (ADR-0082), static .bss on a no-PSRAM board whose budget fits (the S3 Cardputer). runMaintenance runs
+    // once and does not return on the happy path, so a static local/pointer is the natural lifetime; the store
+    // is static too so the manifest's reference to it stays valid even on the early-return fault path below.
     static LittleFsCrackedStore crackedStore;
-#ifndef BOARD_HAS_PSRAM
-    // No-PSRAM boards keep the manifest a static .bss object, exactly as it shipped (ADR-0080).
-    static CrackedManifest manifestStorage(crackedStore);
-    CrackedManifest& manifest = manifestStorage;
-#else
-    // PSRAM boards place the ~28KB manifest in PSRAM (ADR-0080): the classic-ESP32 DRAM budget cannot hold it
-    // in .bss (the .dram0.bss overflow slice-0079 measured). Allocated once. Fail loud on a null alloc and
-    // reboot: a PSRAM board that cannot allocate 28KB from 2MB is broken, and a DRAM fallback is the very
-    // block that overflowed the link, so there is nothing safe to continue with (unlike the load-fault below,
-    // which keeps the viewer up on an empty manifest).
+#if defined(BOARD_HAS_PSRAM) || defined(SAPPER_MANIFEST_HEAP_INTERNAL)
+    // Heap boards allocate the ~28KB manifest at runtime and fail loud + reboot on a null alloc: PSRAM on a
+    // PSRAM board (ADR-0080), the INTERNAL DRAM heap on a no-PSRAM classic ESP32 (ADR-0082, where static .bss
+    // overflowed dram0_0_seg by 27056 bytes, slice-0083). Internal-heap placement fits here for the same
+    // reason as the hunt mirror: hunt and Maintenance are mutually-exclusive boot phases, so only this one
+    // manifest is live during Maintenance. A DRAM fallback would be the very block that overflowed the link,
+    // so there is nothing safe to continue with (unlike the load-fault below, which keeps the viewer up on an
+    // empty manifest). Allocated once; runMaintenance does not return on the happy path.
     static CrackedManifest* manifestPtr = nullptr;
     if (manifestPtr == nullptr) {
+#if defined(BOARD_HAS_PSRAM)
         void* manifestMem = heap_caps_malloc(sizeof(CrackedManifest), MALLOC_CAP_SPIRAM);
+#else
+        void* manifestMem = heap_caps_malloc(sizeof(CrackedManifest), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#endif
         if (manifestMem == nullptr) {
-            Serial.println("[FATAL] maintenance: cracked manifest PSRAM allocation failed");
+            Serial.println("[FATAL] maintenance: cracked manifest heap allocation failed");
             delay(50);  // let the [FATAL] line flush before the reset (as every ESP.restart() below does).
             ESP.restart();
         }
         manifestPtr = new (manifestMem) CrackedManifest(crackedStore);
     }
     CrackedManifest& manifest = *manifestPtr;
+#else
+    // No-PSRAM boards whose static budget fits (the roomy S3 Cardputer) keep the manifest a static .bss object,
+    // exactly as it shipped (ADR-0080).
+    static CrackedManifest manifestStorage(crackedStore);
+    CrackedManifest& manifest = manifestStorage;
 #endif
     if (!crackedStore.begin() || !manifest.begin()) {
         Serial.println("[FATAL] maintenance: could not load recovered results");

@@ -4,6 +4,10 @@
  */
 #include "hal/display/lgfx_display.h"
 
+// Compiles to nothing on a screenless board (SAPPER_BOARD_HAS_DISPLAY undefined, e.g. the headless CYD,
+// ADR-0082): the header pulls no LovyanGFX class there, so this LGFX_Sprite-backed impl has nothing to build.
+#if SAPPER_BOARD_HAS_DISPLAY
+
 #include <cstring>
 
 namespace sapper {
@@ -64,3 +68,5 @@ size_t LgfxDisplay::readCanvas(size_t offset, uint8_t* out, size_t cap) const {
 }
 
 }  // namespace sapper
+
+#endif  // SAPPER_BOARD_HAS_DISPLAY

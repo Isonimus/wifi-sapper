@@ -9,8 +9,16 @@
  */
 #pragma once
 
+#include "config/active_board.h"   // SAPPER_BOARD_HAS_DISPLAY: a screenless board compiles no LGFX_* class (ADR-0002 #4)
 #include "config/board_profile.h"
 #include "hal/display/display_hal.h"
+
+// A screenless board (hasDisplay=false, e.g. the headless CYD, ADR-0082) does NOT define
+// SAPPER_BOARD_HAS_DISPLAY, so this whole translation unit (and lgfx_display.cpp) compiles to nothing and
+// no LovyanGFX panel class is pulled — making the "A screenless board compiles no LGFX_* class" contract
+// true at the file level, not just at main.cpp's include guard. A board that DOES declare a display but
+// forgets its panel config still hits the hard #error below (the safety net is preserved).
+#if SAPPER_BOARD_HAS_DISPLAY
 
 // The active board's LovyanGFX config class is selected by the same SAPPER_BOARD_* flag as its profile
 // (ADR-0002 #2). This selection is device-only (it pulls LovyanGFX), so it lives here rather than in the
@@ -59,3 +67,5 @@ private:
 };
 
 }  // namespace sapper
+
+#endif  // SAPPER_BOARD_HAS_DISPLAY

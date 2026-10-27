@@ -73,16 +73,19 @@ WpaSecUploader g_uploader;
 // Serial "surface" that reports each sync. The manifest and the sync each hold a ~27KB fixed buffer at
 // file scope (the RAM the LEDGER's bound item tracks); comparable to the upload path's pcap buffers.
 LittleFsCrackedStore g_crackedStore;
-#ifndef BOARD_HAS_PSRAM
-// No-PSRAM boards keep the cracked manifest as a static .bss object, exactly as it shipped (ADR-0080):
-// its ~28KB storage is reserved at link time. g_manifest points at it so every use below is uniform.
+#if defined(BOARD_HAS_PSRAM) || defined(SAPPER_MANIFEST_HEAP_INTERNAL)
+// Heap boards place the ~28KB manifest object on the heap at runtime: PSRAM on a PSRAM board (ADR-0080), the
+// internal DRAM heap on a no-PSRAM classic ESP32 (ADR-0082). The pointer is a tiny DRAM global; the object is
+// allocated in huntLoopBegin() before first use, failing loud on a null. On a no-PSRAM classic ESP32 the
+// static .bss path overflowed dram0_0_seg (measured 27056 bytes, slice-0083), and internal-heap placement
+// fits because hunt and Maintenance are mutually-exclusive phases, so only ONE manifest is ever live.
+CrackedManifest* g_manifest = nullptr;
+#else
+// No-PSRAM boards whose static budget DOES fit (the roomy S3 Cardputer) keep the cracked manifest as a static
+// .bss object, exactly as it shipped (ADR-0080): its ~28KB storage is reserved at link time. g_manifest points
+// at it so every use below is uniform.
 CrackedManifest g_manifestStorage(g_crackedStore);
 CrackedManifest* g_manifest = &g_manifestStorage;
-#else
-// PSRAM boards place the ~28KB manifest object in PSRAM at runtime (ADR-0080): the classic-ESP32 static
-// DRAM budget cannot hold it in .bss (the .dram0.bss overflow slice-0079 measured). The pointer is a
-// tiny DRAM global; the object is allocated in huntLoopBegin() before first use, failing loud on a null.
-CrackedManifest* g_manifest = nullptr;
 #endif
 WpaSecCrackedFetcher g_fetcher;
 SyncScheduler g_scheduler;
@@ -266,7 +269,7 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         Serial.println("[FATAL] cracked store (LittleFS) mount failed");
         return false;
     }
-#ifdef BOARD_HAS_PSRAM
+#if defined(BOARD_HAS_PSRAM)
     // ADR-0080: place the ~28KB cracked manifest in PSRAM (the classic-ESP32 DRAM budget cannot hold it in
     // .bss). Fail loud on a null alloc: a PSRAM board that cannot allocate PSRAM is broken, and a silent
     // DRAM fallback is exactly the 28KB block that overflowed the link, so there is nothing safe to fall
@@ -275,6 +278,20 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
         void* manifestMem = heap_caps_malloc(sizeof(CrackedManifest), MALLOC_CAP_SPIRAM);
         if (manifestMem == nullptr) {
             Serial.println("[FATAL] cracked manifest PSRAM allocation failed");
+            return false;
+        }
+        g_manifest = new (manifestMem) CrackedManifest(g_crackedStore);
+    }
+#elif defined(SAPPER_MANIFEST_HEAP_INTERNAL)
+    // ADR-0082: no-PSRAM classic ESP32. Place the ~28KB manifest in the INTERNAL DRAM heap, not static .bss
+    // (which overflowed dram0_0_seg by 27056 bytes, slice-0083). This fits where the two static instances did
+    // not because hunt and Maintenance are mutually-exclusive boot phases, so only ONE manifest is ever live:
+    // a runtime alloc materialises just the one this boot uses, not both at link time. Fail loud on a null
+    // alloc like the PSRAM path (a 28KB block that cannot be allocated is not something to silently degrade).
+    if (g_manifest == nullptr) {
+        void* manifestMem = heap_caps_malloc(sizeof(CrackedManifest), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (manifestMem == nullptr) {
+            Serial.println("[FATAL] cracked manifest internal-heap allocation failed");
             return false;
         }
         g_manifest = new (manifestMem) CrackedManifest(g_crackedStore);
