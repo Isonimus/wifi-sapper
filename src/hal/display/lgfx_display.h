@@ -25,6 +25,11 @@ using ActiveLgfxPanel = LGFX_Cardputer;
 namespace sapper {
 using ActiveLgfxPanel = LGFX_M5StickCPlus2;
 }
+#elif defined(SAPPER_BOARD_T_EMBED)
+#include "hal/display/lgfx_t_embed.h"
+namespace sapper {
+using ActiveLgfxPanel = LGFX_T_embed;
+}
 #else
 #error "No SAPPER_BOARD_* panel config selected — define one in platformio.ini build_flags"
 #endif

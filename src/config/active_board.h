@@ -23,6 +23,12 @@ namespace sapper {
 inline constexpr const BoardProfile& kActiveBoard = kM5StickCPlus2Profile;
 }
 #define SAPPER_BOARD_HAS_DISPLAY 1
+#elif defined(SAPPER_BOARD_T_EMBED)
+#include "config/boards/t_embed.h"
+namespace sapper {
+inline constexpr const BoardProfile& kActiveBoard = kTEmbedProfile;
+}
+#define SAPPER_BOARD_HAS_DISPLAY 1
 #else
 #error "No SAPPER_BOARD_* selected — define one in platformio.ini build_flags"
 #endif

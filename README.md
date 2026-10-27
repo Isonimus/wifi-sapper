@@ -102,7 +102,9 @@ To read the recovered passwords off the device without a serial console, trigger
 the device is hunting**: the entry gesture is per board (ADR-0057, ADR-0078). On the **Cardputer ADV**
 press the **`m` key** (there is no runtime button wired to GPIO0, which is a boot strap only used for
 firmware flashing, so the keyboard is the entry input). On the **M5StickC Plus2**, which has no keyboard,
-**hold the BtnB side button for about 2 seconds**. Either gesture saves a one-shot "enter Maintenance"
+**hold the BtnB side button for about 2 seconds**. On the **LilyGo T-embed**, **hold the rotary-encoder
+push switch for about 2 seconds** (its button is on GPIO0, which unlike the Cardputer's is wired to a
+runtime-pressable switch). Any of these gestures saves a one-shot "enter Maintenance"
 flag and reboots into Maintenance; there is no timing window to catch, so trigger it whenever you like.
 Instead of hunting, the device then comes up as a Wi-Fi access point serving a dashboard of everything it
 has recovered, plus two controls (ADR-0043):
@@ -177,16 +179,17 @@ work at any time without disturbing the hunt.
 
 ## Flashing a board
 
-The firmware is built and flashed with [PlatformIO](https://platformio.org). Two board profiles
+The firmware is built and flashed with [PlatformIO](https://platformio.org). Three board profiles
 ship today: the reference **M5Stack Cardputer ADV** (ESP32-S3, no PSRAM), built as the `cardputer`
-environment, and the **M5StickC Plus2** (classic ESP32-PICO-V3-02, 2 MB PSRAM, 8 MB flash), built
-as the `m5stickc_plus2` environment. Broadening to further boards (CYD, T-embed, bare ESP32) is a
-tracked follow-up ([`LEDGER.md`](LEDGER.md), slice-8). The display driver (LovyanGFX) auto-detects
+environment; the **M5StickC Plus2** (classic ESP32-PICO-V3-02, 2 MB PSRAM, 8 MB flash), built as the
+`m5stickc_plus2` environment; and the **LilyGo T-embed** (ESP32-S3, 8 MB octal PSRAM, 16 MB flash,
+rotary encoder), built as the `t_embed` environment. Broadening to further boards (CYD, bare ESP32)
+is a tracked follow-up ([`LEDGER.md`](LEDGER.md), slice-8). The display driver (LovyanGFX) auto-detects
 the panel, so a screen is optional: a screenless board runs the same binary.
 
 1. Connect the board over USB-C.
-   - The Cardputer's ESP32-S3 exposes a **native USB-CDC** serial port (no external UART bridge), so
-     it enumerates directly and does not reset when a serial monitor opens.
+   - The Cardputer's and the T-embed's ESP32-S3 expose a **native USB-CDC** serial port (no external
+     UART bridge), so they enumerate directly and do not reset when a serial monitor opens.
    - The M5StickC Plus2 uses a **CH340 USB-to-serial bridge**, which does reset the board (via
      DTR/RTS) when a serial port opens. That is normal, and it is how the bench verifies wake the unit.
 2. Build and flash the shipped firmware (substitute your board's env for `cardputer`):
@@ -194,6 +197,7 @@ the panel, so a screen is optional: a screenless board runs the same binary.
    ```
    pio run -e cardputer -t upload          # Cardputer ADV
    pio run -e m5stickc_plus2 -t upload     # M5StickC Plus2
+   pio run -e t_embed -t upload            # LilyGo T-embed
    ```
 
    If the board does not auto-reset into its bootloader, hold **BOOT (GPIO0)** while tapping
