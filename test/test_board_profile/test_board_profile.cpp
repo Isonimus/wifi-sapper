@@ -31,6 +31,7 @@ public:
     void drawPixel(int32_t, int32_t, uint16_t) override { ++draws; }
     void drawText(int32_t, int32_t, const char*, uint16_t, uint8_t) override { ++draws; }
     void present() override {}
+    void setBrightness(uint8_t) override {}
     size_t canvasByteLength() const override { return 0; }
     size_t readCanvas(size_t, uint8_t*, size_t) const override { return 0; }
 };

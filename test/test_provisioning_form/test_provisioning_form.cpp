@@ -107,18 +107,26 @@ void test_absent_maintpass_shows_default_placeholder(void) {
     TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='blank = use default AP password'"));
 }
 
-void test_form_never_prefills_a_value(void) {
-    // The no-secret-echo guarantee, observably: the form uses placeholders, never a `value=` attribute,
-    // so no field — secret or not — is pre-filled. The model has no secret string to echo (§4 #20), and
-    // this pins the property so a future edit that adds `value='...'` fails here. Every secret-bearing
-    // flag is set so the assertion covers the maintenance passphrase field too (ADR-0039 #6).
+void test_form_never_prefills_a_secret_value(void) {
+    // The no-secret-echo guarantee, observably: every SECRET field renders via a placeholder and closes
+    // without a `value=` attribute, so no stored secret is pre-filled. The model carries no secret string
+    // to echo (§4 #20); this pins that no `value='...'` is ever attached to a secret input. (The
+    // non-secret screen-dim numbers DO carry value=, by design, and are checked separately below.) Every
+    // secret-bearing flag is set so the assertion covers the maintenance passphrase field too (ADR-0039 #6).
     SetupFormModel model = {};
     model.hasStoredKey = true;
     model.hasStoredWebhook = true;
     model.hasStoredMaintenancePass = true;
     char html[kSetupFormBufSize];
     TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
-    TEST_ASSERT_NULL(strstr(html, "value="));
+    // Each secret input closes at '>' right after its last non-value attribute: no value= was injected.
+    TEST_ASSERT_NOT_NULL(strstr(html, "name='pass' type='password' maxlength='63'>"));
+    TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current key'>"));
+    TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current webhook'>"));
+    TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current passphrase'>"));
+    // The only value= attributes in the form are the two numeric dim fields (type='number').
+    TEST_ASSERT_NULL(strstr(html, "type='password' maxlength='63' value="));
+    TEST_ASSERT_NULL(strstr(html, "type='url' maxlength='160' placeholder='leave blank to keep current webhook' value="));
 }
 
 void test_ssid_field_suppresses_mobile_autocapitalize(void) {
@@ -133,6 +141,50 @@ void test_ssid_field_suppresses_mobile_autocapitalize(void) {
     TEST_ASSERT_NOT_NULL(strstr(html, "autocapitalize='none'"));
     TEST_ASSERT_NOT_NULL(strstr(html, "autocorrect='off'"));
     TEST_ASSERT_NOT_NULL(strstr(html, "spellcheck='false'"));
+}
+
+void test_form_prefills_the_screen_dim_delays_from_the_model(void) {
+    // The two inactivity-dim number fields render the stored value back (value='N'), so a re-save to change
+    // something else preserves them instead of wiping to 0 — the fix for the re-save-clobbers-config defect.
+    SetupFormModel model = {};
+    model.screenDimAfterSec = 20;
+    model.screenOffAfterSec = 60;
+    char html[kSetupFormBufSize];
+    TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
+    TEST_ASSERT_NOT_NULL(strstr(html, "name='dimAfter' type='number' min='0' max='65535' inputmode='numeric' value='20'>"));
+    TEST_ASSERT_NOT_NULL(strstr(html, "name='offAfter' type='number' min='0' max='65535' inputmode='numeric' value='60'>"));
+}
+
+void test_parse_delay_seconds_clamps_out_of_range(void) {
+    // Server-side bound (ADR-0093): the form max is advisory, so a raw POST value is clamped, never wrapped.
+    TEST_ASSERT_EQUAL_UINT16(60, parseDelaySeconds("60"));
+    TEST_ASSERT_EQUAL_UINT16(65535, parseDelaySeconds("65535"));
+    TEST_ASSERT_EQUAL_UINT16(65535, parseDelaySeconds("70000"));  // over-range -> capped, not 70000-65536.
+    TEST_ASSERT_EQUAL_UINT16(0, parseDelaySeconds("-1"));         // negative -> 0, not 65535 via wrap.
+    TEST_ASSERT_EQUAL_UINT16(0, parseDelaySeconds(""));           // blank -> off.
+    TEST_ASSERT_EQUAL_UINT16(0, parseDelaySeconds("abc"));        // non-numeric -> off.
+}
+
+void test_resolve_clamps_off_delay_at_or_above_dim_delay(void) {
+    // A nonzero off delay below the dim delay is clamped up so the readable dim stage is never skipped;
+    // applies on first boot (no stored) too, and a 0 off (dim-only) is left as-is (ADR-0093 decision 5).
+    ProvisioningRecord submitted;
+    setRecord(submitted, "net", "passABCDEFGH", "keyABCDEFGH", "");
+    submitted.screenDimAfterSec = 30;
+    submitted.screenOffAfterSec = 10;  // below dim: must clamp up to 30.
+    ProvisioningRecord stored = {};
+    ProvisioningRecord out = {};
+    resolveProvisioningUpdate(submitted, stored, /*hasStored=*/false, out);
+    TEST_ASSERT_EQUAL_UINT16(30, out.screenDimAfterSec);
+    TEST_ASSERT_EQUAL_UINT16(30, out.screenOffAfterSec);
+
+    submitted.screenOffAfterSec = 0;  // dim-only: left as-is.
+    resolveProvisioningUpdate(submitted, stored, /*hasStored=*/false, out);
+    TEST_ASSERT_EQUAL_UINT16(0, out.screenOffAfterSec);
+
+    submitted.screenOffAfterSec = 90;  // above dim: kept.
+    resolveProvisioningUpdate(submitted, stored, /*hasStored=*/false, out);
+    TEST_ASSERT_EQUAL_UINT16(90, out.screenOffAfterSec);
 }
 
 void test_overflow_returns_zero_and_empties(void) {
@@ -256,7 +308,10 @@ int main(int, char**) {
     RUN_TEST(test_stored_maintpass_hints_keep);
     RUN_TEST(test_absent_maintpass_shows_default_placeholder);
     RUN_TEST(test_ssid_field_suppresses_mobile_autocapitalize);
-    RUN_TEST(test_form_never_prefills_a_value);
+    RUN_TEST(test_form_prefills_the_screen_dim_delays_from_the_model);
+    RUN_TEST(test_parse_delay_seconds_clamps_out_of_range);
+    RUN_TEST(test_resolve_clamps_off_delay_at_or_above_dim_delay);
+    RUN_TEST(test_form_never_prefills_a_secret_value);
     RUN_TEST(test_overflow_returns_zero_and_empties);
     RUN_TEST(test_blank_secrets_keep_stored);
     RUN_TEST(test_nonblank_secrets_replace);

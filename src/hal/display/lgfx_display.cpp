@@ -48,6 +48,8 @@ void LgfxDisplay::drawText(int32_t x, int32_t y, const char* text, uint16_t colo
 
 void LgfxDisplay::present() { m_canvas.pushSprite(0, 0); }
 
+void LgfxDisplay::setBrightness(uint8_t level) { m_panel.setBrightness(level); }
+
 size_t LgfxDisplay::canvasByteLength() const {
     // Honour the IDisplay contract: 0 when there is no canvas. If createSprite() failed in
     // begin() the geometry is still non-zero, so reporting m_width*m_height*2 here would make

@@ -36,6 +36,11 @@ struct SetupFormModel {
                                     ///< "leave blank to keep" hint. Optional (empty = the AP falls back
                                     ///< to the published default), so never `required`. The value, being
                                     ///< a secret, is never rendered — only the fact that one is stored.
+    /// Inactivity screen-dim delays in seconds (ADR-0093), prefilled into the two number inputs so a
+    /// re-save preserves them like the checkboxes preserve their state (these are config, not secrets, so
+    /// rendering the value is safe — unlike the secret fields above, which only ever carry a stored-flag).
+    uint16_t screenDimAfterSec;
+    uint16_t screenOffAfterSec;
 };
 
 /// Buffer size for the rendered setup form. The form is ~1.4 KB; 2 KB leaves margin. A compile-time
@@ -66,5 +71,15 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize);
  */
 void resolveProvisioningUpdate(const ProvisioningRecord& submitted, const ProvisioningRecord& stored,
                                bool hasStored, ProvisioningRecord& out);
+
+/**
+ * @brief Parse a screen-dim delay field (seconds) from form text, clamped to a u16 (ADR-0093).
+ *
+ * The form's `max='65535'` is a client-side hint only; this handler is reachable by a raw POST, so the
+ * value is bounded server-side: a negative or non-numeric value is 0 (off), an over-range value is capped
+ * at 65535, never wrapped. Pure so the bound is host-tested (the string fields already reject over-length
+ * loudly; a dim delay is non-critical config, so it is clamped to a sane value rather than 400-rejected).
+ */
+uint16_t parseDelaySeconds(const char* text);
 
 }  // namespace sapper

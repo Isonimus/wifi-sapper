@@ -83,6 +83,10 @@ void CaptivePortal::handleRoot() {
         model.hasStoredKey = stored.key[0] != '\0';
         model.hasStoredWebhook = stored.webhookUrl[0] != '\0';
         model.hasStoredMaintenancePass = stored.maintenancePass[0] != '\0';
+        // Prefill the screen-dim delays (ADR-0093): config, not secrets, so render the stored value back
+        // (the two number inputs carry value='N'), so a re-save preserves them instead of wiping to 0.
+        model.screenDimAfterSec = stored.screenDimAfterSec;
+        model.screenOffAfterSec = stored.screenOffAfterSec;
     } else {
         // First boot (or a corrupt/half-written record): fresh defaults — "cracked" pre-checked to match
         // the ADR-0035 NVS read-default, everything else off and no secret stored.
@@ -118,6 +122,11 @@ void CaptivePortal::handleSave() {
     submitted.notifyCaptured = (m_http.arg("nCaptured") == "on");
     submitted.notifyCracked = (m_http.arg("nCracked") == "on");
     submitted.notifySyncError = (m_http.arg("nSyncErr") == "on");
+    // Screen-dim delays (ADR-0093): parsed and clamped to u16 server-side (the form's max is advisory and
+    // this is reachable by a raw POST), so an over-range value is capped not wrapped; blank/negative -> 0
+    // (off). resolveProvisioningUpdate then clamps the off delay >= the dim delay.
+    submitted.screenDimAfterSec = parseDelaySeconds(m_http.arg("dimAfter").c_str());
+    submitted.screenOffAfterSec = parseDelaySeconds(m_http.arg("offAfter").c_str());
 
     // Merge over the stored record (ADR-0037): a blank key/webhook keeps its stored value, so a re-save
     // to fix WiFi does not silently wipe the secret the operator did not retype; the pair and the

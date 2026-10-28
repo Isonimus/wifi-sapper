@@ -55,6 +55,13 @@ struct ProvisioningRecord {
     /// provisioned before it existed, where getString leaves it empty (the behaviour-preserving default:
     /// the AP keeps using kSoftApPassword, exactly as it did before this field). Sized to the WPA2 max.
     char maintenancePass[kMaxPassLen + 1];
+    /// Inactivity screen-dimming delays in seconds (ADR-0093, §4). 0 = feature off, the default and the
+    /// behaviour-preserving value for a device provisioned before these existed (getUShort reads absent
+    /// keys back as 0). `screenOffAfterSec`, when nonzero, is kept >= `screenDimAfterSec` at save so the
+    /// readable dim stage is never skipped (the pure predicate is safe even if that clamp is bypassed).
+    /// Optional, like the webhook/deauth fields: never part of the credential validity gate.
+    uint16_t screenDimAfterSec;
+    uint16_t screenOffAfterSec;
 };
 
 /**

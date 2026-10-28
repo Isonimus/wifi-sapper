@@ -23,6 +23,7 @@ public:
     void drawText(int32_t /*x*/, int32_t /*y*/, const char* /*text*/, uint16_t /*color565*/,
                   uint8_t /*size*/) override {}
     void present() override {}
+    void setBrightness(uint8_t /*level*/) override {}  // no panel, no backlight.
     size_t canvasByteLength() const override { return 0; }
     size_t readCanvas(size_t /*offset*/, uint8_t* /*out*/, size_t /*cap*/) const override {
         return 0;

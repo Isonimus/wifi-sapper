@@ -77,7 +77,14 @@ portal** instead of trying to hunt (ADR-0006):
    unchecked device hunts passively and transmits nothing. **Arm it only where every network in radio
    range is one you own or are explicitly authorized to test** — deauthing networks you are not
    authorized to test is illegal in most jurisdictions.
-7. Save. The device stores the credentials and reboots to join the network.
+7. Optionally, **screen dimming** (ADR-0093), two idle delays in seconds on a board with a panel:
+   **Screen dim after** (the backlight drops to a readable ~15% after this long idle; 0 = never dim) and
+   **Screen off after** (fully dark after this long; 0 = dim only, never off). Both **off by default**.
+   The screen brightens again on a capture or a crack (and on a button press, on button boards), and the
+   hunt keeps running the whole time: dimming only changes the backlight, it never sleeps the device.
+   Saves battery and reduces the lit-screen tell of a planted unit. Both fields are pre-filled with their
+   stored value when you reopen the form, so a re-save to change something else preserves them.
+8. Save. The device stores the credentials and reboots to join the network.
 
 On a board **with a screen**, these join details (the `Sapper-XXXX` name, the `sapper-setup`
 passphrase, and `http://192.168.4.1/`) are shown on the panel while the setup portal is up

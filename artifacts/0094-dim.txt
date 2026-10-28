@@ -1,0 +1,3 @@
+[DIM] stage=active
+[DIM] stage=dimmed
+[DIM] stage=off

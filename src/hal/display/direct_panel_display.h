@@ -35,6 +35,7 @@ public:
     void drawPixel(int32_t x, int32_t y, uint16_t color565) override;
     void drawText(int32_t x, int32_t y, const char* text, uint16_t color565, uint8_t size) override;
     void present() override;                               // no-op: no canvas to push
+    void setBrightness(uint8_t level) override;
     size_t canvasByteLength() const override { return 0; } // no canvas (ADR-0084 decision 3)
     size_t readCanvas(size_t, uint8_t*, size_t) const override { return 0; }
 

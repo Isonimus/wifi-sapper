@@ -48,6 +48,8 @@ void DirectPanelDisplay::drawText(int32_t x, int32_t y, const char* text, uint16
 // IDisplay contract so a surface that draws-then-presents is unchanged; here it is a deliberate no-op.
 void DirectPanelDisplay::present() {}
 
+void DirectPanelDisplay::setBrightness(uint8_t level) { m_panel.setBrightness(level); }
+
 }  // namespace sapper
 
 #endif  // SAPPER_BOARD_HAS_DISPLAY

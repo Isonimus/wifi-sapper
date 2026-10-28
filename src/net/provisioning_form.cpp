@@ -5,6 +5,7 @@
 #include "net/provisioning_form.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace sapper {
@@ -59,10 +60,18 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "<input name='maintpass' type='password' maxlength='63' placeholder='%s'><br>"
         "<small>Protects the results dashboard shown when you press BOOT during the boot splash. Blank "
         "uses the default AP password.</small></p>"
+        // Inactivity screen dimming (ADR-0093): two idle delays in seconds. Prefilled with the stored
+        // value (not a secret), so a re-save to change something else preserves them, like the checkboxes
+        // preserve their state. 0 dim = off; a nonzero off is clamped >= dim on save.
+        "<p>Screen dim after (seconds idle; 0 = never dim)<br>"
+        "<input name='dimAfter' type='number' min='0' max='65535' inputmode='numeric' value='%u'></p>"
+        "<p>Screen off after (seconds idle; 0 = dim only)<br>"
+        "<input name='offAfter' type='number' min='0' max='65535' inputmode='numeric' value='%u'></p>"
         "<p><button type='submit'>Save &amp; reboot</button></p>"
         "</form></body></html>",
         keyField, webhookPlaceholder, checkedAttr(model.notifyCracked), checkedAttr(model.notifyCaptured),
-        checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed), maintPlaceholder);
+        checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed), maintPlaceholder,
+        static_cast<unsigned>(model.screenDimAfterSec), static_cast<unsigned>(model.screenOffAfterSec));
 
     // snprintf returns what it *would* have written: >= outSize means it truncated. Serve nothing
     // rather than a half-form (§3, fail loud) — clear out[0] so a careless caller cannot send garbage.
@@ -77,6 +86,13 @@ void resolveProvisioningUpdate(const ProvisioningRecord& submitted, const Provis
                                bool hasStored, ProvisioningRecord& out) {
     // The pair (ssid/pass) and every toggle always come from the submission; start from it wholesale.
     out = submitted;
+    // The screen-dim delays (ADR-0093) came from the submission via the copy; clamp the off delay, when
+    // set, to >= the dim delay so the readable stage is never skipped. Applied before the first-boot
+    // return so a fresh config is sane too; the pure predicate is safe even if this is bypassed. A 0 off
+    // (dim-only) is left as-is.
+    if (out.screenOffAfterSec != 0 && out.screenOffAfterSec < out.screenDimAfterSec) {
+        out.screenOffAfterSec = out.screenDimAfterSec;
+    }
     if (!hasStored) return;  // first boot: nothing to keep — a blank key fails validation downstream.
 
     // A blank secret field keeps the stored value; a non-blank one already sits in `out` from the copy.
@@ -86,6 +102,15 @@ void resolveProvisioningUpdate(const ProvisioningRecord& submitted, const Provis
     // re-save keeps the stored passphrase rather than dropping the AP back to the default password.
     if (submitted.maintenancePass[0] == '\0')
         std::memcpy(out.maintenancePass, stored.maintenancePass, sizeof(out.maintenancePass));
+}
+
+uint16_t parseDelaySeconds(const char* text) {
+    if (text == nullptr) return 0;
+    char* end = nullptr;
+    const long value = std::strtol(text, &end, 10);
+    if (value < 0) return 0;                 // negative/non-numeric -> off, never a wrapped huge value.
+    if (value > 65535) return 65535;         // over-range -> capped, never wrapped (client max is advisory).
+    return static_cast<uint16_t>(value);
 }
 
 }  // namespace sapper

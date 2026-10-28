@@ -26,6 +26,8 @@ constexpr char kKeyNotifyCap[] = "notify_cap";
 constexpr char kKeyNotifyCrk[] = "notify_crk";
 constexpr char kKeyNotifyErr[] = "notify_err";
 constexpr char kKeyMaintPass[] = "maint_pass";  // 10 chars; the optional Maintenance AP passphrase (ADR-0039).
+constexpr char kKeyDimAfter[] = "dim_after";    // 9 chars; inactivity screen-dim delay in seconds (ADR-0093).
+constexpr char kKeyOffAfter[] = "off_after";    // 9 chars; inactivity screen-off delay in seconds (ADR-0093).
 
 }  // namespace
 
@@ -60,6 +62,11 @@ bool loadProvisioning(ProvisioningRecord& out) {
     // which getString leaves empty — the behaviour-preserving default is the published kSoftApPassword
     // fallback the AP already used, so an upgrade never changes the Maintenance AP secret silently.
     prefs.getString(kKeyMaintPass, out.maintenancePass, sizeof(out.maintenancePass));
+    // Inactivity screen-dim delays (ADR-0093): absent on a device provisioned before they existed, where
+    // getUShort reads back 0 (feature off) — the behaviour-preserving default, so dimming stays off until
+    // the operator opts in. Optional, not part of the validity gate below.
+    out.screenDimAfterSec = prefs.getUShort(kKeyDimAfter, /*defaultValue=*/0);
+    out.screenOffAfterSec = prefs.getUShort(kKeyOffAfter, /*defaultValue=*/0);
     prefs.end();
 
     // A half-written or corrupt triad reads as "not provisioned" so the boot gate opens the
@@ -108,8 +115,13 @@ bool persistProvisioning(const ProvisioningRecord& record) {
     // leaves a stale passphrase beside a fresh triad.
     const bool wroteMaintPass =
         prefs.putString(kKeyMaintPass, record.maintenancePass) == std::strlen(record.maintenancePass);
+    // The screen-dim delays (ADR-0093): two u16 values, riding the same all-or-nothing clear() below so a
+    // partial write never leaves a stale delay beside a fresh triad.
+    const bool wroteDimAfter = prefs.putUShort(kKeyDimAfter, record.screenDimAfterSec) == sizeof(uint16_t);
+    const bool wroteOffAfter = prefs.putUShort(kKeyOffAfter, record.screenOffAfterSec) == sizeof(uint16_t);
     const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook && wroteDeauth &&
-                       wroteNotifyCap && wroteNotifyCrk && wroteNotifyErr && wroteMaintPass;
+                       wroteNotifyCap && wroteNotifyCrk && wroteNotifyErr && wroteMaintPass &&
+                       wroteDimAfter && wroteOffAfter;
     if (!wrote) {
         prefs.clear();  // partial write — wipe so no mixed triad can survive to the next boot.
     }

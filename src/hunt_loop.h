@@ -37,6 +37,10 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
 /// Advance the hunt and the drain arbiter once. Call every loop() iteration after huntLoopBegin().
 void huntLoopPump();
 
+/// Note a board input so the inactivity dimmer wakes the screen (ADR-0093). Call from loop() in Ready
+/// when the board reports input; a no-op when dimming is not wired.
+void huntLoopNoteInput(uint32_t nowMs);
+
 /// The most recent drain outcome, for a device surface / the on-air verify to report.
 const DrainOutcome& huntLoopLastDrain();
 

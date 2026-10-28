@@ -36,6 +36,7 @@
 #include "surface/battery_model.h"  // batteryLevelName — the [BATT] diagnostic line.
 #include "surface/led_driver_esp32.h"
 #include "surface/led_status_surface.h"
+#include "surface/screen_sleep.h"
 #include "surface/active_screen_renderer.h"
 #include "surface/screen_toast_surface.h"
 #include "surface/webhook_notifier.h"
@@ -200,6 +201,14 @@ alignas(ActiveScreenRenderer) uint8_t g_screenRendererStorage[sizeof(ActiveScree
 alignas(ScreenToastSurface) uint8_t g_screenStorage[sizeof(ScreenToastSurface)];
 ActiveScreenRenderer* g_screenRenderer = nullptr;
 ScreenToastSurface* g_screen = nullptr;
+
+// Inactivity backlight dimmer (slice-0094, ADR-0093): a bus observer that dims the panel backlight after
+// idle to save power on a battery field unit, WITHOUT ever sleeping the CPU (§4) — the hunt keeps running
+// in the dark. Wired only on a display board whose operator provisioned a nonzero dim delay. The last
+// logged stage drives the `[DIM]` diagnostic line (the machine-checkable verify half), on each transition.
+alignas(ScreenSleepController) uint8_t g_screenSleepStorage[sizeof(ScreenSleepController)];
+ScreenSleepController* g_screenSleep = nullptr;
+ScreenSleepStage g_lastLoggedDimStage = ScreenSleepStage::Active;
 
 // CrackedSync and the session bind to the wpa-sec key, so they are placement-new'd once credentials are
 // known, exactly as the station adapter and supervisor are.
@@ -418,6 +427,23 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
             g_screen->setBatterySource(g_batteryGauge, kActiveBoard.batteryDividerPermille);
             Serial.println("[BATT] enabled");
         }
+        // Inactivity backlight dimmer (ADR-0093): wire only when the operator provisioned a nonzero dim
+        // delay, so the default (0) ships the unchanged always-on backlight. Delays are seconds in NVS,
+        // converted to the millis the predicate uses. It subscribes to the bus so a capture/crack wakes it.
+        if (creds.screenDimAfterSec > 0) {
+            g_screenSleep = new (g_screenSleepStorage) ScreenSleepController(
+                *display, static_cast<uint32_t>(creds.screenDimAfterSec) * 1000u,
+                static_cast<uint32_t>(creds.screenOffAfterSec) * 1000u);
+            if (!g_bus.subscribe(*g_screenSleep)) {
+                Serial.println("[FATAL] event bus subscription failed (screen sleep)");
+                return false;
+            }
+            Serial.printf("[DIM] enabled dimAfter=%us offAfter=%us\n",
+                          static_cast<unsigned>(creds.screenDimAfterSec),
+                          static_cast<unsigned>(creds.screenOffAfterSec));
+        } else {
+            Serial.println("[DIM] disabled (dimAfter=0)");
+        }
         Serial.println("[SCREEN] enabled (status HUD + live hunt + cracked toast)");
     } else {
         Serial.println("[SCREEN] disabled (no display)");
@@ -435,6 +461,7 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     g_ledDriver.begin();            // configure the LED GPIO now the Arduino core is up.
     g_ledSurface.begin(millis());   // light the LED in its hunting heartbeat.
     if (g_screen != nullptr) g_screen->begin(millis());  // draw the initial HUD on the panel.
+    if (g_screenSleep != nullptr) g_screenSleep->begin(millis());  // light the panel full, seed the idle timer.
     g_running = true;
     Serial.println("[HUNT] discovering channels=1,6,11 (shipped hunt+upload+sync loop)");
     return true;
@@ -458,6 +485,16 @@ void huntLoopPump() {
     // Battery diagnostic (ADR-0091): emit `[BATT] mv=.. level=..` on each bucket change, the
     // machine-checkable half of verify:battery (the icon itself is the photographic half). The surface
     // did the one ADC read on its sample throttle; this only reads back the stashed result.
+    // Inactivity backlight dimmer (ADR-0093): drive the backlight from idle time; log `[DIM] stage=...` on
+    // each transition (the machine-checkable verify half). Backlight only — the loop above already ran the
+    // full hunt tick, so capture/upload/sync continue through the dimmed and off stages (§4).
+    if (g_screenSleep != nullptr) {
+        const ScreenSleepStage stage = g_screenSleep->tick(now);
+        if (stage != g_lastLoggedDimStage) {
+            g_lastLoggedDimStage = stage;
+            Serial.printf("[DIM] stage=%s\n", screenSleepStageName(stage));
+        }
+    }
     if (g_screen != nullptr && g_screen->batteryGaugePresent()) {
         const BatteryLevel level = g_screen->batteryLevel();
         // Emit on a bucket change, and on a slow heartbeat: an edge-only line is invisible to anything that
@@ -479,6 +516,12 @@ void huntLoopPump() {
                       static_cast<unsigned long>(g_engine->deauthTxFail()),
                       g_engine->capturingBssid() != nullptr ? 1 : 0);
     }
+}
+
+void huntLoopNoteInput(uint32_t nowMs) {
+    // A board input (any key / the entry button pressed) wakes the dimmed screen (ADR-0093 decision 3).
+    // A no-op when dimming is not wired (no display, or dimAfter=0, or a screenless/input-less board).
+    if (g_screenSleep != nullptr) g_screenSleep->noteInput(nowMs);
 }
 
 const DrainOutcome& huntLoopLastDrain() {

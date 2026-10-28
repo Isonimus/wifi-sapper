@@ -53,6 +53,11 @@ public:
     /// Push the canvas to the physical panel.
     virtual void present() = 0;
 
+    /// Set the panel backlight, 0 (off) to 255 (full). The inactivity dimmer (ADR-0093) uses this to
+    /// save power on a battery field unit without ever pausing the hunt loop; a null/absent panel no-ops
+    /// it. Backlight only: a surface must never reach past this to a CPU/clock sleep (§4, ADR-0093).
+    virtual void setBrightness(uint8_t level) = 0;
+
     /// Total bytes in the RGB565 canvas (width*height*2), or 0 when there is none.
     virtual size_t canvasByteLength() const = 0;
 

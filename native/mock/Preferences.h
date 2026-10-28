@@ -96,6 +96,26 @@ public:
         return entry->second != "0";
     }
 
+    /// Two-byte unsigned store (ADR-0093's dim/off delays). Rides the fault-injection knob; returns 2 on
+    /// success like real NVS (which stores a u16).
+    size_t putUShort(const char* key, uint16_t value) {
+        if (!m_open) return 0;
+        if (!sapper_test::failPutKey().empty() && sapper_test::failPutKey() == key) {
+            return 0;  // injected fault: short write, nothing stored.
+        }
+        sapper_test::nvsStore()[m_name][key] = std::to_string(value);
+        return sizeof(uint16_t);
+    }
+
+    uint16_t getUShort(const char* key, uint16_t defaultValue) {
+        if (!m_open) return defaultValue;
+        const auto ns = sapper_test::nvsStore().find(m_name);
+        if (ns == sapper_test::nvsStore().end()) return defaultValue;
+        const auto entry = ns->second.find(key);
+        if (entry == ns->second.end()) return defaultValue;  // key absent -> the default (off).
+        return static_cast<uint16_t>(std::stoul(entry->second));
+    }
+
     size_t getString(const char* key, char* out, size_t maxLen) {
         if (out == nullptr || maxLen == 0) return 0;
         out[0] = '\0';

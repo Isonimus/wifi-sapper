@@ -565,6 +565,15 @@ void loop() {
         }
     } else if (g_phase == Phase::Ready) {
         huntLoopPump();  // the shipped endless hunt→enqueue→drain→upload loop (ADR-0017 decision #8).
+        // Wake the inactivity dimmer on a board input (ADR-0093 decision 3). Button boards poll the entry
+        // button: any press (including the start of a Maintenance hold) counts as activity. Keyboard-board
+        // wake is deferred (LEDGER) because maintenanceEntryRequested() already drains the key FIFO for `m`,
+        // so a parallel any-key poll would contend for it; a capture/crack bus fact still wakes every board.
+        if constexpr (kActiveBoard.input == InputKind::Buttons) {
+            if (kActiveBoard.bootButtonPin >= 0 && digitalRead(kActiveBoard.bootButtonPin) == LOW) {
+                huntLoopNoteInput(millis());
+            }
+        }
         // Runtime Maintenance entry (ADR-0057 intent path, ADR-0078 per-board gesture): the board's entry
         // gesture (keyboard `m`-press or button hold) persists the reboot-intent and restarts; the clean
         // boot reads the intent and routes to Maintenance via the boot gate — never a live radio swap
