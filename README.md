@@ -1,6 +1,10 @@
 # WiFi Sapper
 
 <p align="center">
+  <img src="docs/images/wifi-sapper-banner.webp" alt="WiFi Sapper: autonomous handshake hunter" width="880">
+</p>
+
+<p align="center">
   <strong>Autonomous, headless-first WPA/WPA2 handshake-hunting ESP-32 appliance</strong>
 </p>
 

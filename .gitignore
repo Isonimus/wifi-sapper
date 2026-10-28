@@ -25,3 +25,7 @@ src/gen/
 .claude/scheduled_tasks.lock
 .claude/scheduled_tasks.json
 .claude/settings.local.json
+
+# Banner image sources (multi-MB JPEGs): kept local, out of git history. Only the optimized
+# docs/images/wifi-sapper-banner.webp is committed and referenced by the README.
+docs/images/*.jpeg
