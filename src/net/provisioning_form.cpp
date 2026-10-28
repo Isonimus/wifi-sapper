@@ -39,7 +39,11 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "<title>WiFi Sapper setup</title></head><body>"
         "<h2>WiFi Sapper setup</h2>"
         "<form method='POST' action='/save'>"
-        "<p>Network name (SSID)<br><input name='ssid' maxlength='32' required></p>"
+        // A mobile keyboard autocapitalising/autocorrecting the SSID stores a wrong name (SSIDs are
+        // case-sensitive, arbitrary text), which fails association as a silent credential error. The
+        // password-type fields below are already shielded by type=password; this plain text field is not.
+        "<p>Network name (SSID)<br><input name='ssid' maxlength='32' autocapitalize='none' "
+        "autocorrect='off' spellcheck='false' required></p>"
         "<p>Passphrase (blank for open)<br><input name='pass' type='password' maxlength='63'></p>"
         "<p>wpa-sec API key<br>%s</p>"
         "<p>Push webhook URL (optional; ntfy or Discord, https)<br>"

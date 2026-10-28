@@ -121,6 +121,20 @@ void test_form_never_prefills_a_value(void) {
     TEST_ASSERT_NULL(strstr(html, "value="));
 }
 
+void test_ssid_field_suppresses_mobile_autocapitalize(void) {
+    // A phone keyboard autocapitalising/autocorrecting the SSID stores a wrong (case-sensitive) name, a
+    // silent credential error that fails association. The plain-text SSID field must carry the suppression
+    // attributes (the password/url fields are shielded by their input type). Pin it so a future edit
+    // cannot drop them.
+    SetupFormModel model = {};
+    char html[kSetupFormBufSize];
+    TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
+    TEST_ASSERT_NOT_NULL(strstr(html, "name='ssid'"));
+    TEST_ASSERT_NOT_NULL(strstr(html, "autocapitalize='none'"));
+    TEST_ASSERT_NOT_NULL(strstr(html, "autocorrect='off'"));
+    TEST_ASSERT_NOT_NULL(strstr(html, "spellcheck='false'"));
+}
+
 void test_overflow_returns_zero_and_empties(void) {
     // Too small a buffer must fail loud (return 0, write nothing), never serve a truncated half-form.
     SetupFormModel model = {};
@@ -241,6 +255,7 @@ int main(int, char**) {
     RUN_TEST(test_absent_webhook_shows_default_placeholder);
     RUN_TEST(test_stored_maintpass_hints_keep);
     RUN_TEST(test_absent_maintpass_shows_default_placeholder);
+    RUN_TEST(test_ssid_field_suppresses_mobile_autocapitalize);
     RUN_TEST(test_form_never_prefills_a_value);
     RUN_TEST(test_overflow_returns_zero_and_empties);
     RUN_TEST(test_blank_secrets_keep_stored);
