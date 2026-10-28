@@ -48,6 +48,15 @@ jobs:
             cmd: pio test -e native
           - env: cardputer
             cmd: pio run -e cardputer
+          # The three slice-8 boards (ADR-0080/0082/0084): compile-linking them in CI is what makes the
+          # .dram0.bss overflow guards (§4 #36/#37/#38) and the direct-panel display build check (§4 #38/#39)
+          # actually run on every push, not only on a local build before commit. A host compile+link, no device.
+          - env: m5stickc_plus2
+            cmd: pio run -e m5stickc_plus2
+          - env: t_embed
+            cmd: pio run -e t_embed
+          - env: cyd_3248s035c
+            cmd: pio run -e cyd_3248s035c
     steps:
       - uses: actions/checkout@v7
 
