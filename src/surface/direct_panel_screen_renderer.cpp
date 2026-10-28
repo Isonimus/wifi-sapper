@@ -14,6 +14,7 @@
 #include <cstring>
 
 #include "config/firmware_version.h"  // kFirmwareVersion — the single version source the splash + sprite HUD use.
+#include "surface/wordmark.h"          // drawWordmark — the shared product wordmark (slice-0097).
 
 namespace sapper {
 namespace {
@@ -118,7 +119,10 @@ void DirectPanelScreenRenderer::drawChromeOnce() {
     // The product title never changes, so it is drawn once and never repainted (ADR-0086 decision 3). The
     // firmware version is drawn smaller after the name, from the one kFirmwareVersion the splash uses (no
     // magic version string, §4 #22's spirit; slice-0088). Its baseline is dropped to sit on the name's.
-    display_.drawText(kMargin, kTitleY, kTitleName, kWhite, kTitleSize);
+    // The product wordmark: white glyphs over a banner-magenta drop shadow (slice-0097). The shared helper
+    // owns the effect; the semantic HUD palette (incl. the high-contrast white CAPTURED/CRACKED banner) is
+    // untouched.
+    drawWordmark(display_, kMargin, kTitleY, kTitleName, kTitleSize);
     char version[16];
     std::snprintf(version, sizeof(version), "v%s", kFirmwareVersion);
     const int32_t versionX =

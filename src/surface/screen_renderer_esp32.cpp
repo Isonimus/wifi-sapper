@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "config/firmware_version.h"  // kFirmwareVersion — the single version source the splash uses too.
+#include "surface/wordmark.h"          // drawWordmark — the shared product wordmark (slice-0097).
 
 namespace sapper {
 namespace {
@@ -159,7 +160,10 @@ void Esp32ScreenRenderer::drawHud(const ScreenView& view) {
     // Title: the product name, then the firmware version drawn smaller after it (sourced from the one
     // kFirmwareVersion the splash uses — no magic version string, §4 #22's spirit). The version baseline
     // is dropped to sit on the name's baseline when the two differ in size.
-    display_.drawText(L.margin, L.titleY, kTitleName, kWhite, L.titleSize);
+    // The product wordmark: white glyphs over a banner-magenta drop shadow (slice-0097). The shared helper
+    // owns the effect; the semantic HUD palette (incl. the high-contrast white CAPTURED/CRACKED banner) is
+    // untouched.
+    drawWordmark(display_, L.margin, L.titleY, kTitleName, L.titleSize);
     char version[16];
     std::snprintf(version, sizeof(version), "v%s", kFirmwareVersion);
     const int32_t versionX =

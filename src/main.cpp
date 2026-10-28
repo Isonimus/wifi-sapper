@@ -33,6 +33,7 @@
 #include "net/provisioning.h"
 #include "net/provisioning_store.h"
 #include "net/wifi_station.h"
+#include "surface/wordmark.h"
 #include "deauth_probe.h"
 #include "hunt_loop.h"
 #include "hunt_probe.h"
@@ -83,6 +84,7 @@ IDisplay& display() {
 constexpr uint16_t kBlack = 0x0000;
 constexpr uint16_t kWhite = 0xFFFF;
 constexpr uint16_t kGreen = 0x07E0;
+constexpr uint16_t kCyan = 0x07FF;  // the banner's tagline hue (slice-0097).
 
 // The shipped boot face (ADR-0041): a product splash, not a diagnostic. Name, firmware version, and a
 // one-line tagline, drawn with the drawText primitive slice-0026's HUD already proved on this panel.
@@ -90,11 +92,13 @@ constexpr uint16_t kGreen = 0x07E0;
 // now a bench probe (panel_probe, SAPPER_TEST_PANEL) so no shipped build renders the test pattern.
 void drawSplashFrame(IDisplay& d) {
     d.fillScreen(kBlack);
-    d.drawText(8, 40, "WiFi Sapper", kGreen, 3);
+    // The product wordmark: white glyphs over a banner-magenta drop shadow (slice-0097); the tagline in the
+    // banner's cyan. The version line stays plain white.
+    drawWordmark(d, 8, 40, "WiFi Sapper", 3);
     char versionLine[24];
     std::snprintf(versionLine, sizeof(versionLine), "v%s", kFirmwareVersion);
     d.drawText(8, 78, versionLine, kWhite, 1);
-    d.drawText(8, 96, "autonomous handshake hunter", kWhite, 1);
+    d.drawText(8, 96, "autonomous handshake hunter", kCyan, 1);
 }
 
 // The live boot phase. main.cpp owns it; SerialChannel reads it by reference so `[STATE]` always
