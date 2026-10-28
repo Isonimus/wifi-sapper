@@ -182,17 +182,48 @@ void drawMaintenanceScreen(IDisplay& d, const char* ssid, const char* url, size_
     d.drawText(4, 84, "power-cycle to resume hunting", kWhite, 1);
 }
 
-void startPortal() {
+// The first-boot provisioning instructions on a board with a panel (ADR-0089, refining §4 #22's
+// splash-only boot face). Guided, newbie-first: an operator who flashed from m5burner never saw the
+// README, so the panel itself must say how to join the SoftAP and reach the setup page. The password
+// shown is the fixed PUBLIC default kSoftApPassword, not a per-device secret, so putting it on the
+// shoulder-surfable panel leaks nothing — the deliberate opposite of §4 #21's per-device Maintenance
+// PSKs, which stay OFF the panel; do not "fix" this by hiding the default password. A NullDisplay makes
+// every call a no-op (ADR-0045). Fixed-coordinate like its splash/Maintenance siblings; a resolution-
+// aware pass over all three boot faces is deferred (LEDGER).
+void drawProvisioningScreen(IDisplay& d, const char* ssid, const char* password, const char* url) {
+    d.fillScreen(kBlack);
+    d.drawText(4, 2, "SAPPER SETUP", kWhite, 2);
+    char line[48];
+    d.drawText(4, 28, "1. Join WiFi:", kWhite, 1);
+    std::snprintf(line, sizeof(line), "   %s", ssid);
+    d.drawText(4, 42, line, kGreen, 1);
+    std::snprintf(line, sizeof(line), "   pass: %s", password);
+    d.drawText(4, 56, line, kGreen, 1);
+    d.drawText(4, 78, "2. Open in browser:", kWhite, 1);
+    std::snprintf(line, sizeof(line), "   %s", url);
+    d.drawText(4, 92, line, kGreen, 1);
+}
+
+void startPortal(IDisplay* panel) {
     enterPhase(Phase::Provisioning);
     if (!g_portal.begin()) {
         // Fail loud: no AP means no way to provision (the verify script watches for [FATAL]).
         Serial.println("[FATAL] captive portal failed to start");
         return;
     }
+    char url[32];
+    std::snprintf(url, sizeof(url), "http://%s/", WiFi.softAPIP().toString().c_str());
     char banner[96];
-    std::snprintf(banner, sizeof(banner), "[PORTAL] ssid=%s pass=%s url=http://%s/",
-                  g_portal.apSsid(), kSoftApPassword, WiFi.softAPIP().toString().c_str());
+    std::snprintf(banner, sizeof(banner), "[PORTAL] ssid=%s pass=%s url=%s",
+                  g_portal.apSsid(), kSoftApPassword, url);
     Serial.println(banner);
+    // Mirror the join details on the panel for a screen-equipped first boot (ADR-0089): the serial banner
+    // above serves the headless operator, this serves the one who flashed from m5burner and never saw the
+    // README. nullptr is the failed/absent panel (ADR-0045) — skipped like the hunt HUD's headless path.
+    if (panel != nullptr) {
+        drawProvisioningScreen(*panel, g_portal.apSsid(), kSoftApPassword, url);
+        panel->present();
+    }
 }
 
 void runMaintenance(const ProvisioningRecord& creds, IDisplay& panel) {
@@ -329,7 +360,7 @@ void runStationBoot(const ProvisioningRecord& creds, IDisplay* panel) {
         // Budget spent -> fall back to the portal for reconfiguration (fail loud, no silent loop).
         if (decideBootPhase(/*hasValidStoredCreds=*/true, staFail, /*maintenanceRequested=*/false) ==
             Phase::Provisioning) {
-            startPortal();
+            startPortal(panel);  // panel is the nullable HUD handle (nullptr on a failed/absent panel).
             return;
         }
     }
@@ -427,7 +458,7 @@ void setup() {
     const bool maint = hasCreds && intentRequested;
     const Phase entry = decideBootPhase(hasCreds, /*staFailCount=*/0, maint);
     if (entry == Phase::Provisioning) {
-        startPortal();
+        startPortal(panelReady ? &display() : nullptr);  // draw the setup screen on a live panel (ADR-0089).
     } else if (entry == Phase::Maintenance) {
         // Serve the results dashboard, never returns. `panel` is the null fallback if init failed, so
         // the Maintenance screen no-ops on a dead panel while the SoftAP still serves (ADR-0045).

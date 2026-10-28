@@ -75,6 +75,9 @@ portal** instead of trying to hunt (ADR-0006):
    authorized to test is illegal in most jurisdictions.
 7. Save. The device stores the credentials and reboots to join the network.
 
+On a board **with a screen**, these join details (the `Sapper-XXXX` name, the `sapper-setup`
+passphrase, and `http://192.168.4.1/`) are shown on the panel while the setup portal is up
+(ADR-0089), so a device flashed from m5burner can be provisioned without ever opening this guide.
 On a screenless board the AP name is your only cue, which is why it is a documented, predictable
 pattern rather than a random string.
 
