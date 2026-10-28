@@ -19,13 +19,26 @@
 #include "net/cracked_sync.h"        // SyncOutcome
 #include "net/hunt_snapshot.h"       // HuntSnapshot / HuntPhase — the live-hunt pull (ADR-0033)
 #include "net/upload_supervisor.h"   // DrainOutcome
+#include "support/fake_battery_gauge.h"
 #include "support/fake_hunt_snapshot_source.h"
 #include "support/fake_screen_renderer.h"
 #include "surface/screen_toast_surface.h"
 
 using namespace sapper;
+using sapper_test::FakeBatteryGauge;
 using sapper_test::FakeHuntSnapshotSource;
 using sapper_test::FakeScreenRenderer;
+
+/// A 1:2 divider, so a pin reading in millivolts doubles to the cell voltage (the Stick's measured ratio).
+static constexpr uint16_t kDivider = 2000;
+
+/// A present reading at @p pinMv.
+static BatteryReading pinReading(uint16_t pinMv) {
+    BatteryReading r;
+    r.present = true;
+    r.pinMilliVolts = pinMv;
+    return r;
+}
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -370,6 +383,62 @@ void test_no_hunt_source_hides_the_live_line_but_changes_still_render(void) {
     TEST_ASSERT_EQUAL_UINT32(2, r.last().huntDiscovered);
 }
 
+void test_no_battery_source_hides_the_icon(void) {
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    s.begin(0);
+    TEST_ASSERT_FALSE(r.last().batteryShown);
+    TEST_ASSERT_FALSE(s.batteryGaugePresent());
+}
+
+void test_battery_source_shows_the_level_and_feeds_the_getters(void) {
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeBatteryGauge gauge;
+    gauge.reading = pinReading(2000);  // x2 -> 4000 mV cell -> Full.
+    s.setBatterySource(gauge, kDivider);
+    s.begin(0);  // begin samples once so the first HUD shows the battery.
+
+    TEST_ASSERT_TRUE(r.last().batteryShown);
+    TEST_ASSERT_EQUAL(BatteryLevel::Full, r.last().batteryLevel);
+    TEST_ASSERT_TRUE(s.batteryGaugePresent());
+    TEST_ASSERT_EQUAL(BatteryLevel::Full, s.batteryLevel());
+    TEST_ASSERT_EQUAL_UINT32(4000, s.batteryCellMilliVolts());
+    TEST_ASSERT_EQUAL_INT(1, gauge.reads);  // one read at begin, none yet on the throttle.
+}
+
+void test_battery_is_sampled_on_the_throttle_not_every_tick(void) {
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeBatteryGauge gauge;
+    gauge.reading = pinReading(2000);  // Full.
+    s.setBatterySource(gauge, kDivider);
+    s.begin(0);
+    TEST_ASSERT_EQUAL_INT(1, gauge.reads);
+
+    gauge.reading = pinReading(1700);  // 3400 mV -> Low, but not sampled until the throttle elapses.
+    s.tick(100);
+    s.tick(4999);
+    TEST_ASSERT_EQUAL_INT(1, gauge.reads);
+    TEST_ASSERT_EQUAL(BatteryLevel::Full, s.batteryLevel());
+
+    s.tick(5000);  // the 5 s sample interval has elapsed: one more read, the level updates.
+    TEST_ASSERT_EQUAL_INT(2, gauge.reads);
+    TEST_ASSERT_EQUAL(BatteryLevel::Low, s.batteryLevel());
+    TEST_ASSERT_EQUAL(BatteryLevel::Low, r.last().batteryLevel);
+}
+
+void test_uncalibrated_divider_keeps_the_icon_hidden(void) {
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeBatteryGauge gauge;
+    gauge.reading = pinReading(2000);  // a real pin reading, but no measured divider.
+    s.setBatterySource(gauge, 0);      // uncalibrated board.
+    s.begin(0);
+    TEST_ASSERT_FALSE(r.last().batteryShown);
+    TEST_ASSERT_EQUAL(BatteryLevel::Unknown, s.batteryLevel());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_begin_renders_the_initial_hunting_hud);
@@ -389,5 +458,9 @@ int main(int, char**) {
     RUN_TEST(test_heartbeat_toggles_so_a_live_hud_is_not_a_frozen_one);
     RUN_TEST(test_renders_only_when_the_view_changes);
     RUN_TEST(test_nonprintable_essid_byte_is_filtered_before_display);
+    RUN_TEST(test_no_battery_source_hides_the_icon);
+    RUN_TEST(test_battery_source_shows_the_level_and_feeds_the_getters);
+    RUN_TEST(test_battery_is_sampled_on_the_throttle_not_every_tick);
+    RUN_TEST(test_uncalibrated_divider_keeps_the_icon_hidden);
     return UNITY_END();
 }

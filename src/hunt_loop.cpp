@@ -32,6 +32,8 @@
 #include "net/sync_scheduler.h"
 #include "net/sync_session.h"
 #include "net/uploader_wpasec.h"
+#include "surface/battery_gauge_esp32.h"
+#include "surface/battery_model.h"  // batteryLevelName — the [BATT] diagnostic line.
 #include "surface/led_driver_esp32.h"
 #include "surface/led_status_surface.h"
 #include "surface/active_screen_renderer.h"
@@ -163,6 +165,18 @@ SerialEventLogger g_syncLogger;
 // the active board's LED through the Esp32 driver behind the LedDriver seam.
 Esp32LedDriver g_ledDriver(kActiveBoard);
 LedStatusSurface g_ledSurface(g_ledDriver);
+
+// The battery gauge (slice-0092, ADR-0091): reads the board's battery ADC pin behind the BatteryGauge
+// seam and forwards raw calibrated millivolts (§4 #40). Wired onto the HUD surface only on a board with a
+// measured divider, so the icon never shows a guessed level. The last logged bucket drives the `[BATT]`
+// diagnostic line (the machine-checkable verify half), emitted on each bucket change and on a slow
+// heartbeat so a mid-run observer always sees the current charge within a bounded window.
+Esp32BatteryGauge g_batteryGauge(kActiveBoard);
+BatteryLevel g_lastLoggedBatteryLevel = BatteryLevel::Unknown;
+uint32_t g_battLogDueMs = 0;  ///< When the next battery heartbeat log is due (also fires on a bucket change).
+/// Battery diagnostic heartbeat: slow (charge moves over minutes), but frequent enough that an observer
+/// attaching mid-run sees a `[BATT]` line well within a verify window, not only on a bucket change.
+constexpr uint32_t kBattLogHeartbeatMs = 30000;
 
 // The push-notification surface (slice-0024, ADR-0023): a transmitting surface. It subscribes to the
 // bus like the LED, but POSTs inside an STA window (it is set on the supervisor as its WindowNotifier),
@@ -390,6 +404,20 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
             return false;
         }
         g_screen->setHuntSource(*g_engine);  // live-hunt HUD pulls the snapshot each tick (ADR-0033, §4 #18).
+        // Battery icon (ADR-0091, §4 #40): deliberately scoped to the HUD, so the gauge + the `[BATT]`
+        // diagnostic live inside this display-wired block (the slice is "battery on the HUD, for devices
+        // with a screen"). A headless board with a battery pin therefore reports no battery today; surfacing
+        // it over serial on a screenless board is a separate feature, deferred (LEDGER), not a silent gap.
+        // Wire the gauge only on a board with both a pin and a MEASURED divider, so the HUD never shows a
+        // guessed level; a board with no pin or an unmeasured divider logs why it is off, not a silent absence.
+        if (kActiveBoard.batteryAdcPin < 0) {
+            Serial.println("[BATT] disabled (no gauge)");
+        } else if (kActiveBoard.batteryDividerPermille == 0) {
+            Serial.println("[BATT] disabled (uncalibrated divider)");
+        } else {
+            g_screen->setBatterySource(g_batteryGauge, kActiveBoard.batteryDividerPermille);
+            Serial.println("[BATT] enabled");
+        }
         Serial.println("[SCREEN] enabled (status HUD + live hunt + cracked toast)");
     } else {
         Serial.println("[SCREEN] disabled (no display)");
@@ -427,6 +455,22 @@ void huntLoopPump() {
     g_supervisor->tick(now);   // publishes DrainStarted/DrainCompleted (and runs a due sync) onto the bus.
     g_ledSurface.tick(now);    // after the supervisor, so a status published this iteration shows now.
     if (g_screen != nullptr) g_screen->tick(now);  // likewise: render any status change this iteration.
+    // Battery diagnostic (ADR-0091): emit `[BATT] mv=.. level=..` on each bucket change, the
+    // machine-checkable half of verify:battery (the icon itself is the photographic half). The surface
+    // did the one ADC read on its sample throttle; this only reads back the stashed result.
+    if (g_screen != nullptr && g_screen->batteryGaugePresent()) {
+        const BatteryLevel level = g_screen->batteryLevel();
+        // Emit on a bucket change, and on a slow heartbeat: an edge-only line is invisible to anything that
+        // attaches after boot (the verify, or an operator opening the serial monitor) while the charge is
+        // steady, so the heartbeat guarantees the current charge is seen within a bounded window.
+        if (level != g_lastLoggedBatteryLevel || reached(now, g_battLogDueMs)) {
+            g_lastLoggedBatteryLevel = level;
+            g_battLogDueMs = now + kBattLogHeartbeatMs;
+            Serial.printf("[BATT] mv=%lu level=%s\n",
+                          static_cast<unsigned long>(g_screen->batteryCellMilliVolts()),
+                          batteryLevelName(level));
+        }
+    }
     // Deauth heartbeat (ADR-0029): only when armed, so a disarmed shipped binary stays silent on it.
     if (g_deauthArmed && reached(now, g_deauthHbDueMs)) {
         g_deauthHbDueMs = now + kDeauthHeartbeatMs;

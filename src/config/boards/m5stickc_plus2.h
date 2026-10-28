@@ -38,6 +38,7 @@ inline constexpr BoardProfile kM5StickCPlus2Profile = {
     .led = LedKind::Single,             // single red LED on G19 (shared with the IR emitter)
     .ledPin = 19,
     .batteryAdcPin = 38,                // measured: GPIO34 read full-scale, GPIO38 is the real divider tap
+    .batteryDividerPermille = 2000,     // measured 1:2 divider (dragon-ball HAL); cell mv = pin mv x2 (ADR-0091)
     .lcdCs = 5, .lcdDc = 14, .lcdRst = 12, .lcdBl = 27,
     .sdCs = -1, .sdMosi = -1, .sdMiso = -1, .sdClk = -1,  // no SD slot
     .bootButtonPin = 39,                // BtnB side button, active-low; the Maintenance-entry hold (ADR-0078)

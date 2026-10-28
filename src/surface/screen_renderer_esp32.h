@@ -27,6 +27,9 @@ private:
     /// indicator row + a progress bar while Capturing. Drawn only when a hunt source is wired.
     void drawHuntLine(const ScreenView& view);
     void drawBanner(const ScreenView& view);
+    /// The battery icon (ADR-0091): an outline + fill segments from view.batteryLevel, top-right of the
+    /// status row. Drawn only when view.batteryShown (a measured gauge on a calibrated board).
+    void drawBattery(const ScreenView& view);
     /// Fill an axis-aligned rect via the pixel primitive — the seam has no fillRect (it grows only when
     /// needed, ADR-0025 decision 3), and render() runs only on a change, so the cost is negligible.
     void fillRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t color565);

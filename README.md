@@ -171,10 +171,13 @@ hard fault shows solid:
 
 **Screen** (boards with a panel). The HUD title carries the product name and firmware version; below
 it the HUD shows the current target and its Beacon/M1–M4 handshake progress while hunting, a banner
-when a handshake is captured, and a toast when a password is recovered. The layout adapts to the
-panel size, so a larger panel (e.g. the T-embed's 320x170) uses the extra room rather than a fixed
-corner. It **never** shows a recovered password — the panel is over-the-shoulder visible, so read the
-passwords in [Maintenance mode](#maintenance-mode-results-dashboard) instead.
+when a handshake is captured, and a toast when a password is recovered. A coarse **battery icon** sits
+top-right on a board whose battery divider has been measured (the M5StickC Plus2 today; it reads the
+cell voltage and shows a four-segment charge level), so a field unit's remaining power is visible at a
+glance. The layout adapts to the panel size, so a larger panel (e.g. the T-embed's 320x170) uses the
+extra room rather than a fixed corner. It **never** shows a recovered password — the panel is
+over-the-shoulder visible, so read the passwords in
+[Maintenance mode](#maintenance-mode-results-dashboard) instead.
 
 **Serial log** (USB-CDC, 115200 baud) — always available, on any board, screen or not. Key lines:
 `[HUNT]` (discovery/targeting), `[CAPTURE]` (a handshake landed), `[UPLOAD]` (wpa-sec upload result),

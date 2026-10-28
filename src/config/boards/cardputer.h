@@ -31,6 +31,8 @@ inline constexpr BoardProfile kCardputerProfile = {
     .led = LedKind::Rgb,   // single WS2812 on G21
     .ledPin = 21,
     .batteryAdcPin = 10,
+    // batteryDividerPermille defaults to 0: the divider is not yet measured on this board, so the battery
+    // indicator reports Unknown here until it is (a one-line data change then, ADR-0091, LEDGER).
     .lcdCs = 37, .lcdDc = 34, .lcdRst = 33, .lcdBl = 38,
     .sdCs = 12, .sdMosi = 14, .sdMiso = 39, .sdClk = 40,
     .bootButtonPin = -1,  // No pollable entry button: the ADV's GPIO0 is a boot strap only (there is no

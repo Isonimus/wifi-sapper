@@ -41,6 +41,7 @@ void ScreenToastSurface::begin(uint32_t nowMs) {
     toastPending_ = false;
     toastActive_ = false;
     begun_ = true;
+    if (batterySource_ != nullptr) sampleBattery(nowMs);  // seed the battery bucket so the first HUD shows it.
     lastShown_ = ScreenView{};            // force the first render() to differ and draw the HUD at boot.
     lastShown_.status = ScreenStatus::Fault;  // a value the fresh HUD (Hunting) cannot equal.
     render(nowMs);
@@ -107,7 +108,19 @@ void ScreenToastSurface::tick(uint32_t nowMs) {
         toastUntilMs_ = nowMs + (activeKind_ == ToastKind::Cracked ? kToastHoldMs : kCapturedHoldMs);
     }
     if (toastActive_ && reached(nowMs, toastUntilMs_)) toastActive_ = false;
+    if (batterySource_ != nullptr && reached(nowMs, nextBatterySampleMs_)) sampleBattery(nowMs);
     render(nowMs);
+}
+
+void ScreenToastSurface::sampleBattery(uint32_t nowMs) {
+    const BatteryReading reading = batterySource_->read();
+    // Interpret with the pure model, carrying the last bucket as the hysteresis anchor so a reading
+    // sitting on a boundary does not flip the icon. An absent/uncalibrated reading resolves to Unknown.
+    batteryLevel_ = sapper::batteryLevel(reading, batteryDividerPermille_, batteryLevel_);
+    batteryCellMv_ = (reading.present && batteryDividerPermille_ != 0)
+                         ? sapper::batteryCellMilliVolts(reading.pinMilliVolts, batteryDividerPermille_)
+                         : 0;
+    nextBatterySampleMs_ = nowMs + kBatterySampleIntervalMs;
 }
 
 ScreenStatus ScreenToastSurface::statusFromDrain(const DrainOutcome& outcome) {
@@ -155,6 +168,11 @@ void ScreenToastSurface::render(uint32_t nowMs) {
         view.huntHasM3 = snap.hasM3;
         view.huntHasM4 = snap.hasM4;
     }
+    // Battery icon (ADR-0091): shown only when a gauge is wired and the reading is a real bucket; an
+    // uncalibrated/absent gauge stays Unknown and hidden, never a guessed level. Only the bucket is in the
+    // view's operator==, so the raw millivolts dithering between samples never forces a redraw.
+    view.batteryShown = (batterySource_ != nullptr && batteryLevel_ != BatteryLevel::Unknown);
+    view.batteryLevel = batteryLevel_;
     if (view != lastShown_) {
         renderer_.render(view);
         lastShown_ = view;

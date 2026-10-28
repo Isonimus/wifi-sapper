@@ -20,7 +20,9 @@
 #include <cstdint>
 
 #include "core/event_bus.h"
-#include "net/hunt_snapshot.h"  // HuntSnapshotSource — the live-hunt pull seam (ADR-0033).
+#include "net/hunt_snapshot.h"       // HuntSnapshotSource — the live-hunt pull seam (ADR-0033).
+#include "surface/battery_gauge.h"   // BatteryGauge — the raw-millivolt pull seam (ADR-0091).
+#include "surface/battery_model.h"   // BatteryLevel + the pure interpretation.
 #include "surface/screen_renderer.h"
 #include "surface/screen_view.h"
 
@@ -33,6 +35,24 @@ public:
     /// Wire the live-hunt pull source (ADR-0033, §4 #18). Set post-construction, like the webhook's
     /// notifier, so the constructor does not grow an argument. Unset → the pre-0033 HUD (no live line).
     void setHuntSource(HuntSnapshotSource& source) { huntSource_ = &source; }
+
+    /// Wire the battery gauge and the board's divider ratio (ADR-0091, §4 #40). Like setHuntSource, a
+    /// post-construction injection: the surface pulls the gauge on a throttle and interprets it with the
+    /// pure BatteryModel. @p dividerPermille is kActiveBoard's ratio (0 = uncalibrated → Unknown). Unset →
+    /// no battery icon. Call only on a board with a measured gauge, so the icon never shows a guessed level.
+    void setBatterySource(BatteryGauge& source, uint16_t dividerPermille) {
+        batterySource_ = &source;
+        batteryDividerPermille_ = dividerPermille;
+    }
+
+    /// Whether a battery gauge is wired. The device loop uses this to decide whether to emit the `[BATT]`
+    /// diagnostic line (the machine-checkable verify half); a pure getter, it reads no clock and no gauge.
+    bool batteryGaugePresent() const { return batterySource_ != nullptr; }
+
+    /// The last sampled charge bucket and cell voltage, for the device loop's `[BATT]` line. Updated on the
+    /// sample throttle, not every tick; read-only, so logging never re-reads the ADC (one read per sample).
+    BatteryLevel batteryLevel() const { return batteryLevel_; }
+    uint32_t batteryCellMilliVolts() const { return batteryCellMv_; }
 
     /// Seed the clock anchor and render the initial HUD. Call once after the engine is running, before
     /// the first tick().
@@ -56,6 +76,9 @@ private:
     /// Half the heartbeat period: the liveness pulse toggles every second (a 2 s blink), slow enough to
     /// read as "alive", fast enough to notice it stop — the reason a status LED blinks (slice-0022).
     static constexpr uint32_t kHeartbeatHalfPeriodMs = 1000;
+    /// How often the gauge is sampled. Charge moves over minutes, so a few-second cadence is ample and
+    /// keeps the ADC off the per-tick hot path; the pure hysteresis then suppresses boundary flicker.
+    static constexpr uint32_t kBatterySampleIntervalMs = 5000;
 
     /// The resting status a completed drain implies — the same reading LedStatusSurface uses (ADR-0025
     /// decision 4). Duplicated rather than shared: this is the second reader, not the third (LEDGER).
@@ -67,8 +90,17 @@ private:
     /// Compose the current ScreenView from the model + clock, and render it only if it changed.
     void render(uint32_t nowMs);
 
+    /// Pull the gauge once, interpret it with the pure model (hysteresis relative to the last bucket), and
+    /// stash the bucket + cell voltage. Called on the sample throttle, never per tick.
+    void sampleBattery(uint32_t nowMs);
+
     ScreenRenderer& renderer_;
     HuntSnapshotSource* huntSource_ = nullptr;     ///< Optional live-hunt pull source (ADR-0033); null = hide.
+    BatteryGauge* batterySource_ = nullptr;        ///< Optional battery gauge (ADR-0091); null = no icon.
+    uint16_t batteryDividerPermille_ = 0;          ///< The active board's divider ratio (0 = uncalibrated).
+    BatteryLevel batteryLevel_ = BatteryLevel::Unknown;  ///< Last sampled bucket (also the hysteresis anchor).
+    uint32_t batteryCellMv_ = 0;                   ///< Last sampled cell millivolts, for the `[BATT]` line.
+    uint32_t nextBatterySampleMs_ = 0;             ///< When the next gauge sample is due (the throttle).
     ScreenStatus status_ = ScreenStatus::Booting;  ///< The base HUD status the drain facts set.
     uint32_t uploaded_ = 0;                        ///< Cumulative accepted + duplicate uploads.
     uint32_t cracks_ = 0;                          ///< Cumulative NewPassword facts.

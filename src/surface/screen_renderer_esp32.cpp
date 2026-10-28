@@ -128,6 +128,23 @@ const char* statusWord(ScreenStatus status) {
     return "?";
 }
 
+/// How many of the four icon segments are filled at each level (ADR-0091's coarse bucket).
+int32_t batterySegments(BatteryLevel level) {
+    switch (level) {
+        case BatteryLevel::Full: return 4;
+        case BatteryLevel::High: return 3;
+        case BatteryLevel::Mid: return 2;
+        case BatteryLevel::Low: return 1;
+        case BatteryLevel::Critical: return 0;
+        case BatteryLevel::Unknown: return 0;
+    }
+    return 0;
+}
+
+/// The fill colour: green for a healthy charge, amber for Low (the warning band), red reserved for the
+/// Critical outline (an empty icon drawn in alarm red).
+uint16_t batteryFillColor(BatteryLevel level) { return level == BatteryLevel::Low ? kAmber : kGreen; }
+
 }  // namespace
 
 void Esp32ScreenRenderer::fillRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t color565) {
@@ -232,9 +249,53 @@ void Esp32ScreenRenderer::drawBanner(const ScreenView& view) {
     display_.drawText(L.margin, L.bannerBssidY, view.toastBssid, kBlack, L.lineSize);
 }
 
+void Esp32ScreenRenderer::drawBattery(const ScreenView& view) {
+    if (!view.batteryShown) return;  // no calibrated gauge wired: no icon (ADR-0091).
+
+    const int32_t w = static_cast<int32_t>(display_.width());
+    const Layout& L = layoutFor(static_cast<int32_t>(display_.height()));
+
+    // A small outlined battery with four segments, drawn top-right of the status row (the right side of
+    // that row is clear on both tiers, where the title row carries the long "vX.Y.Z" string). Geometry
+    // scales with the title size so it reads on the roomy panel; these are candidate values photo-tuned
+    // on the panel (ADR-0002 §5), like the rest of the layout.
+    const int32_t scale = L.titleSize >= 3 ? 2 : 1;
+    const int32_t border = scale;
+    const int32_t segW = 4 * scale;
+    const int32_t segGap = 2 * scale;
+    const int32_t innerPad = 2 * scale;
+    constexpr int32_t kSegs = 4;
+    const int32_t bodyW = kSegs * segW + (kSegs - 1) * segGap + 2 * innerPad + 2 * border;
+    const int32_t bodyH = 11 * scale;
+    const int32_t nubW = 2 * scale;
+    const int32_t nubH = 4 * scale;
+    // The body's right edge sits at the right margin; the terminal nub is on the LEFT of the body and the
+    // fill is anchored to the right (a horizontal mirror of the phone-style icon, the requested orientation).
+    const int32_t bodyX = w - L.margin - bodyW;
+    // Vertically centred on the title row, so the icon sits in line with the product name top-right (not
+    // dropped to the status row below it). The title glyph box is kGlyphH*titleSize tall.
+    const int32_t y = L.titleY + (kGlyphH * L.titleSize - bodyH) / 2;
+
+    const uint16_t outline = view.batteryLevel == BatteryLevel::Critical ? kRed : kWhite;
+    fillRect(bodyX, y, bodyW, bodyH, outline);                                              // outer shell.
+    fillRect(bodyX + border, y + border, bodyW - 2 * border, bodyH - 2 * border, kBlack);  // hollow it.
+    fillRect(bodyX - nubW, y + (bodyH - nubH) / 2, nubW, nubH, outline);                    // terminal nub, on the left.
+
+    const int32_t filled = batterySegments(view.batteryLevel);
+    const uint16_t fill = batteryFillColor(view.batteryLevel);
+    const int32_t segH = bodyH - 2 * border - 2 * innerPad;
+    const int32_t segX0 = bodyX + border + innerPad;
+    const int32_t segY = y + border + innerPad;
+    // Fill the rightmost `filled` segments, anchored away from the left-hand nub.
+    for (int32_t i = kSegs - filled; i < kSegs; ++i) {
+        fillRect(segX0 + i * (segW + segGap), segY, segW, segH, fill);
+    }
+}
+
 void Esp32ScreenRenderer::render(const ScreenView& view) {
     display_.fillScreen(kBlack);
     drawHud(view);
+    drawBattery(view);   // top-right of the status row; a clear corner on both tiers.
     drawHuntLine(view);  // the live-hunt line sits above the banner; a banner overpaints its own strip.
     if (view.toastActive) drawBanner(view);
     display_.present();

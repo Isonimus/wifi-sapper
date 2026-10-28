@@ -45,6 +45,8 @@ inline constexpr BoardProfile kTEmbedProfile = {
     .led = LedKind::None,               // APA102 (2-wire) deferred; single-ledPin model does not cover it
     .ledPin = -1,
     .batteryAdcPin = 4,                 // PIN_BAT_VOLT (LilyGo factory pin_config)
+    // batteryDividerPermille defaults to 0: divider not yet measured on this board, so the battery
+    // indicator reports Unknown here until it is (a one-line data change then, ADR-0091, LEDGER).
     .lcdCs = 10, .lcdDc = 13, .lcdRst = 9, .lcdBl = 15,
     .sdCs = -1, .sdMosi = -1, .sdMiso = -1, .sdClk = -1,  // SD slot present on the board, not wired this slice
     .bootButtonPin = 0,                 // encoder push switch (GPIO0), active-low; the Maintenance-entry hold (ADR-0078)

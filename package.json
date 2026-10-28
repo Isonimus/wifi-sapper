@@ -24,6 +24,7 @@
     "verify:webhook-capture": "node scripts/0036-webhook-capture-verify.mjs",
     "verify:maintenance": "node scripts/0040-maintenance-verify.mjs",
     "verify:keyboard": "node scripts/0058-keyboard-probe.mjs",
+    "verify:battery": "node scripts/0092-battery-verify.mjs",
     "probe:rssi": "node scripts/0068-rssi-probe.mjs",
     "verify:serial-stimulus": "node scripts/0048-serial-stimulus-verify.mjs",
     "check:artifact-privacy": "node scripts/check-artifact-privacy.mjs",

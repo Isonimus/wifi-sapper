@@ -57,6 +57,13 @@ struct BoardProfile {
     // --- pins (‑1 = absent) ------------------------------------------------
     int8_t ledPin;
     int8_t batteryAdcPin;
+    /// The board's battery voltage-divider ratio in permille (2000 = x2.000, a 1:2 divider), used by the
+    /// pure BatteryModel to scale the gauge's raw pin millivolts to cell millivolts (ADR-0091, §4 #40). A
+    /// value of 0 means "divider not yet measured on this board": the model reports BatteryLevel::Unknown
+    /// rather than a guessed charge (measure-don't-estimate), so a board with a battery pin but no measured
+    /// ratio shows no level until its divider is measured (a one-line data change then, LEDGER). Carries a
+    /// 0 default so a board profile that omits it fails safe to Unknown, never a wrong level.
+    uint16_t batteryDividerPermille = 0;
     int8_t lcdCs, lcdDc, lcdRst, lcdBl;
     int8_t sdCs, sdMosi, sdMiso, sdClk;
     /// A per-board entry button that polls for Maintenance entry. Active-low (reads LOW when pressed).

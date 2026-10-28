@@ -13,8 +13,9 @@
 #include <cstdint>
 #include <cstring>
 
-#include "net/cracked_result.h"  // kCrackedEssidCap — the ESSID bound the toast copies within.
-#include "net/hunt_snapshot.h"   // HuntPhase — the live-hunt section the HUD renders (ADR-0033).
+#include "net/cracked_result.h"     // kCrackedEssidCap — the ESSID bound the toast copies within.
+#include "net/hunt_snapshot.h"      // HuntPhase — the live-hunt section the HUD renders (ADR-0033).
+#include "surface/battery_model.h"  // BatteryLevel — the coarse charge bucket the HUD icon shows (ADR-0091).
 
 namespace sapper {
 
@@ -73,6 +74,11 @@ struct ScreenView {
     bool huntHasM3 = false;
     bool huntHasM4 = false;
 
+    // --- Battery indicator (ADR-0091): a coarse charge icon on a board with a measured gauge. Only the
+    // bucket is compared (below), so raw-millivolt dither between samples never forces a re-render.
+    bool batteryShown = false;                       ///< A calibrated gauge is wired; draw the icon (else hide).
+    BatteryLevel batteryLevel = BatteryLevel::Unknown;  ///< The coarse charge bucket the icon fill reflects.
+
     /// Field-by-field equality: the surface renders only when the displayed state actually changes, so
     /// the panel sees discrete updates rather than a per-tick redraw (ADR-0025 decision 2).
     bool operator==(const ScreenView& o) const {
@@ -86,7 +92,8 @@ struct ScreenView {
                huntDiscovered == o.huntDiscovered && huntHasBeacon == o.huntHasBeacon &&
                huntHasM1 == o.huntHasM1 && huntHasM2 == o.huntHasM2 && huntHasM3 == o.huntHasM3 &&
                huntHasM4 == o.huntHasM4 && std::strcmp(huntSsid, o.huntSsid) == 0 &&
-               std::strcmp(huntBssid, o.huntBssid) == 0;
+               std::strcmp(huntBssid, o.huntBssid) == 0 &&
+               batteryShown == o.batteryShown && batteryLevel == o.batteryLevel;
     }
     bool operator!=(const ScreenView& o) const { return !(*this == o); }
 };
