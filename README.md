@@ -166,10 +166,12 @@ hard fault shows solid:
 | Cyan (brief flash) | A handshake was just captured |
 | White (~5 s flash) | A new password was just recovered |
 
-**Screen** (boards with a panel). The HUD shows the current target and its Beacon/M1–M4 handshake
-progress while hunting, a banner when a handshake is captured, and a toast when a password is
-recovered. It **never** shows a recovered password — the panel is over-the-shoulder visible, so read
-the passwords in [Maintenance mode](#maintenance-mode-results-dashboard) instead.
+**Screen** (boards with a panel). The HUD title carries the product name and firmware version; below
+it the HUD shows the current target and its Beacon/M1–M4 handshake progress while hunting, a banner
+when a handshake is captured, and a toast when a password is recovered. The layout adapts to the
+panel size, so a larger panel (e.g. the T-embed's 320x170) uses the extra room rather than a fixed
+corner. It **never** shows a recovered password — the panel is over-the-shoulder visible, so read the
+passwords in [Maintenance mode](#maintenance-mode-results-dashboard) instead.
 
 **Serial log** (USB-CDC, 115200 baud) — always available, on any board, screen or not. Key lines:
 `[HUNT]` (discovery/targeting), `[CAPTURE]` (a handshake landed), `[UPLOAD]` (wpa-sec upload result),

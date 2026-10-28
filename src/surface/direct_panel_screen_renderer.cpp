@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "config/firmware_version.h"  // kFirmwareVersion — the single version source the splash + sprite HUD use.
+
 namespace sapper {
 namespace {
 
@@ -37,6 +39,8 @@ constexpr int32_t kMargin = 10;
 
 constexpr int32_t kTitleY = 12;
 constexpr uint8_t kTitleSize = 4;
+constexpr uint8_t kVersionSize = 2;  ///< The "vX.Y.Z" string, drawn smaller after the product name (slice-0088).
+const char kTitleName[] = "WiFi Sapper";
 
 constexpr int32_t kStatusY = 64;
 constexpr uint8_t kStatusSize = 3;
@@ -111,8 +115,16 @@ void DirectPanelScreenRenderer::fillRect(int32_t x, int32_t y, int32_t w, int32_
 }
 
 void DirectPanelScreenRenderer::drawChromeOnce() {
-    // The product title never changes, so it is drawn once and never repainted (ADR-0086 decision 3).
-    display_.drawText(kMargin, kTitleY, "WiFi Sapper", kWhite, kTitleSize);
+    // The product title never changes, so it is drawn once and never repainted (ADR-0086 decision 3). The
+    // firmware version is drawn smaller after the name, from the one kFirmwareVersion the splash uses (no
+    // magic version string, §4 #22's spirit; slice-0088). Its baseline is dropped to sit on the name's.
+    display_.drawText(kMargin, kTitleY, kTitleName, kWhite, kTitleSize);
+    char version[16];
+    std::snprintf(version, sizeof(version), "v%s", kFirmwareVersion);
+    const int32_t versionX =
+        kMargin + static_cast<int32_t>(std::strlen(kTitleName)) * kGlyphW * kTitleSize + kGlyphW * kVersionSize;
+    const int32_t versionY = kTitleY + (kTitleSize - kVersionSize) * kGlyphH;
+    display_.drawText(versionX, versionY, version, kDim, kVersionSize);
 }
 
 void DirectPanelScreenRenderer::drawStatus(const ScreenView& view) {
