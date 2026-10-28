@@ -1,0 +1,168 @@
+name: Release
+
+# Cut a GitHub Release with installable firmware when a version tag (v*) is pushed. For each supported
+# board it publishes the OTA app image (firmware.bin) and a full factory (merged) image for a fresh
+# esptool / web-flasher install, plus SHA-256 checksums. See ADR-0095 / slices/0096. The per-push
+# build/test matrix lives in ci.yml. This never runs on an ordinary push (tags only), so the per-push gate
+# is untouched.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # Build + package each board in parallel. The factory-image bootloader offset differs by chip family
+  # (ESP32-S3 at 0x0, classic ESP32 at 0x1000, ADR-0095), carried as matrix data; the other offsets are the
+  # standard layout both families share. The dio brick-guard refuses a non-dio factory image (§4 #42).
+  build:
+    name: ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: cardputer
+            chip: esp32s3
+            boot_offset: '0x0'
+            flash_size: 8MB
+          - env: m5stickc_plus2
+            chip: esp32
+            boot_offset: '0x1000'
+            flash_size: 8MB
+          - env: t_embed
+            chip: esp32s3
+            boot_offset: '0x0'
+            flash_size: 16MB
+          - env: cyd_3248s035c
+            chip: esp32
+            boot_offset: '0x1000'
+            flash_size: 4MB
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # pioarduino rejects Python > 3.13 (mirrors ci.yml).
+          python-version: '3.13'
+
+      # Same cache key as ci.yml's per-board leg, so the release build reuses CI's warmed
+      # platform/toolchain cache instead of re-downloading the release zips.
+      - name: Cache PlatformIO
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.env }}-
+
+      # esptool is pinned so the merge-bin CLI is deterministic (5.x non-deprecated form).
+      - name: Install PlatformIO and esptool
+        run: pip install --upgrade platformio esptool==5.2.0
+
+      - name: Build ${{ matrix.env }} firmware
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Package release artifacts
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          build=".pio/build/${{ matrix.env }}"
+          # boot_app0.bin lives inside a versioned framework package; locate it rather than hardcode.
+          # Assert EXACTLY one match: the cache restore-keys fallback (shared with ci.yml) can restore a
+          # cache from a different platformio.ini hash after a platform bump, leaving two
+          # framework-arduinoespressif32 versions under packages/; `head -1` would then silently pick one
+          # that may not match the firmware just built. Fail loud on 0 or >1 rather than guess (§3).
+          mapfile -t boot_app0_matches < <(find "$HOME/.platformio/packages" -name boot_app0.bin)
+          test "${#boot_app0_matches[@]}" -eq 1 || { echo "ERROR: expected exactly one boot_app0.bin, found ${#boot_app0_matches[@]}: ${boot_app0_matches[*]:-none}"; exit 1; }
+          boot_app0="${boot_app0_matches[0]}"
+          mkdir -p dist
+
+          # OTA app image: firmware.bin unmodified (an OTA slot install, or the app half of a flash).
+          cp "$build/firmware.bin" "dist/sapper-${{ matrix.env }}-${version}-app.bin"
+
+          # Full factory image for a fresh esptool / web-flasher install at the chip's base offset. The
+          # bootloader offset is per chip family (0x0 S3 / 0x1000 classic ESP32, ADR-0095); the rest is the
+          # shared layout (partition table 0x8000, otadata/boot_app0 0xe000, app 0x10000).
+          #
+          # flash-mode MUST be dio, not qio: the ROM reads the 2nd-stage bootloader using the mode in the
+          # bootloader header BEFORE quad mode is enabled, so a qio header makes the ROM misread it into a
+          # reset loop — a hard brick esptool image_info does NOT catch. The S3 boards build qio and enable
+          # it at runtime, so force dio in the merged header here. flash-freq is kept from each board's own
+          # bootloader (the boards differ), while the brick-critical mode is forced and then guarded below.
+          esptool --chip ${{ matrix.chip }} merge-bin \
+            -o "dist/sapper-${{ matrix.env }}-${version}-factory.bin" \
+            --flash-mode dio --flash-freq keep --flash-size ${{ matrix.flash_size }} \
+            ${{ matrix.boot_offset }} "$build/bootloader.bin" \
+            0x8000 "$build/partitions.bin" \
+            0xe000 "$boot_app0" \
+            0x10000 "$build/firmware.bin"
+
+          # Guard the factory image at the chip family's bootloader offset (ADR-0095 / §4 #42). The
+          # bootloader sits at 0x0 (S3) or 0x1000 (classic ESP32), so read its header THERE, not at file
+          # offset 0: a classic-ESP32 image is 0xff-padded from 0x0 to 0x1000 (measured, slice-0096 probe).
+          # Check the image magic (0xE9 — proof the bootloader landed at the expected offset for this chip
+          # family) and the flash-mode byte (byte 2 of the header: 2 = dio). A qio header (0x00) hard-bricks
+          # the device and image_info does NOT catch it, so refuse to publish a bricking image.
+          factory="dist/sapper-${{ matrix.env }}-${version}-factory.bin"
+          boot=$(( ${{ matrix.boot_offset }} ))
+          magic="$(od -An -tx1 -j "$boot" -N1 "$factory" | tr -d ' ')"
+          mode="$(od -An -tx1 -j "$(( boot + 2 ))" -N1 "$factory" | tr -d ' ')"
+          echo "${{ matrix.env }} bootloader @ ${{ matrix.boot_offset }}: magic=0x${magic} (want e9), flash-mode=0x${mode} (want 02 = dio)"
+          test "$magic" = "e9" || { echo "ERROR: ${{ matrix.env }} has no bootloader magic at ${{ matrix.boot_offset }} — wrong offset for this chip family"; exit 1; }
+          test "$mode" = "02" || { echo "ERROR: ${{ matrix.env }} factory bootloader is not dio; refusing to publish a brick"; exit 1; }
+
+          ls -la dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.env }}
+          path: dist/
+          if-no-files-found: error
+
+  # Collect every board's artifacts and cut one Release. Separate job so the Release is created once, after
+  # all boards built and passed the dio guard — a failed board aborts the whole release (no partial set).
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # gh release create writes to the repo's Releases via the built-in GITHUB_TOKEN.
+    steps:
+      - uses: actions/checkout@v7  # gh needs the repo checkout for context.
+
+      - name: Collect board artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          ( cd dist && sha256sum sapper-*.bin > SHA256SUMS.txt )
+          ls -la dist
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          # Create as a DRAFT first, then publish only after every asset has uploaded. gh asset upload is not
+          # transactional: if one image fails mid-upload after the Release object already exists, a non-draft
+          # create would leave a partial release PUBLIC (a board's image missing) that an operator could flash,
+          # and it would block a re-run with "release already exists". A draft is invisible until the flip, so
+          # a failed upload never reaches an operator (§3 fail-loud: never a partial public release).
+          gh release create "$version" \
+            --draft \
+            --title "WiFi Sapper $version" \
+            --generate-notes \
+            dist/sapper-*-"${version}"-app.bin \
+            dist/sapper-*-"${version}"-factory.bin \
+            dist/SHA256SUMS.txt
+          # Every asset accepted: flip to public in one metadata edit (no uploads, so no partial-public window).
+          gh release edit "$version" --draft=false

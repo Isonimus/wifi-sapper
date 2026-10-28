@@ -232,6 +232,23 @@ ESP32.
 
 ## Flashing a board
 
+### Install a release (no toolchain)
+
+Each tagged release publishes, per supported board, a **factory image** (full flash, write at offset `0x0`)
+and an **app image** (OTA slot), plus `SHA256SUMS.txt`, on the repo's
+[Releases](https://github.com/Isonimus/wifi-sapper/releases) page. To install without building, flash the
+factory image for your board with [esptool](https://github.com/espressif/esptool) or the browser
+[ESP Web Flasher](https://esp.huhn.me) (by file):
+
+```
+esptool --chip <esp32s3|esp32> write-flash 0x0 sapper-<board>-<version>-factory.bin
+```
+
+The images are built `dio`-headed on purpose: a `qio`-headed factory image hard-bricks the chip, so the
+release refuses to publish one that is not `dio`. Then continue with [Provisioning](#provisioning-first-boot).
+
+### Build from source
+
 The firmware is built and flashed with [PlatformIO](https://platformio.org). Pick your board's
 environment from the [Supported boards](#supported-boards) table above. The display driver (LovyanGFX)
 is configured per board, so a screen is optional: a screenless board runs the same binary.
