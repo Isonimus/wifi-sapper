@@ -47,6 +47,18 @@ first CLI argument, then `$SAPPER_PORT`, then auto-detection of an Espressif-loo
 USB-CDC auto-detects; the CYD's CH340 bridge enumerates as `/dev/ttyUSB*` and is **not**
 auto-detected, so you must pass its port explicitly (see Proof 2).
 
+**If association fails (`[FATAL] ... could not associate or sync NTP`).** Read the raw serial for
+the ESP-IDF reason code. `Reason: 201 - NO_AP_FOUND` means the radio scanned but found no AP matching
+the configured SSID (the radio itself is fine, the provisioning SoftAP still comes up): check the SSID
+is the **2.4GHz** network (the ESP32 cannot see 5GHz), spelled exactly, broadcast (not hidden), and on
+channel 1-11 (a 2.4GHz AP that auto-picked channel 12/13 is invisible to the ESP32's default region).
+A flaky AP can also drop its 2.4GHz radio into this state, observed on this bench, cured by rebooting
+the AP. An `AUTH_FAIL` / `4WAY_HANDSHAKE_TIMEOUT` reason instead points at the passphrase. Note the
+`*_testhooks` build re-seeds provisioning from the build-time `SAPPER_TEST_WIFI_*` flags every boot
+([main.cpp](../src/main.cpp) `seedTestCredentials`), so a portal-provisioned board does **not** carry
+its stored creds into a testhooks build: pass them at build time, single-quoted so the shell leaves
+special characters intact.
+
 ## Proof 1 — Scenario J: cracked-results download and manifest seed
 
 Board: **cardputer_testhooks** (the reference target). The sync probe (`sync_probe.cpp`,
@@ -113,15 +125,20 @@ SAPPER_PORT=/dev/ttyUSB0 npm run verify:sync
 outcome line, which on success reads:
 
 ```
-[SYNC] outcome ok=1 first=1 downloaded=N new=M malformed=0 overflow=0 storeError=0 fetch=1
+[SYNC] outcome ok=1 first=1 downloaded=N new=M malformed=0 overflow=0 storeError=0 fetch=0
 ```
 
+`fetch` is the download transport verdict, a `FetchResult` enum printed as its integer:
+**0 = Ok** (the success value above), **1 = Transport** (a network/TLS transfer failure),
+**2 = Auth** (a wpa-sec key rejection). On a clean sync `ok=1` and `fetch=0`; `first=1` only on
+the very first sync that seeds a fresh manifest (a later re-sync reads `first=0`, `new=0`).
+
 **Known transient (not a defect).** A first run may show `[SYNC] outcome ok=0 ... fetch=1`
-alongside an mbedTLS `(-80)` line (`MBEDTLS_ERR_NET_CONN_RESET`, a TCP reset refused by the
-wpa-sec server, LEDGER / ADR-0017). This is board-independent and self-healing: the sync
-stays due and retries next window, so re-run and watch for `ok=1`. Distinguish it from a pin
-failure, which presents as an X509 verify error (`-0x2700`) and is **persistent**: a pin
-failure is a real fail, the `-80` reset is not.
+(fetch = Transport) alongside an mbedTLS `(-80)` line (`MBEDTLS_ERR_NET_CONN_RESET`, a TCP reset
+refused by the wpa-sec server, LEDGER / ADR-0017). This is board-independent and self-healing:
+the sync stays due and retries next window, so re-run and watch for `ok=1 ... fetch=0`. Distinguish
+it from a pin failure, which presents as an X509 verify error (`-0x2700`) and is **persistent**: a
+pin failure is a real fail, the `-80` reset is not.
 
 **Artifact privacy:** same scrub as Proof 1.
 
