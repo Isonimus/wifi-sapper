@@ -54,6 +54,11 @@ npm run lint
 npm run check:index
 npm run check:artifact-privacy
 
+# The node --test lane (ADR-0099): the archive/read-scope equality guard (§4 #43) and any future
+# .mjs unit test. Mirrors the CI guards job here; not in the index-based pre-commit hook, which
+# archives only READ_SCOPE (ADR-0099 decision 3).
+npm run test:node
+
 # 2. The build half (the operator's explicit choice, ADR-0051 decision 4): the host unit suite and
 #    the reference firmware build. Native runs here because the platform-shadowing defect that made
 #    it die with UnknownPlatform is fixed (ADR-0051 decision 5) — it is a real, green lane now.

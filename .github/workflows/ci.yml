@@ -37,6 +37,12 @@ jobs:
       - name: Check artifact privacy
         run: npm run check:artifact-privacy
 
+      # The node --test lane (ADR-0099): the archive/read-scope equality guard (test/read-set.test.mjs,
+      # §4 #43) and any future .mjs unit test. Runs here (full checkout) and in the pre-push mirror, not
+      # the index-based pre-commit hook, which archives only READ_SCOPE (ADR-0099 decision 3).
+      - name: Node unit tests
+        run: npm run test:node
+
   build:
     name: ${{ matrix.env }}
     runs-on: ubuntu-latest
