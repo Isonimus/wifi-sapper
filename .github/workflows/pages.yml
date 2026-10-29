@@ -1,0 +1,72 @@
+name: Pages
+
+# Publish the web flasher (web/) to GitHub Pages. The firmware is served
+# SAME-ORIGIN with the page: GitHub release assets send no CORS headers, so the
+# browser cannot fetch them cross-origin from Pages ("Failed to fetch"). Each
+# deploy pulls the latest release's four factory images into the site and the
+# per-board manifests point at relative paths — so a new firmware release must
+# redeploy Pages to refresh those binaries. NOTE: the `release: published`
+# trigger below only fires for a human-published release; a release cut by
+# release.yml uses the built-in GITHUB_TOKEN, whose events GitHub does NOT
+# cascade into workflows (recursion guard). release.yml therefore dispatches this
+# workflow explicitly (an exempt event) after publishing — that is the path our
+# CI releases take. See slices/0102 (ported from adversary:slices/0016).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/pages.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Least privilege for the Pages deployment: read the repo, write the Pages site,
+# and mint the OIDC token deploy-pages exchanges. No third-party actions.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two Pages deploys race; let an in-flight one finish (don't cancel a
+# publish midway).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pull the latest release's four factory images into the site so each
+      # board's manifest can reference its binary same-origin (see the header
+      # note on CORS). Not committed to git — assembled at deploy time, and the
+      # *.bin are git-ignored. Fails loud if any asset is missing, rather than
+      # shipping a flasher whose Install button 404s for a board.
+      - name: Fetch latest factory images into the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for env in cardputer t_embed m5stickc_plus2 cyd_3248s035c; do
+            gh release download --repo "$GITHUB_REPOSITORY" \
+              --pattern "sapper-${env}-factory.bin" \
+              --dir web
+            ls -la "web/sapper-${env}-factory.bin"
+          done
+
+      - uses: actions/configure-pages@v6
+
+      - name: Upload web/ as the Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: web
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

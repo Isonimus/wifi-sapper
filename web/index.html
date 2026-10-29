@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi Sapper — Web Flasher</title>
+    <meta name="description"
+        content="Flash WiFi Sapper autonomous handshake-hunter firmware to an ESP-32 board directly from your browser.">
+
+    <style>
+        /* ---- Palette: taken from docs/images/wifi-sapper-banner.webp ----------
+           A cyan + magenta/violet duotone on near-black, the on-device instrument
+           look. Deliberately NOT the parent Adversary's red: this reads as its own
+           product. One dark theme only (the appliance is a dark HUD, not a page
+           with a light mode). */
+        :root {
+            --ground: #06080f;
+            --panel: #0a0f1a;
+            --panel-2: #0d1422;
+            --rule: #14303a;
+            --rule-bright: #1d4a57;
+            --text: #cfeeff;
+            --dim: #7fa8b8;
+            --dimmer: #4f6b78;
+            --cyan: #28e6ff;
+            --cyan-dim: #12707f;
+            --magenta: #c93cff;
+            --magenta-2: #ff3cf0;
+
+            --wordmark-font: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+            --body-font: "Rajdhani", "Segoe UI", system-ui, sans-serif;
+
+            --measure: 48rem;
+        }
+
+        @font-face {
+            font-family: "Chakra Petch";
+            font-style: normal;
+            font-weight: 700;
+            font-display: swap;
+            src: url(./fonts/chakra-petch-700.woff2) format("woff2");
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+2122, U+2212;
+        }
+
+        @font-face {
+            font-family: "Rajdhani";
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url(./fonts/rajdhani-400.woff2) format("woff2");
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+2122, U+2212;
+        }
+
+        @font-face {
+            font-family: "Rajdhani";
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url(./fonts/rajdhani-600.woff2) format("woff2");
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+2122, U+2212;
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+        html {
+            -webkit-text-size-adjust: 100%;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--ground);
+            color: var(--text);
+            font-family: var(--body-font);
+            font-size: 17px;
+            line-height: 1.5;
+            /* A faint scanline wash, echoing the banner's HUD texture. */
+            background-image: repeating-linear-gradient(0deg,
+                    rgba(40, 230, 255, 0.022) 0,
+                    rgba(40, 230, 255, 0.022) 1px,
+                    transparent 1px,
+                    transparent 3px);
+            padding: clamp(1.25rem, 4vw, 3.5rem);
+            display: flex;
+            justify-content: center;
+        }
+
+        main {
+            width: 100%;
+            max-width: var(--measure);
+        }
+
+        a {
+            color: var(--cyan);
+            text-decoration: none;
+            border-bottom: 1px solid var(--rule-bright);
+        }
+
+        a:hover {
+            border-bottom-color: var(--cyan);
+        }
+
+        /* ---- Masthead --------------------------------------------------------- */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding-bottom: 0.9rem;
+            border-bottom: 1px solid var(--rule);
+        }
+
+        .wordmark {
+            font-family: var(--wordmark-font);
+            font-weight: 700;
+            font-size: clamp(1.4rem, 5.2vw, 2.1rem);
+            letter-spacing: 0.04em;
+            margin: 0;
+            text-transform: none;
+            /* Containing block for the rgb-split clones glitch-js injects. */
+            position: relative;
+            display: inline-block;
+        }
+
+        .wordmark .wm-i {
+            color: var(--cyan);
+        }
+
+        .tag {
+            font-family: var(--body-font);
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--cyan);
+            border: 1px solid var(--cyan-dim);
+            padding: 0.15rem 0.6rem;
+            white-space: nowrap;
+        }
+
+        /* ---- Lead ------------------------------------------------------------- */
+        .lead {
+            margin: 2.25rem 0 0;
+            font-family: var(--wordmark-font);
+            font-weight: 700;
+            font-size: clamp(1.7rem, 5.6vw, 2.6rem);
+            line-height: 1.12;
+            letter-spacing: 0.005em;
+            max-width: 20ch;
+        }
+
+        .lead b {
+            color: var(--cyan);
+            font-weight: 700;
+        }
+
+        .sub {
+            margin: 1rem 0 0;
+            color: var(--dim);
+            max-width: 60ch;
+            font-size: 1.05rem;
+        }
+
+        code {
+            font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+            font-size: 0.86em;
+            color: var(--text);
+        }
+
+        /* ---- Install panel: framed like an instrument ------------------------- */
+        .panel {
+            position: relative;
+            margin: 2.5rem 0;
+            padding: clamp(1.5rem, 4vw, 2.25rem);
+            background: var(--panel);
+            border: 1px solid var(--rule);
+        }
+
+        /* corner ticks, the banner's bracket motif */
+        .panel::before,
+        .panel::after {
+            content: "";
+            position: absolute;
+            width: 11px;
+            height: 11px;
+            border: 1px solid var(--cyan);
+        }
+
+        .panel::before {
+            top: -1px;
+            left: -1px;
+            border-right: 0;
+            border-bottom: 0;
+        }
+
+        .panel::after {
+            bottom: -1px;
+            right: -1px;
+            border-left: 0;
+            border-top: 0;
+        }
+
+        .panel-label {
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.26em;
+            text-transform: uppercase;
+            color: var(--dim);
+            margin: 0 0 1.25rem;
+        }
+
+        .panel-label::before {
+            content: "// ";
+            color: var(--cyan);
+        }
+
+        /* ---- Board picker ----------------------------------------------------- */
+        .picker {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.75rem 1rem;
+            margin: 0 0 1.5rem;
+        }
+
+        .picker label {
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--dim);
+        }
+
+        select.board {
+            font-family: var(--body-font);
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text);
+            background: var(--panel-2);
+            border: 1px solid var(--rule-bright);
+            padding: 0.6rem 2.4rem 0.6rem 0.9rem;
+            cursor: pointer;
+            appearance: none;
+            /* a small cyan chevron */
+            background-image:
+                linear-gradient(45deg, transparent 50%, var(--cyan) 50%),
+                linear-gradient(135deg, var(--cyan) 50%, transparent 50%);
+            background-position:
+                calc(100% - 18px) calc(1em),
+                calc(100% - 13px) calc(1em);
+            background-size: 5px 5px, 5px 5px;
+            background-repeat: no-repeat;
+        }
+
+        select.board:focus-visible {
+            outline: none;
+            border-color: var(--cyan);
+        }
+
+        .chip {
+            font-size: 0.78rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--magenta-2);
+            white-space: nowrap;
+        }
+
+        /* The activate button handed to <esp-web-install-button> via slot. */
+        button.install {
+            font-family: var(--body-font);
+            font-size: 1.05rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--ground);
+            background: var(--cyan);
+            border: 1px solid var(--cyan);
+            padding: 0.85rem 2rem;
+            cursor: pointer;
+            transition: background 0.12s linear, color 0.12s linear;
+        }
+
+        button.install:hover,
+        button.install:focus-visible {
+            background: transparent;
+            color: var(--cyan);
+            outline: none;
+        }
+
+        button.install::before {
+            content: "> ";
+        }
+
+        .panel-note {
+            margin: 1.25rem 0 0;
+            font-size: 0.95rem;
+            color: var(--dim);
+        }
+
+        .panel-note strong {
+            color: var(--magenta-2);
+            font-weight: 600;
+        }
+
+        /* Unsupported-browser fallback (slotted into the web component). */
+        .unsupported {
+            margin: 0;
+            color: var(--text);
+            border-left: 2px solid var(--magenta);
+            padding-left: 0.95rem;
+        }
+
+        .unsupported span {
+            display: block;
+            color: var(--dim);
+            font-size: 0.9rem;
+            margin-top: 0.35rem;
+        }
+
+        /* ---- Spec readout: dotted-leader rows --------------------------------- */
+        .readout {
+            margin: 0;
+            display: grid;
+            gap: 0.6rem;
+        }
+
+        .spec {
+            display: flex;
+            align-items: baseline;
+            gap: 0.6ch;
+            margin: 0;
+            font-size: 1rem;
+        }
+
+        .spec dt {
+            white-space: nowrap;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--dim);
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .spec .fill {
+            flex: 1 1 auto;
+            border-bottom: 1px dotted var(--dimmer);
+            transform: translateY(-0.28em);
+            min-width: 1.5ch;
+        }
+
+        .spec dd {
+            margin: 0;
+            white-space: nowrap;
+            color: var(--text);
+        }
+
+        .spec dd em {
+            font-style: normal;
+            color: var(--cyan);
+        }
+
+        /* ---- Manual / details ------------------------------------------------- */
+        details {
+            margin-top: 2.25rem;
+            border-top: 1px solid var(--rule);
+            padding-top: 1.25rem;
+        }
+
+        summary {
+            cursor: pointer;
+            list-style: none;
+            color: var(--dim);
+            font-size: 0.9rem;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            user-select: none;
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::before {
+            content: "[+] ";
+            color: var(--cyan);
+        }
+
+        details[open] summary::before {
+            content: "[-] ";
+        }
+
+        details p {
+            color: var(--dim);
+            font-size: 0.95rem;
+        }
+
+        pre {
+            margin: 0.9rem 0 0;
+            padding: 1rem 1.1rem;
+            background: var(--panel-2);
+            border: 1px solid var(--rule);
+            overflow-x: auto;
+            font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+            font-size: 0.86rem;
+            line-height: 1.6;
+            color: var(--text);
+        }
+
+        pre .c {
+            color: var(--dim);
+        }
+
+        pre b {
+            color: var(--cyan);
+            font-weight: 400;
+        }
+
+        /* ---- Footer ----------------------------------------------------------- */
+        footer {
+            margin-top: 3rem;
+            padding-top: 1.25rem;
+            border-top: 1px solid var(--rule);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem 1.75rem;
+            align-items: baseline;
+            justify-content: space-between;
+        }
+
+        .legal {
+            margin: 0;
+            max-width: 54ch;
+            font-size: 0.86rem;
+            color: var(--dimmer);
+            line-height: 1.55;
+        }
+
+        .legal::before {
+            content: "! ";
+            color: var(--magenta-2);
+            font-weight: 700;
+        }
+
+        .legal a {
+            color: var(--dim);
+            border-bottom-color: var(--rule);
+        }
+
+        nav {
+            display: flex;
+            gap: 1.25rem;
+            font-size: 0.86rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        nav a {
+            color: var(--dim);
+            border-bottom: 0;
+        }
+
+        nav a:hover {
+            color: var(--cyan);
+        }
+
+        @media (max-width: 34rem) {
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.6rem;
+            }
+
+            .spec dd {
+                white-space: normal;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <header>
+            <h1 class="wordmark"><span class="wm-text">W<span class="wm-i">i</span>Fi Sapper</span></h1>
+            <span class="tag">Alpha · 4 boards</span>
+        </header>
+
+        <p class="lead">Flash the firmware <b>from your browser.</b></p>
+        <p class="sub">
+            WiFi Sapper is a headless-first, autonomous WPA/WPA2 handshake hunter for ESP-32 boards.
+            Pick your board, plug it in over USB, click install: no toolchain, no <code>esptool</code>,
+            no clone. It flashes the latest tagged
+            <a href="https://github.com/Isonimus/wifi-sapper/releases/latest">release</a>.
+        </p>
+
+        <section class="panel" aria-labelledby="install-label">
+            <p class="panel-label" id="install-label">Install</p>
+
+            <div class="picker">
+                <label for="board-select">Board</label>
+                <select class="board" id="board-select" aria-describedby="board-chip">
+                    <option value="cardputer" data-chip="ESP32-S3" selected>M5Stack Cardputer / ADV</option>
+                    <option value="t_embed" data-chip="ESP32-S3">LilyGO T-Embed</option>
+                    <option value="m5stickc_plus2" data-chip="ESP32">M5StickC Plus2</option>
+                    <option value="cyd_3248s035c" data-chip="ESP32">CYD (ESP32-3248S035C)</option>
+                </select>
+                <span class="chip" id="board-chip">ESP32-S3</span>
+            </div>
+
+            <esp-web-install-button id="install-button" manifest="./manifest-cardputer.json">
+                <button class="install" slot="activate" type="button">Connect &amp; Flash</button>
+                <p class="unsupported" slot="unsupported">
+                    Your browser can't talk to serial devices.
+                    <span>Web Serial needs desktop Chrome, Edge, or Opera. On Firefox / Safari /
+                        mobile, use the manual install below.</span>
+                </p>
+                <p class="unsupported" slot="not-allowed">
+                    This page must be served over HTTPS to flash.
+                    <span>Open the hosted page rather than a local <code>file://</code> copy.</span>
+                </p>
+            </esp-web-install-button>
+
+            <p class="panel-note">
+                <strong>Install erases the whole device.</strong> The Sapper keeps its captures,
+                cracked-password manifest, and provisioning on internal flash (LittleFS), so a full
+                erase wipes all of them: you will re-run first-boot setup afterwards. You'll need the
+                selected board, a USB data cable, and desktop Chrome or Edge.
+            </p>
+        </section>
+
+        <dl class="readout">
+            <div class="spec">
+                <dt>Target</dt>
+                <span class="fill"></span>
+                <dd id="spec-target">M5Stack Cardputer / ADV · ESP32-S3</dd>
+            </div>
+            <div class="spec">
+                <dt>Image</dt>
+                <span class="fill"></span>
+                <dd>factory · merged @ <em>0x0</em></dd>
+            </div>
+            <div class="spec">
+                <dt>Source</dt>
+                <span class="fill"></span>
+                <dd>latest tagged GitHub release</dd>
+            </div>
+            <div class="spec">
+                <dt>Integrity</dt>
+                <span class="fill"></span>
+                <dd>SHA-256 · SHA256SUMS.txt</dd>
+            </div>
+        </dl>
+
+        <details>
+            <summary>Manual install (Firefox · Safari · CLI)</summary>
+            <p>
+                Download the board's <code>-factory.bin</code> and <code>SHA256SUMS.txt</code> from the
+                <a href="https://github.com/Isonimus/wifi-sapper/releases/latest">latest release</a>,
+                verify, then flash to <code>0x0</code> (the merged image carries the bootloader at its
+                chip-family offset):
+            </p>
+            <pre><span class="c"># verify the download first</span>
+sha256sum -c SHA256SUMS.txt
+
+<span class="c"># ESP32-S3 boards (Cardputer, T-Embed)</span>
+esptool <b>--chip esp32s3</b> --baud 921600 write-flash \
+    <b>0x0</b> sapper-cardputer-<span class="c">&lt;ver&gt;</span>-factory.bin
+
+<span class="c"># classic ESP32 boards (M5StickC Plus2, CYD)</span>
+esptool <b>--chip esp32</b> --baud 921600 write-flash \
+    <b>0x0</b> sapper-cyd_3248s035c-<span class="c">&lt;ver&gt;</span>-factory.bin</pre>
+        </details>
+
+        <footer>
+            <p class="legal">
+                For authorized security testing and education only. Unauthorized access to networks
+                is illegal — you are responsible for how you use this.
+                <a href="https://github.com/Isonimus/wifi-sapper/blob/main/DISCLAIMER.md">Read the
+                    disclaimer.</a>
+            </p>
+            <nav>
+                <a href="https://github.com/Isonimus/wifi-sapper">Source</a>
+                <a href="https://github.com/Isonimus/wifi-sapper/releases">Releases</a>
+                <a href="https://github.com/Isonimus/wifi-sapper/blob/main/README.md">Docs</a>
+            </nav>
+        </footer>
+    </main>
+
+    <!-- ESP Web Tools: the one runtime CDN dependency. Pinned; bump deliberately.
+         Loads the <esp-web-install-button> custom element (Web Serial installer). -->
+    <script type="module"
+        src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+
+    <!-- Board picker: point the single install button at the selected board's own
+         single-build manifest. ESP Web Tools auto-selects a builds[] entry by chip
+         family ONLY, and two of our boards share each family (Cardputer/T-Embed =
+         ESP32-S3, Stick/CYD = classic ESP32), so one auto-family manifest cannot
+         tell the siblings apart and would flash the wrong one. The picker swaps the
+         manifest; chipFamily is the cross-family safety net (a mismatched chip is
+         refused by esp-web-tools). See slices/0102. -->
+    <script>
+        (function () {
+            var select = document.getElementById('board-select');
+            var button = document.getElementById('install-button');
+            var chip = document.getElementById('board-chip');
+            var target = document.getElementById('spec-target');
+            if (!select || !button) return;
+            select.addEventListener('change', function () {
+                var opt = select.options[select.selectedIndex];
+                button.setAttribute('manifest', './manifest-' + select.value + '.json');
+                if (chip) chip.textContent = opt.getAttribute('data-chip');
+                if (target) target.textContent = opt.textContent + ' · ' + opt.getAttribute('data-chip');
+            });
+        })();
+    </script>
+
+    <!-- Dogfooding our own MIT lib (vendored, self-contained): a continuous, subtle
+         rgb-split on the wordmark, echoing the banner title's chromatic aberration.
+         Progressive enhancement — the real text "WiFi Sapper" is already in the HTML,
+         so if this module fails to load or JS is off, the wordmark simply renders
+         static and legible. Motion is gated off under prefers-reduced-motion. The
+         effect animates the wordmark span only; glitch-js is a page asset, never a
+         firmware dependency. See slices/0102. -->
+    <script type="module">
+        import { Glitch, Effects } from './lib/glitch.es.js';
+
+        const wordmark = document.querySelector('.wm-text');
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        if (wordmark && !reduceMotion) {
+            new Glitch(wordmark, {
+                effects: [Effects.rgbSplit({ maxOffset: 3, frequency: 0.12, blendMode: 'screen' })],
+                trigger: 'always',
+            });
+        }
+    </script>
+</body>
+
+</html>

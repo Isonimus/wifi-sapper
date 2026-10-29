@@ -1,0 +1,13 @@
+{
+  "name": "WiFi Sapper",
+  "version": "latest",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "./sapper-cyd_3248s035c-factory.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

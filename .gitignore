@@ -4,6 +4,11 @@
 # Node dependencies (package-lock.json is kept for reproducible verify tooling)
 node_modules/
 
+# Web flasher firmware images are pulled into web/ at Pages-deploy time from the latest
+# release (served same-origin, ADR-0051 CORS finding); never committed. The page, manifests,
+# vendored fonts and glitch-js under web/ ARE tracked. See slices/0102.
+web/*.bin
+
 # Generated at build time (e.g. an operator's real handshake pcap embedded by embed_test_pcap.py for
 # the on-air upload verify) — never committed: it can carry a real capture of someone's network.
 src/gen/

@@ -243,13 +243,20 @@ ESP32.
 
 ## Flashing a board
 
-### Install a release (no toolchain)
+### Flash from your browser (no toolchain)
 
-Each tagged release publishes, per supported board, a **factory image** (full flash, write at offset `0x0`)
-and an **app image** (OTA slot), plus `SHA256SUMS.txt`, on the repo's
-[Releases](https://github.com/Isonimus/wifi-sapper/releases) page. To install without building, flash the
-factory image for your board with [esptool](https://github.com/espressif/esptool) or the browser
-[ESP Web Flasher](https://esp.huhn.me) (by file):
+The easiest path: open the hosted **[web flasher](https://isonimus.github.io/wifi-sapper/)** in desktop
+Chrome, Edge, or Opera, pick your board, plug it in over USB, and click *Connect & Flash*. It writes the
+latest tagged release's factory image over Web Serial, with no local toolchain. Install erases the whole
+device, so you will re-run first-boot [Provisioning](#provisioning-first-boot) afterwards. The page and its
+per-board manifests are the `web/` tree, deployed to GitHub Pages (slices/0102).
+
+### Install a release by file
+
+Each tagged release also publishes, per supported board, a **factory image** (full flash, write at offset
+`0x0`) and an **app image** (OTA slot), plus `SHA256SUMS.txt`, on the repo's
+[Releases](https://github.com/Isonimus/wifi-sapper/releases) page. To install from a file, flash the factory
+image for your board with [esptool](https://github.com/espressif/esptool):
 
 ```
 esptool --chip <esp32s3|esp32> write-flash 0x0 sapper-<board>-<version>-factory.bin

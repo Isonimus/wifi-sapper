@@ -113,6 +113,14 @@ jobs:
           test "$magic" = "e9" || { echo "ERROR: ${{ matrix.env }} has no bootloader magic at ${{ matrix.boot_offset }} — wrong offset for this chip family"; exit 1; }
           test "$mode" = "02" || { echo "ERROR: ${{ matrix.env }} factory bootloader is not dio; refusing to publish a brick"; exit 1; }
 
+          # Stable-named copy of the guarded factory image so the web flasher's
+          # per-board manifest (web/manifest-${{ matrix.env }}.json) and the Pages
+          # deploy can reference a FIXED name across releases. Byte-identical to the
+          # versioned image above (so the checksum in the release job covers it) and
+          # only published for the "Latest" release — do NOT cut with --prerelease or
+          # the same-origin pull 404s. See slices/0102.
+          cp "$factory" "dist/sapper-${{ matrix.env }}-factory.bin"
+
           ls -la dist
 
       - name: Upload artifacts
@@ -130,6 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # gh release create writes to the repo's Releases via the built-in GITHUB_TOKEN.
+      actions: write   # the final step dispatches pages.yml (an event the GITHUB_TOKEN release cannot cascade).
     steps:
       - uses: actions/checkout@v7  # gh needs the repo checkout for context.
 
@@ -157,12 +166,29 @@ jobs:
           # create would leave a partial release PUBLIC (a board's image missing) that an operator could flash,
           # and it would block a re-run with "release already exists". A draft is invisible until the flip, so
           # a failed upload never reaches an operator (§3 fail-loud: never a partial public release).
+          # The versioned app + factory images, the four stable-named factory copies the web flasher
+          # pulls (listed explicitly so the versioned glob is not re-matched and double-uploaded), and
+          # the checksums.
           gh release create "$version" \
             --draft \
             --title "WiFi Sapper $version" \
             --generate-notes \
             dist/sapper-*-"${version}"-app.bin \
             dist/sapper-*-"${version}"-factory.bin \
+            dist/sapper-cardputer-factory.bin \
+            dist/sapper-t_embed-factory.bin \
+            dist/sapper-m5stickc_plus2-factory.bin \
+            dist/sapper-cyd_3248s035c-factory.bin \
             dist/SHA256SUMS.txt
           # Every asset accepted: flip to public in one metadata edit (no uploads, so no partial-public window).
           gh release edit "$version" --draft=false
+
+      # The web flasher serves the factory images same-origin, so a new release must redeploy Pages to
+      # refresh them. pages.yml has a `release: published` trigger, but GitHub SUPPRESSES workflow cascades
+      # from events emitted by the built-in GITHUB_TOKEN (recursion guard) — and the release above was
+      # created with that token, so that trigger never fires for our releases. workflow_dispatch is exempt
+      # from the suppression, so kick Pages explicitly here (needs actions: write). See slices/0102.
+      - name: Redeploy the web flasher with the new firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
