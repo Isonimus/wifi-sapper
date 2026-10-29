@@ -150,3 +150,40 @@ re-submission.
   `kMinValidEpoch` TLS threshold. Left as two instances deliberately (rule of three — this is the
   second), matching the repo's other same-on-purpose duplications; hoist to one home only if a third
   user appears.
+
+## Amendment — 2026-10-29: on-hardware verification status of decision 7's migration, and the SUB leg closed by equivalence
+
+Decision 7 grew both stores by four bytes (`CRK1→CRK2`, `SUB1→SUB2`) with a back-reading loader. This
+records how each half was confirmed on real hardware, and why the submitted half is closed without a
+dedicated on-device run.
+
+- **Cracked (`CRK1→CRK2`) — proven on hardware, 2026-10-26.** A pre-0072 build wrote a `CRK1` store
+  (sync, `first=1`); current `main` then mounted it clean (no `[ERROR]`, reformat breadcrumb 0), loaded
+  all 28 entries (`first=0 new=0`, no `bad version` / `short record`), and re-saved as `CRK2`. So the
+  version-branch migration mechanism is proven against real LittleFS on real flash.
+
+- **Submitted (`SUB1→SUB2`) — the planned on-device proof is impossible by construction.** The plan was
+  to seed a `SUB1` store with a pre-0073 build on a PSRAM board (whose older build could upload past the
+  pre-0076 response-alloc failure), then flash current `main` and watch the set survive. But the `SUB2`
+  loader shipped 2026-10-02 (slice-0073, commit `3f22daa`), while the first board environment that could
+  physically hold a `SUB1` store written by a shipping build, the M5StickC Plus2, was added 2026-10-27
+  (commit `ebf81a0`), a descendant of the `SUB2` commit. Every build that can target that board already
+  writes `SUB2`, so no pre-0073 build has any environment for it. The reference Cardputer can run a
+  pre-0073 build but can never seed a `SUB1` store, because pre-0073 is also pre-0076, so the no-PSRAM
+  S3's 16 KB response alloc fails (7668 B < 16384 B, ADR-0076) and `markSubmitted` never fires. There is
+  therefore no combination of a shipped build and a board that produces a genuine `SUB1` store to migrate.
+
+- **Decision: close the submitted leg as proven-by-equivalence, not with a synthetic SUB1-writer build.**
+  A throwaway build that backports the SUB1 save path onto the current tree could seed a real `SUB1`
+  store on any board, but its marginal confidence is low and it is not kept here, because: (a) count
+  preservation, the version branch, the SUB1 10-byte / SUB2 14-byte record lengths, and the
+  `lastVerifiedEpoch=0` default are all asserted directly host-side (test/test_submitted_manifest); (b)
+  the structurally-identical cracked loader is hardware-proven on real LittleFS (above), and LittleFS
+  byte I/O is chip- and content-agnostic, so the real-flash behaviour the host fake cannot show is
+  already demonstrated for the same loader shape; (c) the only SUB-specific deltas from the proven CRK
+  path are the magic (`SUB`), the version char, and the record length, each host-asserted; (d) the
+  on-device positive signal would be weak regardless, because the submitted-set load is silent on success
+  (only `[FATAL]` / `[ERROR]` on failure, no "loaded N" line), so a hardware run would add little over
+  this argument. The absence of a dedicated verify script stays deliberate (slice-0075 adversarial pass):
+  a corrupt or old-format mount cannot be induced deterministically on the host (no LittleFS fake) or
+  unattended on device.
