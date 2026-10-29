@@ -1,0 +1,11 @@
+[UPLOAD] wpa-sec result=accepted bytes=586
+[UPLOAD] drain done associated=1 accepted=1 duplicate=0 rejected=0 purged=0 skippedCracked=0 skippedSubmitted=0 storeErrors=0 submittedStoreErrors=0 resumeFailed=0
+[CMD] refused unknown-command
+[STATE] phase=ready heap_free=71776 heap_max=31732 disp=240x135
+[CMD] inject-handshake
+[UPLOAD] injecting stimulus handshake through the capture-ready seam
+[CAPTURE] essid='SAPPER' bssid=xx:xx:xx:xx:xx:xx
+[CMD] force-sync
+[UPLOAD] resp uploadBytes=381 respBytes=738
+[UPLOAD] wpa-sec result=rejected bytes=381
+[UPLOAD] drain done associated=1 accepted=0 duplicate=0 rejected=1 purged=0 skippedCracked=0 skippedSubmitted=0 storeErrors=0 submittedStoreErrors=0 resumeFailed=0

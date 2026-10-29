@@ -40,6 +40,10 @@ const READY_TIMEOUT_MS = 90000;
 // A single pending capture is below drainThreshold, so after force-sync the window still opens on the
 // sync cadence (syncRetryIntervalMs, up to ~60s if the boot sync just paced it). Give generous margin.
 const DRAIN_TIMEOUT_MS = 120000;
+// Readiness is probed, not awaited: the S3's native USB-CDC does not reset the board on port-open, so the
+// one-time [HUNT] discovering marker may already be in the past. Re-send `state` on this cadence until the
+// device answers [STATE] phase=ready (the read-only channel answers during hunting, ADR-0003 #1).
+const STATE_POLL_MS = 2000;
 
 const failures = [];
 const fail = (message) => failures.push(message);
@@ -68,7 +72,8 @@ class Channel {
     this.waiters = [];
     this.fatalLine = null;
     this.artifact = [];
-    this.hunting = false;       // saw the shipped loop announce itself.
+    this.hunting = false;       // saw the one-time [HUNT] discovering marker (best-effort; may be missed).
+    this.phaseReady = false;    // saw [STATE] phase=ready — the robust, probe-driven liveness signal.
     this.injectAcked = false;   // saw the [CMD] inject-handshake ack.
     this.drainLine = null;      // the "[UPLOAD] drain done ..." summary.
     this.drainAssociated = false;
@@ -97,8 +102,9 @@ class Channel {
       const line = this.buffer.slice(0, nl).replace(/\r$/, '');
       this.buffer = this.buffer.slice(nl + 1);
       if (/^\[(FATAL|ERROR)\]/.test(line)) this.fatalLine = this.fatalLine ?? line;
-      if (/^\[(HUNT|UPLOAD|CMD|CAPTURE)\]/.test(line)) this.artifact.push(line);
+      if (/^\[(HUNT|UPLOAD|CMD|CAPTURE|STATE)\]/.test(line)) this.artifact.push(line);
       if (/^\[HUNT\] discovering/.test(line)) this.hunting = true;
+      if (/^\[STATE\] phase=ready/.test(line)) this.phaseReady = true;
       if (/^\[CMD\] inject-handshake/.test(line)) this.injectAcked = true;
       const result = line.match(/^\[UPLOAD\] wpa-sec result=(accepted|duplicate|rejected)/);
       if (result) this.uploadResult = result[1];
@@ -155,20 +161,29 @@ async function main() {
   console.log(`opened ${path} @ ${BAUD} — serial stimulus verify`);
 
   try {
-    // 1. Wait for the shipped hunt loop to be running (it must reach Ready before a stimulus can drain).
-    console.log('waiting for the shipped hunt loop to start (STA associate + NTP; can take a minute)...');
-    await channel
-      .waitFor(() => channel.hunting || channel.fatalLine !== null, READY_TIMEOUT_MS)
-      .catch((e) =>
-        fail(
-          `device did not reach the hunt loop in ${READY_TIMEOUT_MS}ms (${e.message}); flash a ` +
-            `NORMALLY-BOOTING cardputer_testhooks build with real WiFi/wpa-sec credentials and no probe env`,
-        ),
+    // 1. Confirm the shipped hunt loop is up. Do NOT wait for the one-time [HUNT] discovering marker: the
+    //    S3's native USB-CDC does not reset the board on port-open, so that line may already be in the past.
+    //    Probe actively instead — poll `state` until the device answers [STATE] phase=ready (it still
+    //    answers the read-only channel while hunting, ADR-0003 #1), which is timing-independent.
+    console.log('probing for the hunt loop (sending `state`; device may still be associating)...');
+    const readyDeadline = Date.now() + READY_TIMEOUT_MS;
+    const loopUp = () => channel.phaseReady || channel.hunting;
+    while (!loopUp() && channel.fatalLine === null && Date.now() < readyDeadline) {
+      await write(port, 'state\n');
+      // A poll-interval timeout is normal (the answer may be a phase that is not yet ready); swallow it and
+      // re-send `state` on the next turn until phase=ready, a real fatal, or the overall deadline.
+      await channel.waitFor(() => loopUp() || channel.fatalLine !== null, STATE_POLL_MS).catch(() => {});
+    }
+    if (!loopUp() && channel.fatalLine === null) {
+      fail(
+        `device never reported phase=ready in ${READY_TIMEOUT_MS}ms; flash a NORMALLY-BOOTING ` +
+          `cardputer_testhooks build with real WiFi/wpa-sec credentials and no probe env, and confirm it is hunting`,
       );
+    }
     if (channel.fatalLine) fail(`device reported: ${channel.fatalLine}`);
 
     // 2. Drive the *shipped* loop over serial — the point of this verify (ADR-0047).
-    if (channel.hunting && !channel.fatalLine) {
+    if (loopUp() && !channel.fatalLine) {
       // inject-handshake enqueues through the real capture-ready seam but does NOT open an STA window on
       // its own (one capture is below drainThreshold, and the drain ceiling is minutes away). force-sync
       // marks the cracked-results sync due so the next window opens and drains the pending capture
