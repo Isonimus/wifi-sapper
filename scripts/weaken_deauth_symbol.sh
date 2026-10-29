@@ -1,8 +1,12 @@
 #!/bin/bash
 # Weaken ieee80211_raw_frame_sanity_check in libnet80211.a so a deauth override can link
-# and transmit management frames (ADR-0001). Ported from The Adversary, trimmed to the
-# Sapper's only current chip (ESP32-S3 / Cardputer ADV); slice-8 re-adds esp32 for the
-# M5StickC when that board is brought up.
+# and transmit management frames (ADR-0027, ADR-0029). Ported from The Adversary. BOTH chip
+# families the Sapper builds are weakened: esp32s3 (Cardputer, T-embed) and esp32 (M5StickC
+# Plus2, CYD). weaken_for_chip skips a chip whose lib is not yet downloaded, so a per-env
+# build weakens the lib it will actually link against and harmlessly no-ops the other. Only
+# weakening esp32s3 was a latent bug: classic-ESP32 boards linked locally off a package cache
+# a sibling repo had already weakened, but failed on a clean CI cache with "multiple
+# definition of ieee80211_raw_frame_sanity_check".
 #
 # Idempotent: safe to run on every build (weaken_deauth_pre.py runs it as a pre-action).
 # Harmless before a deauth.cpp exists — it edits a library archive symbol, nothing else.
@@ -64,7 +68,7 @@ weaken_for_chip() {
     fi
 }
 
-echo "Weakening deauth symbol for ESP32-S3..."
+echo "Weakening deauth symbol for both chip families (esp32s3, esp32)..."
 echo ""
 
 # Resolve objcopy once, up front — fail loud before touching any archive if none exists.
@@ -76,6 +80,7 @@ echo "Using objcopy: $OBJCOPY_BIN"
 echo ""
 
 weaken_for_chip "esp32s3"
+weaken_for_chip "esp32"
 
 echo ""
 echo "============================================"
