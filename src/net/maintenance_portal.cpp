@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <esp_mac.h>
 
+#include <cstdlib>
 #include <cstring>
 
 #include "net/captive_portal.h"      // kSoftApPassword — the published fallback AP passphrase.
@@ -67,6 +68,12 @@ bool MaintenancePortal::begin() {
     const IPAddress apIp = WiFi.softAPIP();
     m_dns.start(kDnsPort, kDnsWildcard, apIp);
 
+    // Read the durable FS-reformat breadcrumb ONCE here, on this shallow boot-phase stack, not per
+    // dashboard request: an NVS open nested under the WebServer handler frames was part of what overflowed
+    // the 8 KB loopTask stack in handleRoot. It cannot change during a Maintenance session (no reformat
+    // happens while parked), so a value cached at entry is correct (ADR-0074 decision 4).
+    m_fsReformatCount = filesystemReformatCount();
+
     m_http.on("/", HTTP_GET, [this]() { handleRoot(); });
     m_http.on("/config", HTTP_GET, [this]() { handleConfig(); });
     // The two mutating controls are POST only (ADR-0043 decision 3, §4 #23): a GET reaches only the
@@ -100,12 +107,28 @@ void MaintenancePortal::handleRoot() {
     stats.captureQueueDepth = m_queueDepth;
     stats.deauthArmed = m_creds.deauthEnabled;
     stats.everSynced = !m_manifest.isFresh();  // the persisted fresh flag, not a RAM last-sync status.
-    stats.fsReformatCount = filesystemReformatCount();  // the durable NVS breadcrumb (ADR-0074 decision 4).
+    stats.fsReformatCount = m_fsReformatCount;  // cached at begin(), ADR-0074 decision 4 (no per-request NVS).
 
-    char head[kDashboardHeadBufSize];
-    if (buildDashboardHead(stats, head, sizeof(head)) == 0) {
+    // The render buffers (5 KB together) live on the HEAP, not the 8 KB Arduino loopTask stack this handler
+    // runs on. Parked on the stack, under the WebServer frames above and (formerly) an NVS open below, they
+    // overflowed it and tripped the stack canary on the first browser connect. The serve is single
+    // threaded, so a per-request malloc/free is fine for a human-paced dashboard; fail loud on a null alloc
+    // (§3): a 500, never a truncated or partial page. Heap not static .bss keeps this DRAM-tight board's
+    // static budget intact (ADR-0082).
+    char* head = static_cast<char*>(malloc(kDashboardHeadBufSize));
+    char* row = static_cast<char*>(malloc(kDashboardRowBufSize));
+    if (head == nullptr || row == nullptr) {
+        free(head);
+        free(row);
+        m_http.send(500, "text/html", "<h2>Out of memory rendering the dashboard.</h2>");
+        return;
+    }
+
+    if (buildDashboardHead(stats, head, kDashboardHeadBufSize) == 0) {
         // The head outgrew its buffer (a bug, not data — the rows stream separately): serve an error,
         // never a truncated page (§3, fail loud).
+        free(head);
+        free(row);
         m_http.send(500, "text/html", "<h2>Could not render the dashboard.</h2>");
         return;
     }
@@ -114,11 +137,10 @@ void MaintenancePortal::handleRoot() {
     m_http.setContentLength(CONTENT_LENGTH_UNKNOWN);
     m_http.send(200, "text/html", head);
 
-    char row[kDashboardRowBufSize];
     for (size_t i = 0; i < m_manifest.size(); ++i) {
         const CrackedEntry* entry = m_manifest.entryAt(i);
         if (entry == nullptr) break;  // count changed under us: stop rather than read a stale slot.
-        if (appendCrackedRow(entry->result, row, sizeof(row)) == 0) {
+        if (appendCrackedRow(entry->result, row, kDashboardRowBufSize) == 0) {
             // Unreachable for a valid CrackedResult (the row buffer is sized for the worst case), so a 0
             // here is a bug: surface it on serial and skip the row rather than corrupt the stream.
             Serial.println("[MAINT] row render overflow — skipping an entry");
@@ -128,6 +150,8 @@ void MaintenancePortal::handleRoot() {
     }
     m_http.sendContent(kDashboardControls);  // closes the table, then the resume form + /config link.
     m_http.sendContent(kDashboardFoot);      // closes the document.
+    free(head);
+    free(row);
 }
 
 void MaintenancePortal::handleConfig() {
@@ -147,12 +171,21 @@ void MaintenancePortal::handleConfig() {
     model.hasStoredWebhook = m_creds.webhookUrl[0] != '\0';
     model.hasStoredMaintenancePass = m_creds.maintenancePass[0] != '\0';
 
-    char html[kSetupFormBufSize];
-    if (buildSetupForm(model, html, sizeof(html)) == 0) {
+    // Heap, not the 8 KB loopTask stack: a 5 KB buffer on the stack under the WebServer frames overflows it
+    // (same cause as handleRoot). Single-threaded serve, so malloc/free per request is fine; fail loud on a
+    // null alloc (§3).
+    char* html = static_cast<char*>(malloc(kSetupFormBufSize));
+    if (html == nullptr) {
+        m_http.send(500, "text/html", "<h2>Out of memory rendering the setup form.</h2>");
+        return;
+    }
+    if (buildSetupForm(model, html, kSetupFormBufSize) == 0) {
+        free(html);
         m_http.send(500, "text/html", "<h2>Could not render the setup form.</h2>");  // fail loud (§3).
         return;
     }
     m_http.send(200, "text/html", html);
+    free(html);
 }
 
 void MaintenancePortal::handleSave() {

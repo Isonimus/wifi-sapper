@@ -44,6 +44,10 @@ const ARTIFACT_DIR = 'artifacts';
 const ARTIFACT = `${ARTIFACT_DIR}/0040-maintenance.txt`;
 const REPLY_TIMEOUT_MS = 4000;
 const BANNER_TIMEOUT_MS = 8000;
+// HTTP fetches over the SoftAP need far more slack than a serial reply: a classic-ESP32 AP streaming the
+// chunked dashboard to a workstation that is also managing a no-internet AP link can take several seconds,
+// so the 4 s serial timeout spuriously aborts it (the browser, being patient, succeeds).
+const HTTP_TIMEOUT_MS = 15000;
 
 const failures = [];
 const fail = (message) => failures.push(message);
@@ -162,7 +166,7 @@ async function verifyDashboardHttp(url, observed) {
   console.log(`fetching dashboard at ${url} (workstation must be joined to the maintenance AP)...`);
   let res;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(REPLY_TIMEOUT_MS) });
+    res = await fetch(url, { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
   } catch (e) {
     fail(`could not fetch the dashboard (is the workstation joined to the AP?): ${e.message}`);
     return;
@@ -193,7 +197,7 @@ async function verifyDashboardHttp(url, observed) {
   const origin = new URL(url).origin;
   let cfg;
   try {
-    cfg = await fetch(`${origin}/config`, { signal: AbortSignal.timeout(REPLY_TIMEOUT_MS) });
+    cfg = await fetch(`${origin}/config`, { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
   } catch (e) {
     fail(`could not fetch /config (slice-0044): ${e.message}`);
     return;

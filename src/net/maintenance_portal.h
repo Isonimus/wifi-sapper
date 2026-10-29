@@ -17,6 +17,8 @@
 
 #ifndef UNIT_TEST
 
+#include <cstdint>
+
 #include <DNSServer.h>
 #include <WebServer.h>
 
@@ -70,6 +72,7 @@ private:
     const CrackedManifest& m_manifest;
     const ProvisioningRecord& m_creds;
     size_t m_queueDepth;
+    uint32_t m_fsReformatCount = 0;  // ADR-0074 breadcrumb, read once in begin() (see handleRoot).
     bool m_activity = false;
     bool m_pendingReboot = false;
 
