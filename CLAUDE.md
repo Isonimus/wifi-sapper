@@ -44,6 +44,12 @@ Every document is exactly one of four things.
   user/dev-facing feature or API. It is the repo's operator/dev entry point — the build and
   verify commands and the first-boot provisioning guide (ADR-0006) — cited here so it is not
   orphaned (stele:ADR-0010).
+- **docs/security-model.md** is a live document giving the firmware's security posture: what it protects
+  (the §4 invariants that hold by construction), the deliberate recorded exceptions (the Maintenance
+  plaintext-PSK viewer, the shipped-but-disarmed raw-TX, the public setup default), and the known
+  limitations (plaintext NVS at rest, the wpa-sec CA pin, private-CA webhooks, the verify-gate ESP-IDF
+  blindness). Updated in the same change as any security-relevant behaviour; cited here so it is not
+  orphaned (stele:ADR-0010).
 
 **Single writer, one direction.** An ADR records a deferral *once*, as a fact about that
 decision. `LEDGER.md` cites the ADR. **Never reach back into an ADR to close a ledger

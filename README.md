@@ -13,7 +13,7 @@
   <a href="https://github.com/Isonimus/wifi-sapper/actions/workflows/codeql.yml"><img src="https://github.com/Isonimus/wifi-sapper/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: alpha">
-  <img src="https://img.shields.io/badge/platform-ESP32--S3-333?logo=espressif" alt="Platform: ESP32-S3">
+  <img src="https://img.shields.io/badge/platform-ESP32%20%2F%20ESP32--S3-333?logo=espressif" alt="Platform: ESP32 / ESP32-S3">
   <img src="https://img.shields.io/badge/built%20with-PlatformIO-orange?logo=platformio" alt="Built with PlatformIO">
   <a href="https://www.npmjs.com/package/@isonimus/stele"><img src="https://img.shields.io/badge/method-Stele-6E44FF" alt="Built with Stele"></a>
 </p>
@@ -24,6 +24,7 @@
   <a href="#normal-operation">Operation</a> •
   <a href="#flashing-a-board">Flashing</a> •
   <a href="#building--verifying">Building</a> •
+  <a href="#security-model-and-known-limitations">Security</a> •
   <a href="#built-with-stele">Method</a> •
   <a href="DISCLAIMER.md">Legal</a>
 </p>
@@ -154,7 +155,8 @@ you can join and read them — otherwise anyone in radio range who knows the def
 
 > **Secrets at rest.** Credentials are stored in plaintext NVS. Anyone with physical access and a
 > flash dump can read them; flash encryption is a tracked follow-up ([`LEDGER.md`](LEDGER.md),
-> ADR-0006). Treat a provisioned device as holding its network passphrase in the clear.
+> ADR-0006). Treat a provisioned device as holding its network passphrase in the clear. See the full
+> [security model and known limitations](#security-model-and-known-limitations).
 
 ## Normal operation
 
@@ -209,6 +211,13 @@ firmware is headless-first, so a screenless or LED-less board runs the same bina
 | **M5StickC Plus2** | ESP32-PICO-V3-02 | 2 MB quad | 8 MB | 1.14" 240x135 | hold BtnB ~2 s | `m5stickc_plus2` |
 | **LilyGo T-embed** | ESP32-S3 | 8 MB octal | 16 MB | 1.9" 320x170 | hold encoder push ~2 s | `t_embed` |
 | **ESP32-3248S035C (CYD)** | ESP32-D0WD-V3 | none | 4 MB | 3.5" 320x480 ST7796 | hold BOOT ~2 s | `cyd_3248s035c` |
+
+**Proof status.** The capture→upload→sync engine is identical on every board and is compile-and-link
+verified in CI on each push (all four environments, both chip families). On-air verify evidence (the
+committed [`artifacts/`](artifacts/)) was produced on the **Cardputer reference target**; the other
+three boards have been brought up on hardware, but some of their per-board on-air proofs (photographic
+HUD/panel confirmation, the M5StickC Plus2 PSRAM boot, the CYD sync leg) are **pending** and tracked
+in [`LEDGER.md`](LEDGER.md). See [Security model and known limitations](#security-model-and-known-limitations).
 
 **USB serial.** The two ESP32-S3 boards (Cardputer, T-embed) expose a **native USB-CDC / USB-Serial-JTAG**
 port, so they enumerate directly and do not reset when a serial monitor opens. The M5StickC Plus2 and the
@@ -340,6 +349,35 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run lint` / `npm run index` | Documentation linter and generated ADR index. |
 | `npm run check:index` | Fail if `adr/INDEX.md` is stale (the `--check` half of `index`; run by the pre-push hook and CI). |
 | `npm run check:artifact-privacy` | Fail if a committed verify artifact carries a real BSSID/SoftAP identifier (ADR-0049; also run by the pre-commit hook, the pre-push hook, and CI against the pushed tree). |
+
+## Security model and known limitations
+
+The Sapper is offensive tooling: handshake capture and operator-armed deauth are its intended
+function. Its security *design* is about protecting the operator and the operator's secrets. In brief:
+provisioned secrets are never echoed to the served setup page, no plaintext password leaves the device
+over the network or appears on the panel/LED/serial log, the wpa-sec cloud link is certificate-pinned,
+and provisioning is never writable over serial (the enforcing invariants are in
+[`docs/security-model.md`](docs/security-model.md)).
+
+Three relaxations are deliberate and recorded: the Maintenance dashboard serves recovered passwords in
+clear over its own passphrase-gated access point (set a strong Maintenance passphrase); the raw-deauth
+capability ships in every binary but transmits only when the operator arms it (off by default); and
+the setup access point uses the public default password `sapper-setup`.
+
+Known limitations to weigh before a field deployment:
+
+- **Secrets at rest are plaintext NVS.** A flash dump reveals the WiFi passphrase and wpa-sec key;
+  flash encryption is a tracked follow-up (ADR-0006).
+- **The wpa-sec CA pin expires 2036-06-22 and fails closed.** A firmware release updates the pinned
+  certificate (ADR-0017).
+- **Self-hosted webhooks behind a private CA are unsupported.** Use a publicly-trusted certificate
+  (ADR-0023).
+- **A green verify does not yet catch every ESP-IDF fault.** An assurance gap being hardened
+  (ADR-0074).
+
+The full threat model, the deliberate exceptions, and the per-board on-air proof status are in
+[`docs/security-model.md`](docs/security-model.md). To report a firmware security *defect*, see the
+[`SECURITY.md`](SECURITY.md) policy.
 
 ## Built with Stele
 
