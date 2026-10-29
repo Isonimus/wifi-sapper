@@ -43,9 +43,11 @@ struct SetupFormModel {
     uint16_t screenOffAfterSec;
 };
 
-/// Buffer size for the rendered setup form. The form is ~1.4 KB; 2 KB leaves margin. A compile-time
-/// size so `buildSetupForm` fails loud (returns 0) rather than truncating if it ever outgrows this.
-constexpr size_t kSetupFormBufSize = 2048;
+/// Buffer size for the rendered setup form. Since slice-0098 the form carries the shared portal theme
+/// (CSS 1620 B + the SVG wordmark 621 B, injected into the head), so the measured worst case (every
+/// "leave blank to keep" placeholder + both dim fields at 65535) is 4195 B; 5 KB leaves ~900 B margin. A
+/// compile-time size so `buildSetupForm` fails loud (returns 0) rather than truncating if it outgrows this.
+constexpr size_t kSetupFormBufSize = 5120;
 
 /**
  * @brief Render the setup form HTML from @p model into @p out. Pure; no secret can appear (see the

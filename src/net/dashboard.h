@@ -51,9 +51,11 @@ struct DashboardStats {
     uint32_t fsReformatCount = 0;
 };
 
-/// Buffer size the caller gives buildDashboardHead(). The head is fixed-shape (~1 KB); 2 KB leaves
-/// margin so an overflow here is a real bug, not a data-size effect (the rows stream separately).
-constexpr size_t kDashboardHeadBufSize = 2048;
+/// Buffer size the caller gives buildDashboardHead(). Since slice-0098 the head carries the shared portal
+/// theme (CSS 1620 B + the SVG wordmark 621 B), so the measured worst case (the reformat-warning line) is
+/// 2859 B; 4 KB leaves ~1.2 KB margin. Fixed-shape still, so an overflow here is a real bug, not a
+/// data-size effect (the up-to-256 result rows stream separately, §4 #21, never materialised in the head).
+constexpr size_t kDashboardHeadBufSize = 4096;
 
 /// Buffer size the caller gives appendCrackedRow(). One row is an ESSID (<=32) + PSK (<=64), each
 /// HTML-escaped (up to 6x per char — "&quot;" is the longest entity) plus markup: worst case ~700

@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "net/portal_theme.h"  // kPortalThemeCss, kPortalWordmarkSvg — the shared banner-matching look.
+
 namespace sapper {
 namespace {
 
@@ -65,11 +67,8 @@ size_t buildDashboardHead(const DashboardStats& stats, char* out, size_t outSize
     const int written = std::snprintf(
         out, outSize,
         "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>WiFi Sapper - Maintenance</title>"
-        "<style>body{font-family:sans-serif;margin:1rem}table{border-collapse:collapse;width:100%%}"
-        "th,td{border:1px solid #ccc;padding:.4rem;text-align:left}"
-        "code{word-break:break-all}.warn{color:#a00}</style></head><body>"
-        "<h2>WiFi Sapper - Maintenance</h2>"
+        "<title>WiFi Sapper - Maintenance</title>%s</head><body><div class='wrap'>%s"
+        "<h2>Maintenance</h2>"
         "<ul>"
         "<li>Recovered networks: %zu</li>"
         "<li>Captures queued for upload: %zu</li>"
@@ -78,9 +77,10 @@ size_t buildDashboardHead(const DashboardStats& stats, char* out, size_t outSize
         "<li>%s</li>"
         "</ul>"
         "<p class='warn'>Recovered passwords are shown in clear below. This viewer is served over the "
-        "device's own maintenance access point (ADR-0039).</p>"
+        "device's own maintenance access point.</p>"
         "<table><tr><th>Network</th><th>Password</th></tr>",
-        stats.recoveredCount, stats.captureQueueDepth, stats.deauthArmed ? "ARMED" : "disarmed",
+        kPortalThemeCss, kPortalWordmarkSvg, stats.recoveredCount, stats.captureQueueDepth,
+        stats.deauthArmed ? "ARMED" : "disarmed",
         stats.everSynced ? "completed at least once" : "never synced", fsLine);
 
     // snprintf returns what it *would* have written: >= outSize means it truncated. Serve nothing
@@ -130,7 +130,7 @@ const char kDashboardControls[] =
     "</form>"
     "<p><a href='/config'>Re-provision / re-arm&hellip;</a></p>";
 
-const char kDashboardFoot[] = "</body></html>";
+const char kDashboardFoot[] = "</div></body></html>";
 
 bool maintenanceBackstopDue(uint32_t lastActivityMs, uint32_t nowMs) {
     // Unsigned wrap-safe: the elapsed interval is always < the 30-min bound << the ~49-day millis wrap.

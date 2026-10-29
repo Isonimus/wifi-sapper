@@ -16,6 +16,7 @@
 
 #include "net/provisioning.h"       // validateCredentials, CredentialError
 #include "net/provisioning_form.h"  // SetupFormModel, buildSetupForm, resolveProvisioningUpdate
+#include "net/portal_theme.h"       // slice-0098: the shared theme/wordmark the form carries
 
 using namespace sapper;
 
@@ -36,6 +37,28 @@ void setRecord(ProvisioningRecord& r, const char* ssid, const char* pass, const 
 }
 
 }  // namespace
+
+// --- slice-0098: the form carries the shared banner theme + wordmark in the head -------------------
+
+void test_form_carries_the_theme_and_wordmark_in_the_head(void) {
+    // Worst-case model (every "leave blank to keep" hint + maxed dim fields) must still render and fit the
+    // buffer with the theme + wordmark added. The exact field markup is pinned by the no-echo tests below;
+    // this pins that the brand assets are present and sit in <head>, before <body>.
+    SetupFormModel model = {};
+    model.hasStoredKey = model.hasStoredWebhook = model.hasStoredMaintenancePass = true;
+    model.screenDimAfterSec = model.screenOffAfterSec = 65535;
+    char html[kSetupFormBufSize];
+    TEST_ASSERT_GREATER_THAN(0u, buildSetupForm(model, html, sizeof(html)));
+    const char* css = std::strstr(html, kPortalThemeCss);
+    const char* svg = std::strstr(html, kPortalWordmarkSvg);
+    TEST_ASSERT_NOT_NULL(css);
+    TEST_ASSERT_NOT_NULL(svg);
+    // The CSS sits in <head> (before <body>); the wordmark is the visible page header (just after <body>).
+    const char* body = std::strstr(html, "<body");
+    TEST_ASSERT_NOT_NULL(body);
+    TEST_ASSERT_TRUE(css < body);
+    TEST_ASSERT_TRUE(svg > body);
+}
 
 // --- buildSetupForm: the checkbox state renders back -------------------------
 
@@ -300,6 +323,7 @@ void test_first_boot_takes_submission_verbatim_and_blank_key_fails(void) {
 
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_form_carries_the_theme_and_wordmark_in_the_head);
     RUN_TEST(test_checkboxes_reflect_model);
     RUN_TEST(test_stored_key_drops_required_and_hints_keep);
     RUN_TEST(test_absent_key_keeps_required);

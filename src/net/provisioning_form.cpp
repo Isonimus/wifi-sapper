@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "net/portal_theme.h"  // kPortalThemeCss, kPortalWordmarkSvg — the shared banner-matching look.
+
 namespace sapper {
 namespace {
 
@@ -37,8 +39,8 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
     const int written = std::snprintf(
         out, outSize,
         "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>WiFi Sapper setup</title></head><body>"
-        "<h2>WiFi Sapper setup</h2>"
+        "<title>WiFi Sapper setup</title>%s</head><body><div class='wrap'>%s"
+        "<h2>Device setup</h2>"
         "<form method='POST' action='/save'>"
         // A mobile keyboard autocapitalising/autocorrecting the SSID stores a wrong name (SSIDs are
         // case-sensitive, arbitrary text), which fails association as a silent credential error. The
@@ -68,7 +70,8 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "<p>Screen off after (seconds idle; 0 = dim only)<br>"
         "<input name='offAfter' type='number' min='0' max='65535' inputmode='numeric' value='%u'></p>"
         "<p><button type='submit'>Save &amp; reboot</button></p>"
-        "</form></body></html>",
+        "</form></div></body></html>",
+        kPortalThemeCss, kPortalWordmarkSvg,
         keyField, webhookPlaceholder, checkedAttr(model.notifyCracked), checkedAttr(model.notifyCaptured),
         checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed), maintPlaceholder,
         static_cast<unsigned>(model.screenDimAfterSec), static_cast<unsigned>(model.screenOffAfterSec));

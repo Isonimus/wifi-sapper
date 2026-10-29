@@ -13,6 +13,7 @@
 #include <cstring>
 
 #include "net/dashboard.h"
+#include "net/portal_theme.h"  // slice-0098: the shared theme/wordmark the head carries.
 
 using namespace sapper;
 
@@ -109,6 +110,34 @@ void test_row_html_escapes_a_crafted_essid(void) {
     TEST_ASSERT_NOT_NULL(std::strstr(out, "&#39;"));
 }
 
+// --- slice-0098: the banner theme + wordmark ride the head, never the per-row stream --------------
+
+void test_head_carries_the_theme_and_wordmark_in_the_head(void) {
+    DashboardStats stats = {};
+    char out[kDashboardHeadBufSize];
+    TEST_ASSERT_GREATER_THAN(0u, buildDashboardHead(stats, out, sizeof(out)));
+    // Both the theme CSS and the SVG wordmark are emitted in this one head chunk (not the per-row stream).
+    const char* css = std::strstr(out, kPortalThemeCss);
+    const char* svg = std::strstr(out, kPortalWordmarkSvg);
+    TEST_ASSERT_NOT_NULL(css);
+    TEST_ASSERT_NOT_NULL(svg);
+    // The CSS sits in <head> (before <body>); the wordmark is the visible page header (just after <body>).
+    const char* body = std::strstr(out, "<body");
+    TEST_ASSERT_NOT_NULL(body);
+    TEST_ASSERT_TRUE(css < body);
+    TEST_ASSERT_TRUE(svg > body);
+}
+
+void test_row_stream_carries_no_theme_bytes(void) {
+    // §4 #21: the up-to-256 result rows stream separately, so the heavy theme must NOT be re-emitted per
+    // row. A regression that moved the CSS/SVG into appendCrackedRow would blow the page size and fail here.
+    const CrackedResult r = makeResult("HomeNet", "correcthorsebattery");
+    char out[kDashboardRowBufSize];
+    TEST_ASSERT_GREATER_THAN(0u, appendCrackedRow(r, out, sizeof(out)));
+    TEST_ASSERT_NULL(std::strstr(out, "<style>"));
+    TEST_ASSERT_NULL(std::strstr(out, "<svg"));
+}
+
 // --- slice-0044 Scenario C: the controls are POST-gated for mutation -------------------------------
 
 void test_controls_expose_a_post_resume_and_a_config_link(void) {
@@ -176,6 +205,8 @@ int main(int, char**) {
     RUN_TEST(test_head_renders_the_reformat_breadcrumb);
     RUN_TEST(test_row_renders_essid_and_plaintext_psk);
     RUN_TEST(test_row_html_escapes_a_crafted_essid);
+    RUN_TEST(test_head_carries_the_theme_and_wordmark_in_the_head);
+    RUN_TEST(test_row_stream_carries_no_theme_bytes);
     RUN_TEST(test_controls_expose_a_post_resume_and_a_config_link);
     RUN_TEST(test_head_fails_loud_when_it_does_not_fit);
     RUN_TEST(test_row_fails_loud_when_it_does_not_fit);
