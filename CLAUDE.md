@@ -50,6 +50,12 @@ Every document is exactly one of four things.
   limitations (plaintext NVS at rest, the wpa-sec CA pin, private-CA webhooks, the verify-gate ESP-IDF
   blindness). Updated in the same change as any security-relevant behaviour; cited here so it is not
   orphaned (stele:ADR-0010).
+- **docs/on-air-proof-runbook.md** is a live document giving the bench operator's procedure for the
+  on-air proofs cloud CI cannot run (§4 #5): the slice-6 Scenario J cracked-download, the CYD sync leg
+  (which also exercises the ADR-0082 internal-heap manifest), and gate C's `markSubmitted` re-submit
+  suppression (ADR-0065). Each proof states its build recipe, run command, pass/fail serial markers, and
+  artifact. Updated in the same change as any verify script or serial marker it documents; cited here so
+  it is not orphaned (stele:ADR-0010).
 
 **Single writer, one direction.** An ADR records a deferral *once*, as a fact about that
 decision. `LEDGER.md` cites the ADR. **Never reach back into an ADR to close a ledger

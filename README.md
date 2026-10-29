@@ -217,7 +217,9 @@ verified in CI on each push (all four environments, both chip families). On-air 
 committed [`artifacts/`](artifacts/)) was produced on the **Cardputer reference target**; the other
 three boards have been brought up on hardware, but some of their per-board on-air proofs (photographic
 HUD/panel confirmation, the M5StickC Plus2 PSRAM boot, the CYD sync leg) are **pending** and tracked
-in [`LEDGER.md`](LEDGER.md). See [Security model and known limitations](#security-model-and-known-limitations).
+in [`LEDGER.md`](LEDGER.md). The bench procedure for the engine proofs (Scenario J, the CYD sync leg,
+gate-C re-submit suppression) is [`docs/on-air-proof-runbook.md`](docs/on-air-proof-runbook.md). See
+[Security model and known limitations](#security-model-and-known-limitations).
 
 **USB serial.** The two ESP32-S3 boards (Cardputer, T-embed) expose a **native USB-CDC / USB-Serial-JTAG**
 port, so they enumerate directly and do not reset when a serial monitor opens. The M5StickC Plus2 and the
