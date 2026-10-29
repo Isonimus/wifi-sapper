@@ -82,6 +82,9 @@ void uploadProbePump() {
     if (drains > g_lastDrainCount) {
         g_lastDrainCount = drains;
         const DrainOutcome& drain = huntLoopLastDrain();
+        // This format is kept IDENTICAL to the hunt loop's SerialEventLogger drain line (hunt_loop.cpp,
+        // ADR-0103): a drain renders the same `[UPLOAD] drain done` record whether this probe or the
+        // shipped-loop logger emits it. Edit both sites together (review-only, ADR-0103).
         Serial.printf("[UPLOAD] drain done associated=%d accepted=%u duplicate=%u rejected=%u "
                       "purged=%u skippedCracked=%u skippedSubmitted=%u storeErrors=%u "
                       "submittedStoreErrors=%u resumeFailed=%d\n",

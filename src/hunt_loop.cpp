@@ -148,8 +148,28 @@ public:
                 break;
             }
             case AppEventType::DrainStarted:
-            case AppEventType::DrainCompleted:
-                break;  // the LED surface consumes drain facts; this logger stays sync-only.
+                break;  // the LED surface consumes drain facts; the logger renders only a completed cycle.
+            case AppEventType::DrainCompleted: {
+#ifdef SAPPER_TEST_HOOKS
+                // Bench-only drain summary on the real hunt path (ADR-0103, gated per ADR-0101's single
+                // compile flag). Compiled out of the shipped image; present in a *_testhooks build so gate
+                // C's skippedSubmitted (ADR-0065 #30) is observable on the shipped loop and
+                // verify:serial-stimulus (scripts/0048) sees its awaited line. The format is kept
+                // IDENTICAL to upload_probe.cpp's drain line on purpose (ADR-0103): a drain renders the
+                // same record whether the probe or this logger emits it — keep the two in sync.
+                const DrainOutcome& d = *e.drain;
+                Serial.printf("[UPLOAD] drain done associated=%d accepted=%u duplicate=%u rejected=%u "
+                              "purged=%u skippedCracked=%u skippedSubmitted=%u storeErrors=%u "
+                              "submittedStoreErrors=%u resumeFailed=%d\n",
+                              d.associated, static_cast<unsigned>(d.accepted),
+                              static_cast<unsigned>(d.duplicate), static_cast<unsigned>(d.rejected),
+                              static_cast<unsigned>(d.purged), static_cast<unsigned>(d.skippedCracked),
+                              static_cast<unsigned>(d.skippedSubmitted),
+                              static_cast<unsigned>(d.storeErrors),
+                              static_cast<unsigned>(d.submittedStoreErrors), d.resumeFailed);
+#endif
+                break;
+            }
         }
     }
     const SyncOutcome& last() const { return last_; }

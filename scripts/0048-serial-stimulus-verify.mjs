@@ -5,8 +5,12 @@
  * Proves the runtime claim a unit test cannot: the SAPPER_TEST_HOOKS stimulus vocabulary, sent over
  * serial, drives the *shipped* hunt loop — not a bench probe. The board is flashed with a plain
  * cardputer_testhooks build (real WiFi + wpa-sec credentials, NO probe env set), so it boots normally
- * into runStationBoot → huntLoopBegin and hunts. This script then writes `inject-handshake\n` to the
- * port and asserts the loop drains the injected synthetic capture to wpa-sec and resumes hunting.
+ * into runStationBoot → huntLoopBegin and hunts. This script then writes `inject-handshake\n` (enqueue
+ * a synthetic capture through the real seam) followed by `force-sync\n` (open an STA window promptly
+ * rather than wait out the minutes-long drain ceiling) and asserts the loop drains the injected capture
+ * to wpa-sec and resumes hunting. The `[UPLOAD] drain done` summary it waits for is emitted by the
+ * shipped-loop logger only in a SAPPER_TEST_HOOKS build (ADR-0103, gated per ADR-0101); that same line
+ * is how gate C's skippedSubmitted becomes observable on the shipped hunt path.
  *
  * The parser-side guarantee — that this vocabulary is ABSENT from a shipped (non-hooks) build — is the
  * §4 #4 invariant and is proven on the always-run native lane (test/test_serial_command); this on-air
@@ -33,7 +37,9 @@ const ARTIFACT_PATH = `${ARTIFACT_DIR}/0048-serial-stimulus.txt`;
 // The device must first reach Ready (STA associate + NTP) before the stimulus can drain: give it a
 // generous window to be hunting, then a second window for the injected capture to drain.
 const READY_TIMEOUT_MS = 90000;
-const DRAIN_TIMEOUT_MS = 90000;
+// A single pending capture is below drainThreshold, so after force-sync the window still opens on the
+// sync cadence (syncRetryIntervalMs, up to ~60s if the boot sync just paced it). Give generous margin.
+const DRAIN_TIMEOUT_MS = 120000;
 
 const failures = [];
 const fail = (message) => failures.push(message);
@@ -52,7 +58,8 @@ async function resolvePort() {
 
 /**
  * A line-oriented view over the port. Remembers any fatal line, the [HUNT] "loop started" marker, the
- * [CMD] ack for the injected command, and the [UPLOAD] drain summary the supervisor prints.
+ * [CMD] ack for the injected command, and the [UPLOAD] drain summary the shipped-loop logger prints in a
+ * SAPPER_TEST_HOOKS build (ADR-0103).
  */
 class Channel {
   constructor(port) {
@@ -162,11 +169,25 @@ async function main() {
 
     // 2. Drive the *shipped* loop over serial — the point of this verify (ADR-0047).
     if (channel.hunting && !channel.fatalLine) {
-      console.log('hunt loop is up — sending `inject-handshake` over serial...');
+      // inject-handshake enqueues through the real capture-ready seam but does NOT open an STA window on
+      // its own (one capture is below drainThreshold, and the drain ceiling is minutes away). force-sync
+      // marks the cracked-results sync due so the next window opens and drains the pending capture
+      // (ADR-0103). Reset the drain/upload latches first so only a POST-stimulus drain that actually
+      // carries a wpa-sec result satisfies the wait, never a pre-stimulus boot-sync drain (empty queue).
+      channel.drainLine = null;
+      channel.uploadResult = null;
+      console.log('hunt loop is up — sending `inject-handshake` then `force-sync` over serial...');
       await write(port, 'inject-handshake\n');
+      await write(port, 'force-sync\n');
       await channel
-        .waitFor(() => channel.drainLine !== null || channel.fatalLine !== null, DRAIN_TIMEOUT_MS)
-        .catch((e) => fail(`no drain completed within ${DRAIN_TIMEOUT_MS}ms of the stimulus (${e.message})`));
+        .waitFor(
+          () =>
+            (channel.drainLine !== null && channel.uploadResult !== null) || channel.fatalLine !== null,
+          DRAIN_TIMEOUT_MS,
+        )
+        .catch((e) =>
+          fail(`no drain with an upload result within ${DRAIN_TIMEOUT_MS}ms of the stimulus (${e.message})`),
+        );
     }
 
     if (channel.fatalLine) fail(`device reported: ${channel.fatalLine}`);

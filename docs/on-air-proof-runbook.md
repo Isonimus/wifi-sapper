@@ -157,11 +157,19 @@ is therefore a genuine Accepted/Duplicate from the live service: run this where 
 network has an active client, or aim at a network wpa-sec already holds so the upload comes
 back **Duplicate** (the easiest deterministic trigger).
 
-Board: **cardputer_testhooks** with the **upload probe** active. The upload probe
-(`upload_probe.cpp`, active when `SAPPER_TEST_UPLOAD` is set) runs the *real* hunt and drain
-loop and prints a full drain-outcome line every cycle, which is the only build that surfaces
-the suppression counters on serial (the shipped loop keeps drain facts off the sync-only
-logger by ADR-0021; see "Related, currently blocked" below).
+Board: **cardputer_testhooks**. Two builds surface the drain-outcome counters on serial, and
+either proves gate C:
+
+- A **normally-booting** hooks build (no probe env): the shipped hunt loop's logger prints the
+  `[UPLOAD] drain done` line under `SAPPER_TEST_HOOKS` (ADR-0103, gated per ADR-0101's single
+  compile flag). This is the shipped-shaped path `verify:serial-stimulus` drives, what a field unit
+  actually does, with the counters compiled in for the bench, so it is the preferred build.
+- The **upload probe** (`upload_probe.cpp`, active when `SAPPER_TEST_UPLOAD` is set): also runs
+  the real hunt and drain loop and prints the same line every cycle, with a snappier re-drain
+  cadence (its recipe is below).
+
+Before ADR-0103 only the probe surfaced these counters (the shipped-loop logger kept drain facts
+off serial, ADR-0021); either build works now.
 
 **Build and flash:**
 
@@ -212,14 +220,13 @@ upload landed, so the gates correctly never suppressed). Repeat Proof 3 on
 close it, confirming no CYD-specific TLS/classification quirk returns Rejected on a clean
 upload.
 
-## Related, currently blocked
+## Related: `verify:serial-stimulus`
 
-`scripts/0048-serial-stimulus-verify.mjs` (`verify:serial-stimulus`, the §4 #4 on-air proof
-that the `SAPPER_TEST_HOOKS` stimulus vocabulary drives the *shipped* loop) cannot pass as
-written: it waits for a `[UPLOAD] drain done` line on a normally-booting hooks build, but that
-line is emitted only by the upload probe, not by the shipped hunt loop (which keeps drain
-facts off the serial logger, ADR-0021). Observing the shipped loop's drain outcome, and giving
-gate C a direct serial signal on a shipped-shaped build, needs a drain-summary line on the
-shipped path. That reverses the ADR-0021 decision, so it is an ADR-level change tracked in
-[`../LEDGER.md`](../LEDGER.md) and a natural companion to the reduced-logging (log-level)
-work. It is not required for the three proofs above.
+`scripts/0048-serial-stimulus-verify.mjs` (`verify:serial-stimulus`, the §4 #4 on-air proof that
+the `SAPPER_TEST_HOOKS` stimulus vocabulary drives the *shipped* loop) runs against a
+normally-booting hooks build: it sends `inject-handshake` then `force-sync` and waits for the
+shipped-loop `[UPLOAD] drain done` line that ADR-0103 added under the hooks flag. It was formerly
+blocked because that line existed only in the upload probe (ADR-0021 kept drain facts off the serial
+logger); ADR-0103 resolves it, and the same line is what gives Proof 3 a direct gate-C signal on the
+shipped-shaped build. It is a hardware-lane script (§4 #5), run on an attached board, never in cloud
+CI.
