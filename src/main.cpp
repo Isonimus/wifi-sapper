@@ -215,6 +215,11 @@ void startPortal(IDisplay* panel) {
         Serial.println("[FATAL] captive portal failed to start");
         return;
     }
+    // The setup page is served by the device's own SoftAP over plain HTTP on 192.168.4.1:80, and that
+    // is deliberate, not a downgrade: no CA issues a cert for a private AP IP, a self-signed one only
+    // trains operators past a browser warning, and OS captive-portal probes are HTTP. The real
+    // exposure (the provisioning POST is cleartext over the AP link, guarded only by the SoftAP WPA2)
+    // is documented in docs/security-model.md. CodeQL cpp/non-https-url is a false positive here.
     char url[32];
     std::snprintf(url, sizeof(url), "http://%s/", WiFi.softAPIP().toString().c_str());
     char banner[96];

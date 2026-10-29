@@ -65,7 +65,11 @@ decision with a threat model, not a gap to "fix":
   device raises `Sapper-XXXX` with the published passphrase `sapper-setup` so a freshly flashed
   device can be reached with no prior secret. Anyone in range during provisioning could join it;
   provision somewhere you control, and note that the no-echo guarantee above still means a joiner
-  cannot read an already-stored secret.
+  cannot read an already-stored secret. The setup page itself is served over **plain HTTP** (a
+  captive portal on a private access-point IP cannot be HTTPS), so the WiFi passphrase and wpa-sec key
+  you submit travel in clear over the setup link, protected only by that SoftAP's WPA2: a further
+  reason to provision somewhere you control. This is why a CodeQL `cpp/non-https-url` finding on the
+  portal URL is expected and dismissed, not a defect.
 
 ## Known limitations
 
