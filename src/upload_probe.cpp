@@ -83,16 +83,24 @@ void uploadProbePump() {
         g_lastDrainCount = drains;
         const DrainOutcome& drain = huntLoopLastDrain();
         Serial.printf("[UPLOAD] drain done associated=%d accepted=%u duplicate=%u rejected=%u "
-                      "purged=%u storeErrors=%u resumeFailed=%d\n",
+                      "purged=%u skippedCracked=%u skippedSubmitted=%u storeErrors=%u "
+                      "submittedStoreErrors=%u resumeFailed=%d\n",
                       drain.associated, static_cast<unsigned>(drain.accepted),
                       static_cast<unsigned>(drain.duplicate), static_cast<unsigned>(drain.rejected),
-                      static_cast<unsigned>(drain.purged), static_cast<unsigned>(drain.storeErrors),
+                      static_cast<unsigned>(drain.purged),
+                      static_cast<unsigned>(drain.skippedCracked),
+                      static_cast<unsigned>(drain.skippedSubmitted),
+                      static_cast<unsigned>(drain.storeErrors),
+                      static_cast<unsigned>(drain.submittedStoreErrors),
                       drain.resumeFailed);
         if (!drain.associated) {
             Serial.println("[ERROR] drain could not associate — check WiFi/NTP");
-        } else if (drain.accepted + drain.duplicate + drain.rejected == 0) {
-            Serial.println("[ERROR] station associated but no upload was attempted");
         }
+        // Whether "associated but no upload" is a fault is scenario-specific: a gate-A/C skip (ADR-0059 /
+        // ADR-0065 #27/#30) drops the capture, so the next drain is legitimately empty. The verify SCRIPT
+        // asserts its own expectation (verify:upload wants a wpa-sec result; a gate-C run wants
+        // skippedSubmitted), so the probe reports the counts above and flags only the one unconditional
+        // fault (failing to associate), never editorialising on an empty or fully-suppressed drain.
         // A capture accepted/duplicate is deleted, emptying the queue; re-inject so the next drain is
         // still observable (a real handshake then re-uploads as duplicate on a steady cadence). A
         // rejected synthetic stays queued and re-drains on its own, so this only fires for the real case.

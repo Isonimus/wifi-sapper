@@ -238,6 +238,10 @@ constexpr uint32_t kDeauthHeartbeatMs = 2000;
 bool g_deauthArmed = false;
 uint32_t g_deauthHbDueMs = 0;
 
+// Edge-tracks the supervisor's drain counter so a submitted-store flush failure (ADR-0065 #3) is logged
+// loud once per failing drain, not re-logged every pump (§3 fail-loud, without the spam).
+uint32_t g_lastLoggedDrainCount = 0;
+
 #ifdef SAPPER_TEST_HOOKS
 // A synthetic wpa-sec-valid handshake (beacon + M1 + M2) for the on-air verify's stimulus, built with
 // the same minimal frames the native tests use so serializeHandshake emits a well-formed pcap. It is
@@ -480,6 +484,17 @@ void huntLoopPump() {
     g_submitted.setVerificationClock(nowEpoch);
     g_engine->tick(now);
     g_supervisor->tick(now);   // publishes DrainStarted/DrainCompleted (and runs a due sync) onto the bus.
+    // Fail loud on a submitted-store flush failure (§3, ADR-0065 #3): rare and not a cycle failure (the
+    // uploads already landed, nothing to retry), but never silent, since a just-submitted BSSID may
+    // re-upload next cycle. The supervisor itself does no serial I/O (it stays host-testable), so its
+    // DrainOutcome becomes loud here, edge-gated on a new drain so a steady failure is logged once.
+    const uint32_t drainCount = g_supervisor->drainCount();
+    if (drainCount != g_lastLoggedDrainCount) {
+        g_lastLoggedDrainCount = drainCount;
+        if (g_supervisor->lastDrain().submittedStoreErrors > 0) {
+            Serial.println("[ERROR] submitted-store flush failed; a landed upload may re-upload next cycle");
+        }
+    }
     g_ledSurface.tick(now);    // after the supervisor, so a status published this iteration shows now.
     if (g_screen != nullptr) g_screen->tick(now);  // likewise: render any status change this iteration.
     // Battery diagnostic (ADR-0091): emit `[BATT] mv=.. level=..` on each bucket change, the

@@ -89,8 +89,10 @@ struct DrainOutcome {
                                  ///< resolved like a purge, so it is not counted as an upload error.
     size_t storeErrors = 0;    ///< Removes that could not complete — a purge or post-upload delete that
                                ///< failed, leaving the entry stuck (fail loud — §3; keeps the cycle dirty).
-    size_t submittedStoreErrors = 0; ///< A flushSubmitted() that failed (ADR-0065 #3) — surfaced loud but
-                                     ///< NOT a cycle failure: the uploads already landed, nothing to retry.
+    size_t submittedStoreErrors = 0; ///< A flushSubmitted() that failed (ADR-0065 #3). Logged loud by the
+                                     ///< caller (a shipped [ERROR] from huntLoopPump, and the verify probe's
+                                     ///< drain line), but NOT a cycle failure: the uploads already landed, so
+                                     ///< there is nothing to retry.
     bool resumeFailed = false; ///< The engine could not re-enter promiscuous mode after the drain.
 };
 
