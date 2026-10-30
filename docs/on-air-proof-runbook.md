@@ -213,12 +213,15 @@ terminal Accepted/Duplicate (suppression not engaging).
 
 ### The CYD variant
 
-The same gate-C question is open specifically on the CYD (LEDGER: confirm suppression engages
-on the CYD with a reachable uplink, after a 2026-10-27 session where a weak uplink meant no
-upload landed, so the gates correctly never suppressed). Repeat Proof 3 on
-**cyd_3248s035c_testhooks** (explicit `$SAPPER_PORT=/dev/ttyUSB0`) in a strong-uplink spot to
-close it, confirming no CYD-specific TLS/classification quirk returns Rejected on a clean
-upload.
+The same gate-C question was once open specifically on the CYD (a 2026-10-27 session where a
+weak uplink meant no upload landed, so the gates correctly never suppressed). **Proven on the
+CYD 2026-10-30** on **cyd_3248s035c_testhooks** (explicit `$SAPPER_PORT=/dev/ttyUSB0`) in a
+strong-uplink spot: a natural client handshake uploaded `accepted` (`respBytes=4574` classified
+clean, no Rejected), `[UPLOAD] drain done associated=1 accepted=1 ... submittedStoreErrors=0`
+showed `markSubmitted` landing and flushing without error, and across the following drain cycles
+that BSSID was neither re-uploaded nor re-targeted (`associated=0`, no further `wpa-sec result=`
+line) so suppression engaged behaviourally. No CYD-specific TLS/classification quirk. To re-run,
+repeat Proof 3 against a fresh authorized network in a strong-uplink spot.
 
 ## Related: `verify:serial-stimulus`
 
