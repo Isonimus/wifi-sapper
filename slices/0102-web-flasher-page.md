@@ -194,3 +194,22 @@ Deviations from the design: none of substance. The design said "vendor glitch-js
 version"; the confirmed-latest turned out to be 2.2.0 rather than the parent's 2.0.0, vendored after
 confirming `Effects.rgbSplit`'s option names are unchanged. The repo slug is `Isonimus/wifi-sapper` (not
 `esp32-wifi-sapper`), so all page/README links and the Pages URL use that.
+
+## Amendment — 2026-10-30: remote verification observed; slice frozen
+
+The three remote acts the `## As built` section left to the operator are now observed with the `v0.1.0`
+release, so this slice is **frozen** (this supersedes the "not yet frozen" note above):
+
+1. **Pages enabled** (Source = GitHub Actions). `pages.yml` deploys `web/` through the `github-pages`
+   environment (two deployments recorded, latest status `success`). Confirmed serving same-origin over
+   HTTPS: the index (`200`), each `web/manifest-<env>.json` (`200`), and the factory `.bin` (`200`).
+2. **The release cascade works end-to-end.** The `v0.1.0` tag built all four boards (each past the
+   ADR-0095 dio brick-guard), published the four stable `sapper-<env>-factory.bin` assets plus the
+   versioned app/factory images and `SHA256SUMS.txt`, flipped draft→Latest, and the dispatched
+   `workflow_dispatch` Pages redeploy (`success`) refreshed the served binaries.
+3. **All four boards flashed from the live page** in desktop Chrome over Web Serial and booted their
+   firmware (into the captive setup portal, since install erases provisioning). Field notes for the next
+   flasher: the Cardputer reported esp-web-tools "Failed to initialise" until put into ROM download mode
+   manually (hold BOOT, tap RESET, release) before clicking INSTALL; the CYD did not enumerate at all
+   until moved to its data-side USB connector (the C-variant has two USB ports and only one carries the
+   CH340 data lines, the other is power-only).
