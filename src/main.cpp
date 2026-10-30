@@ -34,6 +34,7 @@
 #include "net/provisioning_store.h"
 #include "net/wifi_station.h"
 #include "surface/wordmark.h"
+#include "surface/boot_face_layout.h"
 #include "deauth_probe.h"
 #include "hunt_loop.h"
 #include "hunt_probe.h"
@@ -92,13 +93,20 @@ constexpr uint16_t kCyan = 0x07FF;  // the banner's tagline hue (slice-0097).
 // now a bench probe (panel_probe, SAPPER_TEST_PANEL) so no shipped build renders the test pattern.
 void drawSplashFrame(IDisplay& d) {
     d.fillScreen(kBlack);
+    // Resolution-aware (slice-0104): the title block is vertically centred from the panel height and the
+    // fonts come from the per-size tier, so the splash fills a large panel instead of the old top-left
+    // 240x135 corner. Do not restore the hardcoded coordinates: this one path serves four panels.
+    const BootFaceLayout& layout = bootFaceLayoutFor(static_cast<int32_t>(d.height()));
+    const int32_t titleY = static_cast<int32_t>(d.height()) / 2 - layout.titleSize * kGlyphH;
+    const int32_t versionY = titleY + layout.titleSize * kGlyphH + layout.lineGap;
+    const int32_t taglineY = versionY + layout.lineGap;
     // The product wordmark: white glyphs over a banner-magenta drop shadow (slice-0097); the tagline in the
     // banner's cyan. The version line stays plain white.
-    drawWordmark(d, 8, 40, "WiFi Sapper", 3);
+    drawWordmark(d, layout.margin, titleY, "WiFi Sapper", layout.titleSize);
     char versionLine[24];
     std::snprintf(versionLine, sizeof(versionLine), "v%s", kFirmwareVersion);
-    d.drawText(8, 78, versionLine, kWhite, 1);
-    d.drawText(8, 96, "autonomous handshake hunter", kCyan, 1);
+    d.drawText(layout.margin, versionY, versionLine, kWhite, layout.bodySize);
+    d.drawText(layout.margin, taglineY, "autonomous handshake hunter", kCyan, layout.bodySize);
 }
 
 // The live boot phase. main.cpp owns it; SerialChannel reads it by reference so `[STATE]` always
@@ -176,14 +184,19 @@ bool maintenanceRequested() {
 /// AP passphrase on the dashboard (the security symmetry of decision 6). A NullDisplay makes it a no-op.
 void drawMaintenanceScreen(IDisplay& d, const char* ssid, const char* url, size_t recovered) {
     d.fillScreen(kBlack);
-    d.drawText(4, 2, "MAINTENANCE", kWhite, 2);
+    // Resolution-aware (slice-0104): top-aligned title then body slots at the per-tier line pitch; body
+    // slot 3 is skipped so the "power-cycle" hint sits below the connection block with a visual gap.
+    const BootFaceLayout& layout = bootFaceLayoutFor(static_cast<int32_t>(d.height()));
+    const int32_t bodyTop = layout.bodyTop();
+    d.drawText(layout.margin, layout.margin, "MAINTENANCE", kWhite, layout.titleSize);
     char line[40];
     std::snprintf(line, sizeof(line), "AP: %s", ssid);
-    d.drawText(4, 30, line, kWhite, 1);
-    d.drawText(4, 44, url, kWhite, 1);
+    d.drawText(layout.margin, bodyTop, line, kWhite, layout.bodySize);
+    d.drawText(layout.margin, bodyTop + layout.lineGap, url, kWhite, layout.bodySize);
     std::snprintf(line, sizeof(line), "%zu recovered", recovered);
-    d.drawText(4, 62, line, kGreen, 1);
-    d.drawText(4, 84, "power-cycle to resume hunting", kWhite, 1);
+    d.drawText(layout.margin, bodyTop + 2 * layout.lineGap, line, kGreen, layout.bodySize);
+    d.drawText(layout.margin, bodyTop + 4 * layout.lineGap, "power-cycle to resume hunting", kWhite,
+               layout.bodySize);
 }
 
 // The first-boot provisioning instructions on a board with a panel (ADR-0089, refining §4 #22's
@@ -192,20 +205,24 @@ void drawMaintenanceScreen(IDisplay& d, const char* ssid, const char* url, size_
 // shown is the fixed PUBLIC default kSoftApPassword, not a per-device secret, so putting it on the
 // shoulder-surfable panel leaks nothing — the deliberate opposite of §4 #21's per-device Maintenance
 // PSKs, which stay OFF the panel; do not "fix" this by hiding the default password. A NullDisplay makes
-// every call a no-op (ADR-0045). Fixed-coordinate like its splash/Maintenance siblings; a resolution-
-// aware pass over all three boot faces is deferred (LEDGER).
+// every call a no-op (ADR-0045). Resolution-aware across three panel tiers like its splash/Maintenance
+// siblings (slice-0104, bootFaceLayoutFor); body slot 5 (the url) is the tallest boot-face line, which the
+// header static_asserts stays on each tier's design panel.
 void drawProvisioningScreen(IDisplay& d, const char* ssid, const char* password, const char* url) {
     d.fillScreen(kBlack);
-    d.drawText(4, 2, "SAPPER SETUP", kWhite, 2);
+    const BootFaceLayout& layout = bootFaceLayoutFor(static_cast<int32_t>(d.height()));
+    const int32_t bodyTop = layout.bodyTop();
+    d.drawText(layout.margin, layout.margin, "SAPPER SETUP", kWhite, layout.titleSize);
     char line[48];
-    d.drawText(4, 28, "1. Join WiFi:", kWhite, 1);
+    d.drawText(layout.margin, bodyTop, "1. Join WiFi:", kWhite, layout.bodySize);
     std::snprintf(line, sizeof(line), "   %s", ssid);
-    d.drawText(4, 42, line, kGreen, 1);
+    d.drawText(layout.margin, bodyTop + layout.lineGap, line, kGreen, layout.bodySize);
     std::snprintf(line, sizeof(line), "   pass: %s", password);
-    d.drawText(4, 56, line, kGreen, 1);
-    d.drawText(4, 78, "2. Open in browser:", kWhite, 1);
+    d.drawText(layout.margin, bodyTop + 2 * layout.lineGap, line, kGreen, layout.bodySize);
+    // Slot 3 skipped: a visual gap before step 2.
+    d.drawText(layout.margin, bodyTop + 4 * layout.lineGap, "2. Open in browser:", kWhite, layout.bodySize);
     std::snprintf(line, sizeof(line), "   %s", url);
-    d.drawText(4, 92, line, kGreen, 1);
+    d.drawText(layout.margin, bodyTop + 5 * layout.lineGap, line, kGreen, layout.bodySize);
 }
 
 void startPortal(IDisplay* panel) {
