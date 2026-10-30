@@ -15,13 +15,9 @@
 
 #include <cstdint>
 
-namespace sapper {
+#include "surface/glyph_metrics.h"  // kGlyphH — shared with both HUD renderers (rule-of-three, §3).
 
-// The default LovyanGFX font glyph box height at scale 1. Duplicated file-locally as kGlyphH in both HUD
-// renderers (screen_renderer_esp32.cpp, direct_panel_screen_renderer.cpp); this is the THIRD site, which
-// trips the rule of three. A shared glyph_metrics.h extraction is deferred (LEDGER) rather than scope-crept
-// into this cosmetic slice and forced through the two frozen renderers; only the height is needed here.
-constexpr int32_t kGlyphH = 8;
+namespace sapper {
 
 /**
  * @brief Shared layout primitives for a boot face, selected per panel size (slice-0104).

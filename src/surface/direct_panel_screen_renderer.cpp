@@ -14,6 +14,7 @@
 #include <cstring>
 
 #include "config/firmware_version.h"  // kFirmwareVersion — the single version source the splash + sprite HUD use.
+#include "surface/glyph_metrics.h"     // kGlyphW/kGlyphH — shared 6x8 default-font box (rule-of-three, §3).
 #include "surface/wordmark.h"          // drawWordmark — the shared product wordmark (slice-0097).
 
 namespace sapper {
@@ -33,9 +34,8 @@ constexpr uint16_t kDim = 0x8410;   // grey for a not-yet-happened field (no syn
 
 // Layout for the 480x320 landscape panel (rotation 1, slice-0085). Candidate values, photo-tuned on the
 // physical panel (ADR-0002 §5 / ADR-0086 decision 5); the region-repaint logic is the invariant, not these.
-// The default LovyanGFX glyph is ~6x8 px at size 1, so a field at integer `size` is 6*size wide, 8*size tall.
-constexpr int32_t kGlyphW = 6;
-constexpr int32_t kGlyphH = 8;
+// kGlyphW/kGlyphH (the 6x8 default-font box) come from surface/glyph_metrics.h; extracting them is
+// byte-identical at runtime, so ADR-0086 decision 1's no-re-verification guarantee for this frozen renderer holds.
 constexpr int32_t kMargin = 10;
 
 constexpr int32_t kTitleY = 12;

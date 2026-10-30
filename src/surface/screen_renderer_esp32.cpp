@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "config/firmware_version.h"  // kFirmwareVersion — the single version source the splash uses too.
+#include "surface/glyph_metrics.h"     // kGlyphW/kGlyphH — shared 6x8 default-font box (rule-of-three, §3).
 #include "surface/wordmark.h"          // drawWordmark — the shared product wordmark (slice-0097).
 
 namespace sapper {
@@ -25,11 +26,10 @@ constexpr uint16_t kRed = 0xF800;
 constexpr uint16_t kCyan = 0x07FF;  // the live-hunt SCAN line (ADR-0033).
 constexpr uint16_t kDim = 0x8410;   // grey for a not-yet-happened field (e.g. no sync yet, an absent M-frame).
 
-// The default LovyanGFX glyph is ~6x8 px at size 1, so a field at integer `size` is 6*size wide, 8*size
-// tall. Used to lay out rows and to position the version string after the product name without a
-// textWidth() the seam does not expose (the on-air photo is the eyeball proof, ADR-0025).
-constexpr int32_t kGlyphW = 6;
-constexpr int32_t kGlyphH = 8;
+// kGlyphW/kGlyphH (the 6x8 default-font box) now come from surface/glyph_metrics.h; extracting them is
+// byte-identical at runtime, so ADR-0086 decision 1's no-re-verification guarantee for this frozen renderer
+// holds (only the definition site moved). They lay out rows and position the version string after the
+// product name without a textWidth() the seam does not expose (the on-air photo is the proof, ADR-0025).
 constexpr int32_t kDotPadY = 2;  // the heartbeat square sits a touch below the status baseline.
 
 const char kTitleName[] = "WiFi Sapper";
