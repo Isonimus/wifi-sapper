@@ -168,12 +168,18 @@ you can join and read them — otherwise anyone in radio range who knows the def
 ## Normal operation
 
 Once provisioned, the Sapper reboots, joins the network, syncs its clock over NTP, and then **hunts
-continuously with no further interaction**: it hops channels, discovers access points, captures
-WPA/WPA2 4-way handshakes, and auto-uploads each new capture to wpa-sec. Once an hour it downloads
-cracked results and announces any newly recovered password. It never stops on its own — a failed
-upload or sync is retried, and a network it cannot reach drops it back to the setup portal after a
-few attempts (see [Re-provisioning](#re-provisioning)). If **deauth is armed**, it also broadcasts
-deauth frames at discovered APs to force handshakes (authorized environments only).
+continuously with no further interaction**: it sweeps the full 2.4 GHz band (channels **1-13**),
+discovers access points, captures WPA/WPA2 4-way handshakes, and auto-uploads each new capture to
+wpa-sec. Once an hour it downloads cracked results and announces any newly recovered password. It
+never stops on its own — a failed upload or sync is retried, and a network it cannot reach drops it
+back to the setup portal after a few attempts (see [Re-provisioning](#re-provisioning)). If **deauth
+is armed**, it also broadcasts deauth frames at discovered APs to force handshakes (authorized
+environments only).
+
+> **Regulatory note:** to reach channels 12-13 (standard under ETSI, i.e. most of Europe) the device
+> pins its Wi-Fi regulatory domain to the full 1-14 channel set, so it **transmits on channels 12-14
+> regardless of its physical location** (ADR-0107). Operating it where those channels are not
+> permitted is the operator's responsibility, as with arming deauth.
 
 You can see what it is doing three ways, in increasing detail:
 

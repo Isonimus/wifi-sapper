@@ -11,6 +11,8 @@
 
 #include <atomic>
 
+#include "net/wifi_regulatory.h"  // applyFullChannelRegulatory (§4 #44)
+
 namespace sapper {
 namespace {
 
@@ -49,6 +51,12 @@ bool Esp32RadioSniffer::begin(uint8_t channel, FrameConsumer& consumer) {
     // role that leaves the radio free to listen. We never connect — this only sniffs.
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
+
+    // Re-apply the full 1-14 regulatory domain now the driver is up (§4 #44, ADR-0107): WiFi.mode reset
+    // the country to the 1-11 default, so without this the setChannel below (and every hop onto 12-13)
+    // would be rejected and those APs silently missed. This runs on every hunt resume: the upload
+    // supervisor stops then re-begin()s the engine around each STA window.
+    applyFullChannelRegulatory();
 
     // A radio-level filter, not code: deliver only management (beacons) and data (EAPOL) frames, so
     // the callback never even sees control frames (ADR-0011 decision #2, keeping §4 invariant #8).

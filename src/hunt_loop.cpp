@@ -23,6 +23,7 @@
 #include "net/cracked_manifest.h"
 #include "net/cracked_store_littlefs.h"
 #include "net/cracked_sync.h"
+#include "net/channel_hopper.h"  // kShippedHopChannels / kShippedHopChannelCount (the shipped sweep)
 #include "net/hunt_engine.h"
 #include "net/submitted_manifest.h"
 #include "net/submitted_store_littlefs.h"
@@ -51,9 +52,9 @@
 namespace sapper {
 namespace {
 
-// The shipped sweep: the three non-overlapping 2.4 GHz channels most APs sit on, so a cycle is quick
-// and covers the common case. A fuller 1-13 sweep is a later tuning decision (LEDGER), not a floor.
-uint8_t g_hopChannels[3] = {1, 6, 11};
+// The shipped sweep is the full 2.4 GHz band 1-13 (ADR-0107, kShippedHopChannels): an AP beacons on its
+// own channel, so the former 1/6/11 sweep silently missed every AP elsewhere, including ETSI ch12-13.
+// Reaching ch12-13 on device needs the regulatory domain re-applied per bring-up (§4 #44).
 
 // The spine, file-scope so it lives for the device's whole run. Order matters: the relay is built
 // before the engine (which observes it) and the supervisor (which the relay targets), resolving the
@@ -379,8 +380,8 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     // null transmitter -> the pre-0029 passive hunt. Built before the supervisor, which holds it by ref.
     g_deauthArmed = g_creds.deauthEnabled;
     g_engine = new (g_engineStorage)
-        HuntEngine(g_sniffer, g_registry, g_relay, g_hopChannels, 3, HuntConfig{},
-                   g_deauthArmed ? &g_rawTx : nullptr);
+        HuntEngine(g_sniffer, g_registry, g_relay, kShippedHopChannels, kShippedHopChannelCount,
+                   HuntConfig{}, g_deauthArmed ? &g_rawTx : nullptr);
     g_station = new (g_stationStorage) Esp32StationControl(g_creds.ssid, g_creds.pass);
     g_sync = new (g_syncStorage) CrackedSync(g_fetcher, *g_manifest, g_creds.key, g_bus);
     g_session = new (g_sessionStorage) ScheduledSyncSession(g_scheduler, *g_sync);
@@ -487,7 +488,7 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     if (g_screen != nullptr) g_screen->begin(millis());  // draw the initial HUD on the panel.
     if (g_screenSleep != nullptr) g_screenSleep->begin(millis());  // light the panel full, seed the idle timer.
     g_running = true;
-    Serial.println("[HUNT] discovering channels=1,6,11 (shipped hunt+upload+sync loop)");
+    Serial.println("[HUNT] discovering channels=1-13 (shipped hunt+upload+sync loop)");
     return true;
 }
 

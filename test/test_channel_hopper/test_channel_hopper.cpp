@@ -74,6 +74,20 @@ void test_single_channel_sweep_hops_onto_itself(void) {
     TEST_ASSERT_EQUAL_UINT8(6, hopper.currentChannel());
 }
 
+void test_shipped_sweep_is_the_full_band_1_to_13(void) {
+    // ADR-0107: the shipped autonomous hunt sweeps the full 2.4 GHz band 1-13 (not the former 1/6/11, which
+    // silently missed every AP on another channel, incl. ETSI ch12-13). Pin the exact list so a revert to a
+    // narrower set fails here; ch14 is deliberately omitted (802.11b/Japan-only). A real ChannelHopper over
+    // it starts on ch1 and reports the full count, proving the constant is a usable sweep, not just a blob.
+    TEST_ASSERT_EQUAL_UINT(13, kShippedHopChannelCount);
+    for (size_t i = 0; i < kShippedHopChannelCount; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(i + 1), kShippedHopChannels[i]);
+    }
+    ChannelHopper hopper(kShippedHopChannels, kShippedHopChannelCount, kDwellMs);
+    TEST_ASSERT_EQUAL_UINT8(1, hopper.currentChannel());
+    TEST_ASSERT_EQUAL_UINT32(13, hopper.channelCount());
+}
+
 void test_reset_reparks_on_first_channel(void) {
     ChannelHopper hopper(kChannels, 3, kDwellMs);
     hopper.reset(0);
@@ -94,5 +108,6 @@ int main(int, char**) {
     RUN_TEST(test_dwell_measured_from_last_hop_not_start);
     RUN_TEST(test_single_channel_sweep_hops_onto_itself);
     RUN_TEST(test_reset_reparks_on_first_channel);
+    RUN_TEST(test_shipped_sweep_is_the_full_band_1_to_13);
     return UNITY_END();
 }

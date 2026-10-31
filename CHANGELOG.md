@@ -12,6 +12,13 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+- **The hunt now sweeps the whole 2.4 GHz band (channels 1-13), not just 1/6/11.** An access point
+  beacons on its own channel, so the former three-channel sweep silently missed every network on any other
+  channel, including channels 12-13 which are standard under ETSI (most of Europe). The device now pins its
+  Wi-Fi regulatory domain to the full 1-14 set and re-applies it on every Wi-Fi bring-up (the stack resets
+  it to a restrictive 1-11 default each time), so it can tune to and associate on 12-13. As a consequence
+  it transmits on channels 12-14 regardless of location, the operator's responsibility like arming deauth.
+  (ADR-0107; carries the sibling Adversary repo's regulatory-domain fix)
 - **Leave the Wi-Fi fields blank to keep your current network when re-provisioning.** The setup form
   (first-boot, STA-fail fallback, and the Maintenance `/config` editor) now treats the SSID + passphrase
   like the other stored fields: leave the network name blank to keep the current Wi-Fi, so a light-touch

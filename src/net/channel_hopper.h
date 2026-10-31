@@ -18,6 +18,15 @@ namespace sapper {
 /// The most channels a single sweep can hold: the full 2.4 GHz set (1-14) with headroom is 14.
 constexpr size_t kMaxHopChannels = 14;
 
+/// The channel list the shipped autonomous hunt sweeps: the full 2.4 GHz band 1-13 (ADR-0107). An AP
+/// beacons on its own channel, so a hunter that visited only 1/6/11 silently missed every AP on another
+/// channel, including ch12-13 which are standard under ETSI (most of Europe). Ch14 is omitted: it is
+/// 802.11b-only and Japan-only and carries no modern APs, so a dwell there is wasted. A named constant so
+/// the coverage is greppable and host-pinned (test_channel_hopper) against a silent revert to a narrower
+/// set; reaching ch12-13 on device also requires the regulatory domain re-applied per bring-up (§4 #44).
+constexpr uint8_t kShippedHopChannels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
+constexpr size_t kShippedHopChannelCount = sizeof(kShippedHopChannels) / sizeof(kShippedHopChannels[0]);
+
 /**
  * @brief Cycles a channel index on a fixed dwell, driven by a caller-supplied clock.
  *

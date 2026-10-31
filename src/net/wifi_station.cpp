@@ -11,6 +11,8 @@
 
 #include <ctime>
 
+#include "net/wifi_regulatory.h"  // applyFullChannelRegulatory (§4 #44)
+
 namespace sapper {
 namespace {
 
@@ -38,6 +40,11 @@ constexpr time_t kMinValidEpoch = 1577836800;
 
 bool connectStation(const char* ssid, const char* pass, BootTick tick) {
     WiFi.mode(WIFI_STA);
+    // Re-apply the full 1-14 regulatory domain before associating (§4 #44, ADR-0107): WiFi.mode reset the
+    // country to the 1-11 default, and the configured uplink itself may be on ch12-13 (standard under
+    // ETSI). This is the common STA path for both the boot connect and the upload/sync window, so one call
+    // here covers both bring-ups.
+    applyFullChannelRegulatory();
     WiFi.begin(ssid, pass);
 
     const uint32_t start = millis();
