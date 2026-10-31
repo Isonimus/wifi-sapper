@@ -10,6 +10,12 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ---
 
+## Unreleased
+
+- **The web flasher has a favicon.** The browser tab now shows the WiFi Sapper signal glyph (cyan
+  arcs rising from a magenta emitter dot) as a scalable SVG, echoing the logo and the on-device HUD,
+  instead of the browser's blank-page default.
+
 ## 2026-10-31 (v0.2.0)
 
 - **The M5Stack Atom Echo is a supported board.** A fifth target joins the lineup, headless: the

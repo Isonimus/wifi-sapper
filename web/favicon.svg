@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="WiFi Sapper">
+  <!-- Favicon: the WiFi-signal glyph from the logo and the on-device HUD. Palette from
+       index.html: cyan structure (#28e6ff) on the dark panel (#0d1422), with magenta
+       (#ff3cf0) reserved for the single live element (the emitter dot), as on the boards. -->
+  <rect width="32" height="32" rx="7" fill="#0d1422"/>
+  <g fill="none" stroke="#28e6ff" stroke-width="2.4" stroke-linecap="round">
+    <path d="M13.17 20.17 A4 4 0 0 1 18.83 20.17"/>
+    <path d="M10.34 17.34 A8 8 0 0 1 21.66 17.34"/>
+    <path d="M7.51 14.51 A12 12 0 0 1 24.49 14.51"/>
+  </g>
+  <circle cx="16" cy="23" r="2.4" fill="#ff3cf0"/>
+</svg>
