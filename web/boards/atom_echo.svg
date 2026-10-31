@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" role="img" aria-label="M5Stack Atom Echo">
+  <!-- rounded cube body -->
+  <rect x="52" y="22" width="96" height="96" rx="16" fill="#0d1422" stroke="#28e6ff" stroke-width="2"/>
+  <!-- the whole top is one big button: wider and shorter, legs to the top edge, arch at the bottom bulging up -->
+  <path d="M80 34 L80 72 A20 20 0 0 0 120 72 L120 34" fill="none" stroke="#28e6ff" stroke-width="1.6"/>
+  <!-- programmable RGB LED, inside the button -->
+  <circle cx="100" cy="44" r="7" fill="none" stroke="#ff3cf0" stroke-width="1.6" opacity="0.5"/>
+  <circle cx="100" cy="44" r="3" fill="#ff3cf0"/>
+  <!-- mic / speaker grille, lower centre -->
+  <g fill="#4f6b78">
+    <circle cx="84" cy="99" r="1.8"/><circle cx="92" cy="99" r="1.8"/><circle cx="100" cy="99" r="1.8"/><circle cx="108" cy="99" r="1.8"/><circle cx="116" cy="99" r="1.8"/>
+    <circle cx="80" cy="105" r="1.8"/><circle cx="88" cy="105" r="1.8"/><circle cx="96" cy="105" r="1.8"/><circle cx="104" cy="105" r="1.8"/><circle cx="112" cy="105" r="1.8"/><circle cx="120" cy="105" r="1.8"/>
+    <circle cx="84" cy="111" r="1.8"/><circle cx="92" cy="111" r="1.8"/><circle cx="100" cy="111" r="1.8"/><circle cx="108" cy="111" r="1.8"/><circle cx="116" cy="111" r="1.8"/>
+  </g>
+  <!-- side slots, two per edge -->
+  <g fill="#4f6b78">
+    <rect x="50" y="50" width="8" height="3" rx="1.5"/>
+    <rect x="50" y="58" width="8" height="3" rx="1.5"/>
+    <rect x="142" y="50" width="8" height="3" rx="1.5"/>
+    <rect x="142" y="58" width="8" height="3" rx="1.5"/>
+  </g>
+</svg>

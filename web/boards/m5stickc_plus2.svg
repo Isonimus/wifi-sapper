@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" role="img" aria-label="M5StickC Plus2">
+  <defs>
+    <!-- shared WiFi Sapper mini-HUD, scaled to fit each board's screen -->
+    <symbol id="sapper-ui" viewBox="0 0 100 64" preserveAspectRatio="xMidYMid meet">
+      <rect x="6" y="6" width="88" height="9" rx="2" fill="#28e6ff" opacity="0.35"/>
+      <circle cx="87" cy="10.5" r="2.5" fill="#ff3cf0"/>
+      <g fill="none" stroke="#28e6ff" stroke-width="3.2" stroke-linecap="round">
+        <path d="M29 30 A28 28 0 0 1 71 30"/>
+        <path d="M36 36 A18 18 0 0 1 64 36"/>
+      </g>
+      <circle cx="50" cy="48" r="3.5" fill="#28e6ff"/>
+      <g fill="#28e6ff" opacity="0.7">
+        <rect x="34" y="54" width="5" height="6"/>
+        <rect x="42" y="51" width="5" height="9"/>
+        <rect x="50" y="55" width="5" height="5"/>
+        <rect x="58" y="52" width="5" height="8"/>
+      </g>
+    </symbol>
+  </defs>
+  <!-- stick body, rotated 90 CCW to landscape: screen left, M5 button right -->
+  <rect x="36" y="37" width="128" height="66" rx="12" fill="#0d1422" stroke="#28e6ff" stroke-width="2"/>
+  <!-- side buttons, now on the top/bottom edges after the rotation -->
+  <rect x="68" y="33" width="16" height="4" rx="2" fill="#4f6b78"/>
+  <rect x="86" y="103" width="18" height="4" rx="2" fill="#4f6b78"/>
+  <!-- USB-C, on the bottom edge in use, now on the right -->
+  <rect x="164" y="64" width="4" height="12" rx="1.5" fill="#4f6b78"/>
+  <!-- 1.14in screen on the left (portrait 135x240 panel, so wide-landscape after the 90 CCW rotation), running the Sapper HUD -->
+  <rect x="44" y="52" width="62" height="36" rx="3" fill="rgba(40,230,255,0.12)" stroke="#28e6ff" stroke-width="1.5"/>
+  <use href="#sapper-ui" x="44" y="52" width="62" height="36"/>
+  <!-- red power LED -->
+  <circle cx="52" cy="48" r="2.5" fill="#ff3cf0"/>
+  <!-- big front button (BtnA): a recessed rounded area hugging the body's right end -->
+  <path d="M108 50 Q108 45 113 45 L145 45 Q156 45 156 56 L156 84 Q156 95 145 95 L113 95 Q108 95 108 90 Z" fill="none" stroke="#4f6b78" stroke-width="1.2"/>
+  <text x="132" y="70" font-family="sans-serif" font-size="22" font-weight="bold" fill="#28e6ff" text-anchor="middle" dominant-baseline="central">M5</text>
+</svg>

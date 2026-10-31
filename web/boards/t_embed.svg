@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" role="img" aria-label="LilyGO T-Embed">
+  <defs>
+    <!-- shared WiFi Sapper mini-HUD, scaled to fit the screen -->
+    <symbol id="sapper-ui" viewBox="0 0 100 64" preserveAspectRatio="xMidYMid meet">
+      <rect x="6" y="6" width="88" height="9" rx="2" fill="#28e6ff" opacity="0.35"/>
+      <circle cx="87" cy="10.5" r="2.5" fill="#ff3cf0"/>
+      <g fill="none" stroke="#28e6ff" stroke-width="3.2" stroke-linecap="round">
+        <path d="M29 30 A28 28 0 0 1 71 30"/>
+        <path d="M36 36 A18 18 0 0 1 64 36"/>
+      </g>
+      <circle cx="50" cy="48" r="3.5" fill="#28e6ff"/>
+      <g fill="#28e6ff" opacity="0.7">
+        <rect x="34" y="54" width="5" height="6"/>
+        <rect x="42" y="51" width="5" height="9"/>
+        <rect x="50" y="55" width="5" height="5"/>
+        <rect x="58" y="52" width="5" height="8"/>
+      </g>
+    </symbol>
+  </defs>
+  <!-- stadium body, rotated 90 CCW to landscape: screen left, encoder right -->
+  <rect x="18" y="36" width="164" height="68" rx="34" fill="#0d1422" stroke="#28e6ff" stroke-width="2"/>
+  <!-- 1.9in screen on the left, running the Sapper HUD -->
+  <rect x="32" y="46" width="84" height="48" rx="4" fill="rgba(40,230,255,0.12)" stroke="#28e6ff" stroke-width="1.5"/>
+  <use href="#sapper-ui" x="32" y="46" width="84" height="48"/>
+  <!-- rotary encoder knob on the right -->
+  <circle cx="150" cy="70" r="21" fill="#0d1422" stroke="#ff3cf0" stroke-width="2"/>
+  <circle cx="150" cy="70" r="9" fill="none" stroke="#ff3cf0" stroke-width="1.4" opacity="0.6"/>
+  <circle cx="150" cy="70" r="2.5" fill="#ff3cf0"/>
+</svg>

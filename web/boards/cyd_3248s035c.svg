@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" role="img" aria-label="CYD ESP32-3248S035C">
+  <defs>
+    <!-- shared WiFi Sapper mini-HUD, scaled to fit the screen -->
+    <symbol id="sapper-ui" viewBox="0 0 100 64" preserveAspectRatio="xMidYMid meet">
+      <rect x="6" y="6" width="88" height="9" rx="2" fill="#28e6ff" opacity="0.35"/>
+      <circle cx="87" cy="10.5" r="2.5" fill="#ff3cf0"/>
+      <g fill="none" stroke="#28e6ff" stroke-width="3.2" stroke-linecap="round">
+        <path d="M29 30 A28 28 0 0 1 71 30"/>
+        <path d="M36 36 A18 18 0 0 1 64 36"/>
+      </g>
+      <circle cx="50" cy="48" r="3.5" fill="#28e6ff"/>
+      <g fill="#28e6ff" opacity="0.7">
+        <rect x="34" y="54" width="5" height="6"/>
+        <rect x="42" y="51" width="5" height="9"/>
+        <rect x="50" y="55" width="5" height="5"/>
+        <rect x="58" y="52" width="5" height="8"/>
+      </g>
+    </symbol>
+  </defs>
+  <!-- bare landscape PCB -->
+  <rect x="14" y="26" width="172" height="88" rx="3" fill="#0d1422" stroke="#28e6ff" stroke-width="2"/>
+  <!-- four corner mounting holes -->
+  <g fill="#0d1422" stroke="#4f6b78" stroke-width="1.4">
+    <circle cx="26" cy="38" r="4"/><circle cx="174" cy="38" r="4"/>
+    <circle cx="26" cy="102" r="4"/><circle cx="174" cy="102" r="4"/>
+  </g>
+  <!-- board component on the left margin -->
+  <rect x="17" y="58" width="9" height="24" rx="1" fill="none" stroke="#4f6b78" stroke-width="1.2"/>
+  <!-- 3.5in display: silver bezel + glass running the Sapper HUD -->
+  <rect x="36" y="32" width="128" height="76" rx="2" fill="none" stroke="#4f6b78" stroke-width="1.5"/>
+  <rect x="39" y="35" width="122" height="70" rx="1" fill="rgba(40,230,255,0.12)" stroke="#28e6ff" stroke-width="1.2"/>
+  <use href="#sapper-ui" x="39" y="35" width="122" height="70"/>
+  <!-- micro-USB + USB-C on the bottom edge -->
+  <rect x="84" y="112" width="12" height="6" rx="1" fill="#0d1422" stroke="#4f6b78" stroke-width="1.2"/>
+  <rect x="100" y="112" width="12" height="6" rx="2.5" fill="#0d1422" stroke="#4f6b78" stroke-width="1.2"/>
+</svg>

@@ -219,6 +219,41 @@
             color: var(--cyan);
         }
 
+        /* ---- Selected-board preview ------------------------------------------- */
+        /* A native <select> cannot render art inside its <option>s, so the chosen
+           board's schematic shows here instead, swapped by the picker's change handler. */
+        .board-art {
+            margin: 0 0 1.5rem;
+            padding: 1rem;
+            display: flex;
+            justify-content: center;
+            background: var(--panel-2);
+            border: 1px solid var(--rule);
+        }
+
+        .board-art img {
+            width: 100%;
+            max-width: 220px;
+            height: auto;
+            display: block;
+        }
+
+        /* One-shot RGB-split on board swap, echoing the wordmark's chromatic
+           aberration. Retriggered by the picker's change handler re-adding the class. */
+        @keyframes board-rgb-split {
+            0%   { filter: drop-shadow(-5px 0 0 var(--magenta-2)) drop-shadow(5px 0 0 var(--cyan)); transform: translateX(-2px); }
+            45%  { filter: drop-shadow(3px 0 0 var(--magenta-2)) drop-shadow(-3px 0 0 var(--cyan)); transform: translateX(2px); }
+            100% { filter: none; transform: none; }
+        }
+
+        .board-art img.is-glitching {
+            animation: board-rgb-split 500ms ease-out;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .board-art img.is-glitching { animation: none; }
+        }
+
         /* ---- Board picker ----------------------------------------------------- */
         .picker {
             display: flex;
@@ -505,14 +540,19 @@
             <div class="picker">
                 <label for="board-select">Board</label>
                 <select class="board" id="board-select" aria-describedby="board-chip">
-                    <option value="cardputer" data-chip="ESP32-S3" selected>M5Stack Cardputer / ADV</option>
-                    <option value="t_embed" data-chip="ESP32-S3">LilyGO T-Embed</option>
-                    <option value="m5stickc_plus2" data-chip="ESP32">M5StickC Plus2</option>
                     <option value="cyd_3248s035c" data-chip="ESP32">CYD (ESP32-3248S035C)</option>
+                    <option value="t_embed" data-chip="ESP32-S3">LilyGO T-Embed</option>
                     <option value="atom_echo" data-chip="ESP32">M5Stack Atom Echo</option>
+                    <option value="cardputer" data-chip="ESP32-S3" selected>M5Stack Cardputer / ADV</option>
+                    <option value="m5stickc_plus2" data-chip="ESP32">M5StickC Plus2</option>
                 </select>
                 <span class="chip" id="board-chip">ESP32-S3</span>
             </div>
+
+            <figure class="board-art">
+                <img id="board-art-img" src="./boards/cardputer.svg" alt="M5Stack Cardputer / ADV" width="220"
+                    height="154">
+            </figure>
 
             <esp-web-install-button id="install-button" manifest="./manifest-cardputer.json">
                 <button class="install" slot="activate" type="button">Connect &amp; Flash</button>
@@ -611,13 +651,26 @@ esptool <b>--chip esp32</b> --baud 921600 write-flash \
             var button = document.getElementById('install-button');
             var chip = document.getElementById('board-chip');
             var target = document.getElementById('spec-target');
+            var art = document.getElementById('board-art-img');
             if (!select || !button) return;
             select.addEventListener('change', function () {
                 var opt = select.options[select.selectedIndex];
                 button.setAttribute('manifest', './manifest-' + select.value + '.json');
                 if (chip) chip.textContent = opt.getAttribute('data-chip');
                 if (target) target.textContent = opt.textContent + ' · ' + opt.getAttribute('data-chip');
+                if (art) {
+                    art.src = './boards/' + select.value + '.svg';
+                    art.alt = opt.textContent;
+                    art.classList.remove('is-glitching');
+                    void art.offsetWidth;          // reflow so the animation replays on every change
+                    art.classList.add('is-glitching');
+                }
             });
+            if (art) {
+                art.addEventListener('animationend', function () {
+                    art.classList.remove('is-glitching');
+                });
+            }
         })();
     </script>
 

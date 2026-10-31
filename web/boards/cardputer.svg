@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" role="img" aria-label="M5Stack Cardputer">
+  <defs>
+    <!-- 14 columns x 4 rows = the 56-key QWERTY grid; origin anchored to the keyboard rect so no key is clipped -->
+    <pattern id="keys" x="16" y="62" width="12" height="13.5" patternUnits="userSpaceOnUse">
+      <rect x="1.2" y="1.2" width="9.6" height="10.5" rx="1.6" fill="none" stroke="#28e6ff" stroke-width="0.9" opacity="0.5"/>
+    </pattern>
+    <!-- shared WiFi Sapper mini-HUD, scaled to fit the screen -->
+    <symbol id="sapper-ui" viewBox="0 0 100 64" preserveAspectRatio="xMidYMid meet">
+      <rect x="6" y="6" width="88" height="9" rx="2" fill="#28e6ff" opacity="0.35"/>
+      <circle cx="87" cy="10.5" r="2.5" fill="#ff3cf0"/>
+      <g fill="none" stroke="#28e6ff" stroke-width="3.2" stroke-linecap="round">
+        <path d="M29 30 A28 28 0 0 1 71 30"/>
+        <path d="M36 36 A18 18 0 0 1 64 36"/>
+      </g>
+      <circle cx="50" cy="48" r="3.5" fill="#28e6ff"/>
+      <g fill="#28e6ff" opacity="0.7">
+        <rect x="34" y="54" width="5" height="6"/>
+        <rect x="42" y="51" width="5" height="9"/>
+        <rect x="50" y="55" width="5" height="5"/>
+        <rect x="58" y="52" width="5" height="8"/>
+      </g>
+    </symbol>
+  </defs>
+  <!-- landscape card body, keyboard-dominated -->
+  <rect x="10" y="14" width="180" height="112" rx="8" fill="#0d1422" stroke="#28e6ff" stroke-width="2"/>
+  <!-- top-left: branding block with the M5 logo and the mic -->
+  <rect x="18" y="22" width="44" height="32" rx="2" fill="none" stroke="#4f6b78" stroke-width="1.2"/>
+  <text x="40" y="37" font-family="sans-serif" font-size="15" font-weight="bold" fill="#28e6ff" text-anchor="middle" dominant-baseline="central">M5</text>
+  <circle cx="40" cy="48" r="2" fill="#4f6b78"/>
+  <!-- top-center: the 1.14in screen running the Sapper HUD -->
+  <rect x="72" y="22" width="48" height="32" rx="2" fill="rgba(40,230,255,0.12)" stroke="#28e6ff" stroke-width="1.5"/>
+  <use href="#sapper-ui" x="72" y="22" width="48" height="32"/>
+  <!-- top-right: the ESP32-S3 STAMP module (dense castellated square, pads on all four sides) -->
+  <rect x="146" y="22" width="36" height="32" rx="2" fill="none" stroke="#4f6b78" stroke-width="1.4"/>
+  <g fill="#4f6b78">
+    <rect x="149" y="23" width="2" height="2"/><rect x="156" y="23" width="2" height="2"/><rect x="163" y="23" width="2" height="2"/><rect x="170" y="23" width="2" height="2"/><rect x="177" y="23" width="2" height="2"/>
+    <rect x="149" y="51" width="2" height="2"/><rect x="156" y="51" width="2" height="2"/><rect x="163" y="51" width="2" height="2"/><rect x="170" y="51" width="2" height="2"/><rect x="177" y="51" width="2" height="2"/>
+    <rect x="147" y="29" width="2" height="2"/><rect x="147" y="37" width="2" height="2"/><rect x="147" y="45" width="2" height="2"/>
+    <rect x="179" y="29" width="2" height="2"/><rect x="179" y="37" width="2" height="2"/><rect x="179" y="45" width="2" height="2"/>
+  </g>
+  <rect x="155" y="30" width="18" height="15" rx="1.5" fill="none" stroke="#4f6b78" stroke-width="1"/>
+  <!-- onboard RGB LED -->
+  <circle cx="65" cy="25" r="2.5" fill="#ff3cf0"/>
+  <!-- 14x4 QWERTY keyboard filling the lower body -->
+  <rect x="16" y="62" width="168" height="54" fill="url(#keys)"/>
+</svg>

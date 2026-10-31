@@ -3,7 +3,7 @@ name: Pages
 # Publish the web flasher (web/) to GitHub Pages. The firmware is served
 # SAME-ORIGIN with the page: GitHub release assets send no CORS headers, so the
 # browser cannot fetch them cross-origin from Pages ("Failed to fetch"). Each
-# deploy pulls the latest release's four factory images into the site and the
+# deploy pulls the latest release's five factory images into the site and the
 # per-board manifests point at relative paths — so a new firmware release must
 # redeploy Pages to refresh those binaries. NOTE: the `release: published`
 # trigger below only fires for a human-published release; a release cut by
@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Pull the latest release's four factory images into the site so each
+      # Pull the latest release's five factory images into the site so each
       # board's manifest can reference its binary same-origin (see the header
       # note on CORS). Not committed to git — assembled at deploy time, and the
       # *.bin are git-ignored. Fails loud if any asset is missing, rather than
