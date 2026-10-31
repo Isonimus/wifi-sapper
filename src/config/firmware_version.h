@@ -10,7 +10,7 @@
 
 namespace sapper {
 
-/// Semantic version of the running firmware. `0.1.0` is the pre-release appliance's first tagged face.
-constexpr char kFirmwareVersion[] = "0.1.0";
+/// Semantic version of the running firmware (SemVer, pre-1.0 appliance).
+constexpr char kFirmwareVersion[] = "0.2.0";
 
 }  // namespace sapper

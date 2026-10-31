@@ -229,3 +229,19 @@ The board is the first bring-up to need no new ADR: the env, profile, and wiring
   armed-deauth TX proof, and a real on-air capture (all board-independent or photographic), plus the live
   release-packaging proof of the `atom_echo` factory image through the dio guard and the web flasher (fires
   on the next tagged release). Tracked in the LEDGER alongside the other boards' deferred on-air proofs.
+
+## Amendment — 2026-10-31: Maintenance entry, resume, and LED colour confirmed eyes-on
+
+Two of the items this slice deferred to the operator are now confirmed on the physical board, ahead of
+the v0.2.0 release that carries the Atom Echo:
+
+- **GPIO39 side-button-hold Maintenance entry + power-cycle resume** (ADR-0078): the deliberate side-button
+  hold enters the Maintenance phase and a plain power-cycle returns the unit to Station hunting, both
+  verified eyes-on. So the per-board `InputKind::Buttons` entry gesture works on the Atom Echo exactly as on
+  the M5StickC Plus2 it reuses.
+- **Physical SK6812 LED colour/order** (ADR-0091): the RGB status colours render correctly on the on-board
+  SK6812 (G27), so the shared Cardputer WS2812 driver path drives this board's LED with the right byte
+  order, not only the right `[LED] status=` log line.
+
+Still deferred (tracked in the LEDGER): an armed-deauth TX + a real on-air capture (both board-independent),
+and the live release-packaging proof of the `atom_echo` factory image, which fires on the v0.2.0 tag.
