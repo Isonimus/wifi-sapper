@@ -33,7 +33,7 @@ Every document is exactly one of four things.
 | **Immutable** | `adr/*.md`, `slices/*.md` | Written once. Body prose is never edited. Only status/supersession fields may change. |
 | **Generated** | `adr/INDEX.md` | Built by script from frontmatter. Never hand-edited. |
 | **Ledger** | `LEDGER.md` | Exactly one per repo. The only hand-maintained tracker. |
-| **Live doc** | `README.md`, `docs/*.md` | Describes how something behaves *now*. Updated **in the same change** as the thing it describes, and cited from this file so it is never orphaned (stele:ADR-0010). |
+| **Live doc** | `README.md`, `CHANGELOG.md`, `docs/*.md` | Describes how something behaves *now*. Updated **in the same change** as the thing it describes, and cited from this file so it is never orphaned (stele:ADR-0010). |
 
 - **ADR** — a decision later work must obey (a mechanism, data format, or boundary).
   Asserts *"on date X we chose Y because Z"*: a historical claim, true forever.
@@ -56,6 +56,13 @@ Every document is exactly one of four things.
   suppression (ADR-0065). Each proof states its build recipe, run command, pass/fail serial markers, and
   artifact. Updated in the same change as any verify script or serial marker it documents; cited here so
   it is not orphaned (stele:ADR-0010).
+- **CHANGELOG.md** is a live document: a hand-maintained, newest-first operator-facing record of shipped
+  changes in the parent Adversary's style (a bold-lead plain-language entry per change, with its
+  slice/ADR cited), grouped under a `## <date> (vX.Y.Z)` block per tagged version. It is the curated
+  human narrative that complements the machine per-tag GitHub Releases `release.yml` cuts (ADR-0095);
+  it is **not** generated, so it is never `--check`ed and must be updated by hand in the same change that
+  ships a user- or dev-facing feature, with a new version block added when a `v*` tag is cut. Cited here
+  so it is not orphaned (stele:ADR-0010).
 
 **Single writer, one direction.** An ADR records a deferral *once*, as a fact about that
 decision. `LEDGER.md` cites the ADR. **Never reach back into an ADR to close a ledger
