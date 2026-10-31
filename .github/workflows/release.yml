@@ -122,10 +122,14 @@ jobs:
           # deploy can reference a FIXED name across releases. Byte-identical to the
           # versioned image above (so the checksum in the release job covers it) and
           # only published for the "Latest" release — do NOT cut with --prerelease or
-          # the same-origin pull 404s. See slices/0102.
-          cp "$factory" "dist/sapper-${{ matrix.env }}-factory.bin"
+          # the same-origin pull 404s. Kept in dist/stable/ so the release job uploads
+          # every board's stable copy with one glob: a per-board name hand-listed there
+          # was missed when the fifth board (atom_echo) was added, cutting a release
+          # whose Pages deploy 404'd for that board. See slices/0102.
+          mkdir -p dist/stable
+          cp "$factory" "dist/stable/sapper-${{ matrix.env }}-factory.bin"
 
-          ls -la dist
+          ls -la dist dist/stable
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -170,19 +174,16 @@ jobs:
           # create would leave a partial release PUBLIC (a board's image missing) that an operator could flash,
           # and it would block a re-run with "release already exists". A draft is invisible until the flip, so
           # a failed upload never reaches an operator (§3 fail-loud: never a partial public release).
-          # The versioned app + factory images, the four stable-named factory copies the web flasher
-          # pulls (listed explicitly so the versioned glob is not re-matched and double-uploaded), and
-          # the checksums.
+          # The versioned app + factory images, every board's stable-named factory copy the web flasher
+          # pulls (all of dist/stable/, in its own dir so this glob never re-matches the versioned
+          # factory images and a new board needs no line added here), and the checksums.
           gh release create "$version" \
             --draft \
             --title "WiFi Sapper $version" \
             --generate-notes \
             dist/sapper-*-"${version}"-app.bin \
             dist/sapper-*-"${version}"-factory.bin \
-            dist/sapper-cardputer-factory.bin \
-            dist/sapper-t_embed-factory.bin \
-            dist/sapper-m5stickc_plus2-factory.bin \
-            dist/sapper-cyd_3248s035c-factory.bin \
+            dist/stable/sapper-*-factory.bin \
             dist/SHA256SUMS.txt
           # Every asset accepted: flip to public in one metadata edit (no uploads, so no partial-public window).
           gh release edit "$version" --draft=false
