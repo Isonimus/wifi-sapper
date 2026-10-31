@@ -488,7 +488,7 @@
     <main>
         <header>
             <h1 class="wordmark"><span class="wm-text">W<span class="wm-i">i</span>Fi Sapper</span></h1>
-            <span class="tag">Alpha · 4 boards</span>
+            <span class="tag">Alpha · 5 boards</span>
         </header>
 
         <p class="lead">Flash the firmware <b>from your browser.</b></p>
@@ -509,6 +509,7 @@
                     <option value="t_embed" data-chip="ESP32-S3">LilyGO T-Embed</option>
                     <option value="m5stickc_plus2" data-chip="ESP32">M5StickC Plus2</option>
                     <option value="cyd_3248s035c" data-chip="ESP32">CYD (ESP32-3248S035C)</option>
+                    <option value="atom_echo" data-chip="ESP32">M5Stack Atom Echo</option>
                 </select>
                 <span class="chip" id="board-chip">ESP32-S3</span>
             </div>
@@ -572,7 +573,7 @@ sha256sum -c SHA256SUMS.txt
 esptool <b>--chip esp32s3</b> --baud 921600 write-flash \
     <b>0x0</b> sapper-cardputer-<span class="c">&lt;ver&gt;</span>-factory.bin
 
-<span class="c"># classic ESP32 boards (M5StickC Plus2, CYD)</span>
+<span class="c"># classic ESP32 boards (M5StickC Plus2, CYD, Atom Echo)</span>
 esptool <b>--chip esp32</b> --baud 921600 write-flash \
     <b>0x0</b> sapper-cyd_3248s035c-<span class="c">&lt;ver&gt;</span>-factory.bin</pre>
         </details>

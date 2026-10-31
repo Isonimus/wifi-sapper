@@ -63,6 +63,8 @@ jobs:
             cmd: pio run -e t_embed
           - env: cyd_3248s035c
             cmd: pio run -e cyd_3248s035c
+          - env: atom_echo
+            cmd: pio run -e atom_echo
     steps:
       - uses: actions/checkout@v7
 

@@ -37,6 +37,10 @@ jobs:
             chip: esp32
             boot_offset: '0x1000'
             flash_size: 4MB
+          - env: atom_echo
+            chip: esp32
+            boot_offset: '0x1000'
+            flash_size: 4MB
     steps:
       - uses: actions/checkout@v7
 

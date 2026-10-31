@@ -1,0 +1,13 @@
+{
+  "name": "WiFi Sapper",
+  "version": "latest",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "./sapper-atom_echo-factory.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

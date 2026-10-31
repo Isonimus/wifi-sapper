@@ -39,6 +39,14 @@ inline constexpr const BoardProfile& kActiveBoard = kEsp32_3248S035CProfile;
 // sets SAPPER_DISPLAY_DIRECT_PANEL, which picks DirectPanelDisplay over the sprite-backed LgfxDisplay (a
 // full-frame 320x480 sprite is 307200 B, infeasible on this no-PSRAM board's ~110 KB largest free block,
 // ADR-0082). slice-0083 shipped this board headless; the display is the additive slice-0085.
+#elif defined(SAPPER_BOARD_ATOM_ECHO)
+#include "config/boards/atom_echo.h"
+namespace sapper {
+inline constexpr const BoardProfile& kActiveBoard = kAtomEchoProfile;
+}
+// No SAPPER_BOARD_HAS_DISPLAY: the Atom Echo is headless (hasDisplay=false) with no panel at all, so no
+// LGFX_* class compiles (ADR-0002 #4). The first board to ship with the guard *permanently* absent: the
+// CYD exercised this path transiently at slice-0083, then slice-0085 gave it a panel. slice-0105.
 #else
 #error "No SAPPER_BOARD_* selected — define one in platformio.ini build_flags"
 #endif

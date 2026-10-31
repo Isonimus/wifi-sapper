@@ -201,9 +201,11 @@ work at any time without disturbing the hunt.
 
 ## Supported boards
 
-Four board profiles ship today. The capture→upload→sync engine is identical across all of them; the
+Five board profiles ship today. The capture→upload→sync engine is identical across all of them; the
 rows differ only in hardware the surfaces adapt to (panel, PSRAM, the Maintenance entry gesture). The
-firmware is headless-first, so a screenless or LED-less board runs the same binary.
+firmware is headless-first, so a screenless or LED-less board runs the same binary: the **M5Stack Atom
+Echo** is the first shipped board with no display at all, running that same binary with only an RGB LED
+and a button as its local surfaces.
 
 | Board | MCU | PSRAM | Flash | Display | Maintenance entry | PlatformIO env |
 |---|---|---|---|---|---|---|
@@ -211,12 +213,14 @@ firmware is headless-first, so a screenless or LED-less board runs the same bina
 | **M5StickC Plus2** | ESP32-PICO-V3-02 | 2 MB quad | 8 MB | 1.14" 240x135 | hold BtnB ~2 s | `m5stickc_plus2` |
 | **LilyGo T-embed** | ESP32-S3 | 8 MB octal | 16 MB | 1.9" 320x170 | hold encoder push ~2 s | `t_embed` |
 | **ESP32-3248S035C (CYD)** | ESP32-D0WD-V3 | none | 4 MB | 3.5" 320x480 ST7796 | hold BOOT ~2 s | `cyd_3248s035c` |
+| **M5Stack Atom Echo** | ESP32-PICO-D4 | none | 4 MB | none (RGB LED + button) | hold side button ~2 s | `atom_echo` |
 
 **Proof status.** The capture→upload→sync engine is identical on every board and is compile-and-link
-verified in CI on each push (all four environments, both chip families). On-air verify evidence (the
+verified in CI on each push (all five environments, both chip families). On-air verify evidence (the
 committed [`artifacts/`](artifacts/)) was produced on the **Cardputer reference target**; the other
-three boards have been brought up on hardware, but some of their per-board on-air proofs (photographic
-HUD/panel confirmation, the M5StickC Plus2 PSRAM boot, the CYD sync leg) are **pending** and tracked
+four boards have been brought up on hardware, but some of their per-board on-air proofs (photographic
+HUD/panel confirmation, the M5StickC Plus2 PSRAM boot, the CYD sync leg, the Atom Echo headless
+bring-up) are **pending** and tracked
 in [`LEDGER.md`](LEDGER.md). The bench procedure for the engine proofs (Scenario J, the CYD sync leg,
 gate-C re-submit suppression) is [`docs/on-air-proof-runbook.md`](docs/on-air-proof-runbook.md). See
 [Security model and known limitations](#security-model-and-known-limitations).

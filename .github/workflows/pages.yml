@@ -53,7 +53,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for env in cardputer t_embed m5stickc_plus2 cyd_3248s035c; do
+          for env in cardputer t_embed m5stickc_plus2 cyd_3248s035c atom_echo; do
             gh release download --repo "$GITHUB_REPOSITORY" \
               --pattern "sapper-${env}-factory.bin" \
               --dir web
