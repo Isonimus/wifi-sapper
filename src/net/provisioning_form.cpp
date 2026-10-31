@@ -21,6 +21,28 @@ const char* checkedAttr(bool on) { return on ? " checked" : ""; }
 size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
     if (out == nullptr || outSize == 0) return 0;
 
+    // When a network is already stored, the SSID drops `required` and both Wi-Fi fields invite "leave
+    // blank to keep current Wi-Fi" (ADR-0106): a blank SSID keeps the whole stored pair, so the operator
+    // can edit anything else without re-typing the network. The SSID value is never rendered (echoing it
+    // on the public setup AP would leak the home network name) — only the fact one is stored, like the
+    // secrets. First boot keeps the SSID `required` and teaches the WPA2 length / Open checkbox instead.
+    const char* ssidField =
+        model.hasStoredNetwork
+            ? "<input name='ssid' maxlength='32' autocapitalize='none' autocorrect='off' "
+              "spellcheck='false' placeholder='leave blank to keep current Wi-Fi'>"
+            : "<input name='ssid' maxlength='32' autocapitalize='none' autocorrect='off' "
+              "spellcheck='false' required>";
+    const char* passField =
+        model.hasStoredNetwork
+            ? "<input name='pass' type='password' maxlength='63' "
+              "placeholder='leave blank to keep current Wi-Fi password'>"
+            : "<input name='pass' type='password' maxlength='63' placeholder='at least 8 characters'>";
+    const char* wifiHelp =
+        model.hasStoredNetwork
+            ? "<small>Leave the network name blank to keep your current Wi-Fi. To change only the "
+              "passphrase, leave the name and type the new one. To switch networks, type the new name and "
+              "its passphrase. Tick Open for a passphrase-less network.</small>"
+            : "<small>Tick Open only for a network with no passphrase.</small>";
     // When a secret is already stored, the field invites "leave blank to keep" and the key drops
     // `required` (so a re-save that keeps the key can submit an empty field). The stored *value* is
     // never rendered — only the fact that one exists (SetupFormModel carries no secret string, #20).
@@ -45,9 +67,9 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         // A mobile keyboard autocapitalising/autocorrecting the SSID stores a wrong name (SSIDs are
         // case-sensitive, arbitrary text), which fails association as a silent credential error. The
         // password-type fields below are already shielded by type=password; this plain text field is not.
-        "<p>Network name (SSID)<br><input name='ssid' maxlength='32' autocapitalize='none' "
-        "autocorrect='off' spellcheck='false' required></p>"
-        "<p>Passphrase (blank for open)<br><input name='pass' type='password' maxlength='63'></p>"
+        "<p>Network name (SSID)<br>%s</p>"
+        "<p>Passphrase<br>%s<br>"
+        "<label><input name='open' type='checkbox'> Open network (no passphrase)</label><br>%s</p>"
         "<p>wpa-sec API key<br>%s</p>"
         "<p>Push webhook URL (optional; ntfy or Discord, https)<br>"
         "<input name='webhook' type='url' maxlength='160' placeholder='%s'></p>"
@@ -71,7 +93,7 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "<input name='offAfter' type='number' min='0' max='65535' inputmode='numeric' value='%u'></p>"
         "<p><button type='submit'>Save &amp; reboot</button></p>"
         "</form></div></body></html>",
-        kPortalThemeCss, kPortalWordmarkSvg,
+        kPortalThemeCss, kPortalWordmarkSvg, ssidField, passField, wifiHelp,
         keyField, webhookPlaceholder, checkedAttr(model.notifyCracked), checkedAttr(model.notifyCaptured),
         checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed), maintPlaceholder,
         static_cast<unsigned>(model.screenDimAfterSec), static_cast<unsigned>(model.screenOffAfterSec));
@@ -86,8 +108,8 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
 }
 
 void resolveProvisioningUpdate(const ProvisioningRecord& submitted, const ProvisioningRecord& stored,
-                               bool hasStored, ProvisioningRecord& out) {
-    // The pair (ssid/pass) and every toggle always come from the submission; start from it wholesale.
+                               bool hasStored, bool openNetwork, ProvisioningRecord& out) {
+    // Every toggle, the dim delays, and the submitted strings start from the submission wholesale.
     out = submitted;
     // The screen-dim delays (ADR-0093) came from the submission via the copy; clamp the off delay, when
     // set, to >= the dim delay so the readable stage is never skipped. Applied before the first-boot
@@ -96,7 +118,30 @@ void resolveProvisioningUpdate(const ProvisioningRecord& submitted, const Provis
     if (out.screenOffAfterSec != 0 && out.screenOffAfterSec < out.screenDimAfterSec) {
         out.screenOffAfterSec = out.screenDimAfterSec;
     }
-    if (!hasStored) return;  // first boot: nothing to keep — a blank key fails validation downstream.
+
+    // The Wi-Fi SSID is keep-on-blank (ADR-0106): on a provisioned device a blank submitted SSID keeps the
+    // stored network *name*, so the operator can edit anything else without re-typing it. The kept name is
+    // unambiguous, so the passphrase is then set independently against it: Open ticked makes the current
+    // network open, a blank passphrase keeps the stored one (the full light-touch edit), and a *typed*
+    // passphrase rotates it (change the password without re-typing the SSID) — the old passphrase is never
+    // kept over a typed one, which would reboot with a stale password and strand the unit. When the SSID is
+    // changed instead (non-blank submission, or first boot), the passphrase comes wholly from the
+    // submission, so a stored passphrase is never bound to a different SSID than it was stored with; Open
+    // then forces it empty, and a blank-pass new network with Open *unticked* is refused by
+    // validateNetworkEntry at the save site (never silently stored open here — the brick footgun).
+    if (hasStored && submitted.ssid[0] == '\0') {
+        std::memcpy(out.ssid, stored.ssid, sizeof(out.ssid));  // keep the network name
+        if (openNetwork) {
+            out.pass[0] = '\0';  // switch the current network to open
+        } else if (submitted.pass[0] == '\0') {
+            std::memcpy(out.pass, stored.pass, sizeof(out.pass));  // keep the current passphrase
+        }
+        // else: a new passphrase was typed for the same network — keep it (already copied into `out`).
+    } else if (openNetwork) {
+        out.pass[0] = '\0';  // a new network explicitly marked open
+    }
+
+    if (!hasStored) return;  // first boot: no secret to keep — a blank key fails validation downstream.
 
     // A blank secret field keeps the stored value; a non-blank one already sits in `out` from the copy.
     if (submitted.key[0] == '\0') std::memcpy(out.key, stored.key, sizeof(out.key));
@@ -105,6 +150,18 @@ void resolveProvisioningUpdate(const ProvisioningRecord& submitted, const Provis
     // re-save keeps the stored passphrase rather than dropping the AP back to the default password.
     if (submitted.maintenancePass[0] == '\0')
         std::memcpy(out.maintenancePass, stored.maintenancePass, sizeof(out.maintenancePass));
+}
+
+NetworkEntryError validateNetworkEntry(const char* submittedSsid, const char* submittedPass,
+                                       bool openNetwork, bool hasStored) {
+    // Keeping the current network (a stored record, SSID left blank): the passphrase/Open fields are
+    // irrelevant — resolveProvisioningUpdate keeps the stored pair.
+    if (hasStored && (submittedSsid == nullptr || submittedSsid[0] == '\0')) return NetworkEntryError::None;
+    // An explicit open network, or a supplied passphrase (length checked by validateCredentials), is fine.
+    if (openNetwork) return NetworkEntryError::None;
+    if (submittedPass != nullptr && submittedPass[0] != '\0') return NetworkEntryError::None;
+    // A network is being set with no passphrase and Open unticked: the silent-open brick (ADR-0106).
+    return NetworkEntryError::PassphraseRequired;
 }
 
 uint16_t parseDelaySeconds(const char* text) {

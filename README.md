@@ -58,9 +58,9 @@ portal** instead of trying to hunt (ADR-0006):
 2. Join it with the passphrase **`sapper-setup`**.
 3. A setup page opens automatically (any address works — DNS is hijacked to the portal). If it
    does not, browse to **`http://192.168.4.1/`**.
-4. Enter the network the appliance should join (SSID + passphrase; leave the passphrase blank for
-   an open network) and your **wpa-sec API key** (from your wpa-sec.stanev.org account — the
-   appliance cannot upload captures without it).
+4. Enter the network the appliance should join (SSID + passphrase; for a passphrase-less network,
+   tick **Open network** instead of leaving the passphrase blank, ADR-0106) and your **wpa-sec API
+   key** (from your wpa-sec.stanev.org account — the appliance cannot upload captures without it).
 5. Optionally, a **push webhook URL** (ADR-0023): an [ntfy](https://ntfy.sh) topic URL
    (`https://ntfy.sh/your-topic`, or a self-hosted instance) or a Discord webhook URL. When set, the
    appliance pushes a notification naming the network (ESSID + BSSID). The URL must be `https://`; leave
@@ -101,12 +101,16 @@ network without a reflash.
 
 The re-opened form shows your **stored settings** so a re-save does not silently undo them (ADR-0037):
 the **Push these** and **Enable deauth** checkboxes come up reflecting how the device is currently set,
-and the wpa-sec key and webhook URL fields carry a *"leave blank to keep"* hint. Secret values are never
-displayed — only the fact that one is stored — so nothing sensitive is exposed to anyone on the setup AP.
-Re-enter the **network SSID + passphrase** (the pair you came to fix), and **leave the key and webhook
-blank to keep them** unchanged, or type a new value to replace one. To turn push off, uncheck all three
-**Push these** boxes (you do not need to clear the URL). Switching an already-configured webhook back to
-*none* through the portal is not supported (a documented limitation, [`LEDGER.md`](LEDGER.md), ADR-0037).
+and the Wi-Fi, wpa-sec key and webhook URL fields all carry a *"leave blank to keep"* hint. Secret values
+(and the SSID) are never displayed — only the fact that one is stored — so nothing sensitive is exposed to
+anyone on the setup AP. **Leave the network name blank to keep your current Wi-Fi**, and **leave the key
+and webhook blank to keep them** unchanged, or type a new value to replace one (ADR-0106). To change only
+the Wi-Fi password (same network), leave the name blank and type the new passphrase. To switch networks,
+type the new SSID and its passphrase, or tick **Open network** for a passphrase-less one — a new network
+entered with a blank passphrase and Open unticked is refused, so you can no longer strand the unit by
+forgetting the passphrase. To turn push off, uncheck all three **Push these** boxes (you do not need to
+clear the URL). Switching an already-configured webhook back to *none* through the portal is not supported
+(a documented limitation, [`LEDGER.md`](LEDGER.md), ADR-0037).
 
 The setup form also has a **Maintenance dashboard passphrase** field (see below). Like the other secrets
 it is accepted but never shown back, and *"leave blank to keep"* — blank on first boot means the
@@ -139,11 +143,14 @@ has recovered, plus two controls (ADR-0043):
      window after every reboot, so there is no separate "sync now" button).
    - **Re-provision / re-arm** — opens the setup form again, pre-filled with your current toggles. Use it
      to arm or disarm deauth, flip the push selectors, or change the wpa-sec key / webhook / Maintenance
-     passphrase on a device that is already deployed — those three stored secrets are never shown, so
-     leaving one of *those* fields blank keeps its current value. The **Wi-Fi SSID and passphrase are the
-     exception: they are always taken from the form** (not pre-filled), so to keep the same network you
-     must retype both — and saving with a blank passphrase configures an *open* network. Saving reboots
-     into hunting with the new configuration.
+     passphrase on a device that is already deployed — the stored secrets (and the SSID) are never shown,
+     so leaving a field blank keeps its current value. **Leave the network name blank to keep the current
+     Wi-Fi** (ADR-0106): a light-touch edit (flip a toggle, rotate a key) needs no network re-entry. To
+     change only the Wi-Fi password, leave the name blank and type the new passphrase. To move the
+     appliance to a different network, type the new SSID and its passphrase, or tick **Open network**; a
+     new network with a blank passphrase and Open unticked is refused, so a half-finished edit cannot
+     silently reconfigure the uplink as open and strand the unit. Saving reboots into hunting with the new
+     configuration.
 4. To leave without changing anything, **power-cycle the device** — it reboots and resumes hunting (the
    Maintenance flag is one-shot and a plain power-on never re-enters Maintenance). If you walk away, it
    auto-resumes after **30 minutes** of no activity, so it never stops hunting for good.

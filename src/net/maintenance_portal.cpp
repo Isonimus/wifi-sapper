@@ -167,6 +167,7 @@ void MaintenancePortal::handleConfig() {
     model.notifyCaptured = m_creds.notifyCaptured;
     model.notifyCracked = m_creds.notifyCracked;
     model.notifySyncError = m_creds.notifySyncError;
+    model.hasStoredNetwork = m_creds.ssid[0] != '\0';  // SSID blank -> keep current Wi-Fi (ADR-0106).
     model.hasStoredKey = m_creds.key[0] != '\0';
     model.hasStoredWebhook = m_creds.webhookUrl[0] != '\0';
     model.hasStoredMaintenancePass = m_creds.maintenancePass[0] != '\0';
@@ -210,14 +211,29 @@ void MaintenancePortal::handleSave() {
     submitted.notifyCaptured = (m_http.arg("nCaptured") == "on");
     submitted.notifyCracked = (m_http.arg("nCracked") == "on");
     submitted.notifySyncError = (m_http.arg("nSyncErr") == "on");
+    // Explicit open-network intent (ADR-0106): the common Maintenance edit leaves the SSID blank to keep
+    // the current Wi-Fi, so a passphrase-less network must be ticked, never inferred from a blank field.
+    const bool openNetwork = (m_http.arg("open") == "on");
 
-    // Merge over the stored record (ADR-0037): a blank key/webhook/maintpass keeps its stored value, the
-    // SSID/pass pair and the toggles come from the submission. Maintenance always has a stored record.
+    // Merge over the stored record (ADR-0037/ADR-0106): a blank key/webhook/maintpass keeps its stored
+    // value and a blank SSID keeps the whole Wi-Fi pair (the light-touch edit this route exists for); the
+    // toggles come from the submission. Maintenance always has a stored record.
     ProvisioningRecord record = {};
-    resolveProvisioningUpdate(submitted, m_creds, /*hasStored=*/true, record);
+    resolveProvisioningUpdate(submitted, m_creds, /*hasStored=*/true, openNetwork, record);
 
     if (validateCredentials(record.ssid, record.pass, record.key) != CredentialError::None) {
         m_http.send(400, "text/html", "<h2>Invalid credentials.</h2><p><a href='/config'>Back</a></p>");
+        return;
+    }
+    // Reject a new network entered with no passphrase and Open unticked (ADR-0106): the silent-open brick
+    // this route was most exposed to (an operator flipping a toggle who retyped the SSID but not the pass).
+    // After validateCredentials, which owns the empty-SSID/key and length messages and accepts an empty
+    // pass as open, so this guard is what finally catches the forgotten passphrase.
+    if (validateNetworkEntry(submitted.ssid, submitted.pass, openNetwork, /*hasStored=*/true) !=
+        NetworkEntryError::None) {
+        m_http.send(400, "text/html",
+                    "<h2>Enter a passphrase for the network, or tick &quot;Open network&quot;.</h2>"
+                    "<p><a href='/config'>Back</a></p>");
         return;
     }
     if (record.webhookUrl[0] != '\0' && !isUsableWebhookUrl(record.webhookUrl)) {

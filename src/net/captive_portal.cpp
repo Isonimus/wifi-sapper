@@ -80,6 +80,7 @@ void CaptivePortal::handleRoot() {
         model.notifyCaptured = stored.notifyCaptured;
         model.notifyCracked = stored.notifyCracked;
         model.notifySyncError = stored.notifySyncError;
+        model.hasStoredNetwork = stored.ssid[0] != '\0';  // SSID blank -> keep current Wi-Fi (ADR-0106).
         model.hasStoredKey = stored.key[0] != '\0';
         model.hasStoredWebhook = stored.webhookUrl[0] != '\0';
         model.hasStoredMaintenancePass = stored.maintenancePass[0] != '\0';
@@ -122,22 +123,37 @@ void CaptivePortal::handleSave() {
     submitted.notifyCaptured = (m_http.arg("nCaptured") == "on");
     submitted.notifyCracked = (m_http.arg("nCracked") == "on");
     submitted.notifySyncError = (m_http.arg("nSyncErr") == "on");
+    // Explicit open-network intent (ADR-0106): a passphrase-less network must be ticked, never inferred
+    // from a blank passphrase (which now keeps the current network, or is a refused submission below).
+    const bool openNetwork = (m_http.arg("open") == "on");
     // Screen-dim delays (ADR-0093): parsed and clamped to u16 server-side (the form's max is advisory and
     // this is reachable by a raw POST), so an over-range value is capped not wrapped; blank/negative -> 0
     // (off). resolveProvisioningUpdate then clamps the off delay >= the dim delay.
     submitted.screenDimAfterSec = parseDelaySeconds(m_http.arg("dimAfter").c_str());
     submitted.screenOffAfterSec = parseDelaySeconds(m_http.arg("offAfter").c_str());
 
-    // Merge over the stored record (ADR-0037): a blank key/webhook keeps its stored value, so a re-save
-    // to fix WiFi does not silently wipe the secret the operator did not retype; the pair and the
-    // toggles always come from this submission. First boot (no stored record) is a verbatim copy.
+    // Merge over the stored record (ADR-0037/ADR-0106): a blank key/webhook/maintpass keeps its stored
+    // value and a blank SSID keeps the whole Wi-Fi pair, so a re-save to change one field does not wipe
+    // the rest; the toggles always come from this submission. First boot (no stored record) takes the
+    // submission, Open clearing the passphrase.
     ProvisioningRecord stored = {};
     const bool hasStored = loadProvisioning(stored);
     ProvisioningRecord record = {};
-    resolveProvisioningUpdate(submitted, stored, hasStored, record);
+    resolveProvisioningUpdate(submitted, stored, hasStored, openNetwork, record);
 
     if (validateCredentials(record.ssid, record.pass, record.key) != CredentialError::None) {
         m_http.send(400, "text/html", "<h2>Invalid credentials.</h2><p><a href='/'>Back</a></p>");
+        return;
+    }
+    // Reject a new network entered with no passphrase and Open unticked (ADR-0106) — a blank passphrase no
+    // longer silently configures an open network, which bricked association on re-provision. Run after
+    // validateCredentials (which owns the empty-SSID / empty-key / length messages, and accepts an empty
+    // pass as open) so this guard is what finally catches the forgotten-passphrase case with its own hint.
+    if (validateNetworkEntry(submitted.ssid, submitted.pass, openNetwork, hasStored) !=
+        NetworkEntryError::None) {
+        m_http.send(400, "text/html",
+                    "<h2>Enter a passphrase for the network, or tick &quot;Open network&quot;.</h2>"
+                    "<p><a href='/'>Back</a></p>");
         return;
     }
     // The webhook is optional (ADR-0023): blank stores as disabled. But a non-blank value that is not a

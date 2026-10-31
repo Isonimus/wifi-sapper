@@ -12,6 +12,16 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+- **Leave the Wi-Fi fields blank to keep your current network when re-provisioning.** The setup form
+  (first-boot, STA-fail fallback, and the Maintenance `/config` editor) now treats the SSID + passphrase
+  like the other stored fields: leave the network name blank to keep the current Wi-Fi, so a light-touch
+  edit (flip a toggle, rotate the wpa-sec key) no longer forces you to retype your network. To change only
+  the Wi-Fi password, leave the name blank and type the new passphrase. A passphrase-less network is now
+  set with an explicit **Open network** checkbox, not by leaving the passphrase blank: a new network
+  entered with a blank passphrase and Open unticked is refused, which closes a footgun where forgetting the
+  passphrase during a quick edit silently reconfigured the uplink as open and stranded the unit on its
+  setup portal. The stored SSID is never displayed (like the secrets), so nothing is leaked on the public
+  setup AP. (ADR-0106; refines ADR-0037)
 - **The web flasher has a favicon.** The browser tab now shows the WiFi Sapper signal glyph (cyan
   arcs rising from a magenta emitter dot) as a scalable SVG, echoing the logo and the on-device HUD,
   instead of the browser's blank-page default.
