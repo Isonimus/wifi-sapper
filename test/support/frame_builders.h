@@ -55,9 +55,11 @@ inline std::vector<uint8_t> buildBeacon(const uint8_t bssid[6], const std::strin
 }
 
 /// Build an EAPOL-Key data frame for @p bssid carrying @p keyInfo. @p fromAp true = AP→client
-/// (From-DS, BSSID in Addr2); false = client→AP (To-DS, BSSID in Addr1).
+/// (From-DS, BSSID in Addr2); false = client→AP (To-DS, BSSID in Addr1). @p extraKeyDataLen pads the
+/// EAPOL body past the 99-byte minimum (default 0) so a test can build a large-but-valid M2 near
+/// kMaxFrameLen; the 2-byte EAPOL length field is set consistently with the padded size.
 inline std::vector<uint8_t> buildEapol(const uint8_t bssid[6], const uint8_t client[6],
-                                       uint16_t keyInfo, bool fromAp) {
+                                       uint16_t keyInfo, bool fromAp, size_t extraKeyDataLen = 0) {
     std::vector<uint8_t> f(24, 0);
     f[0] = 0x08;  // FC: data frame.
     f[1] = fromAp ? 0x02 : 0x01;  // From-DS or To-DS.
@@ -74,12 +76,14 @@ inline std::vector<uint8_t> buildEapol(const uint8_t bssid[6], const uint8_t cli
     const uint8_t snap[8] = {0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8E};
     f.insert(f.end(), snap, snap + 8);
 
-    // EAPOL-Key body, exactly 99 bytes (the parser's minimum). Header: version, type=Key(3),
-    // length; then key descriptor(0x02 = WPA2) and the Key Information field.
-    std::vector<uint8_t> eapol(99, 0);
+    // EAPOL-Key body: 99 bytes (the parser's minimum) plus optional key-data padding. Header: version,
+    // type=Key(3), length; then key descriptor(0x02 = WPA2) and the Key Information field.
+    std::vector<uint8_t> eapol(99 + extraKeyDataLen, 0);
+    const size_t bodyLen = eapol.size() - 4;              // EAPOL body length (excludes the 4-byte header).
     eapol[0] = 0x02;                                       // EAPOL version.
     eapol[1] = 0x03;                                       // EAPOL type: Key.
-    eapol[3] = static_cast<uint8_t>(99 - 4);              // EAPOL body length (95).
+    eapol[2] = static_cast<uint8_t>(bodyLen >> 8);        // EAPOL body length (big-endian).
+    eapol[3] = static_cast<uint8_t>(bodyLen & 0xFF);
     eapol[4] = 0x02;                                       // Key descriptor type: WPA2.
     eapol[5] = static_cast<uint8_t>(keyInfo >> 8);         // Key Information (big-endian).
     eapol[6] = static_cast<uint8_t>(keyInfo & 0xFF);
