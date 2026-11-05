@@ -23,6 +23,7 @@
 #include <cstdint>
 
 #include "net/capture_queue.h"
+#include "net/hc22000.h"  // kHc22000LineMax: sizes the drain-scratch hashline buffer (ADR-0109).
 #include "net/hunt_engine.h"
 #include "net/station_control.h"
 #include "net/uploader.h"
@@ -39,6 +40,8 @@ struct CrackedLookup;  // net/cracked_lookup.h — an optional read-only "is thi
                        // (ADR-0059 gate A); held by pointer, wired post-ctor. Pure abstract, no include.
 struct SubmittedRecorder;  // net/submitted_lookup.h — an optional read+record "submitted to wpa-sec?" seam
                            // (ADR-0065 gate C); held by pointer, wired post-ctor. Pure abstract, no include.
+class Hc22000Uploader;  // net/hc22000_uploader.h, the optional pwncrack upload seam (ADR-0109), sibling of
+                        // Uploader; held by pointer, wired post-ctor with its key and its own submitted set.
 
 /// Forwards the engine's capture-ready event to a target set after construction. It exists to break
 /// a construction cycle: the HuntEngine takes its CaptureReadyObserver at construction, but the
@@ -85,8 +88,13 @@ struct DrainOutcome {
     size_t purged = 0;         ///< Unreadable (corrupt) captures dropped so the queue can go clean (#1).
     size_t skippedCracked = 0; ///< Already-recovered captures dropped without upload (ADR-0059 gate A) —
                                ///< resolved like a purge, so it is not counted as an upload error.
-    size_t skippedSubmitted = 0; ///< Already-submitted captures dropped without upload (ADR-0065 gate C) —
-                                 ///< resolved like a purge, so it is not counted as an upload error.
+    size_t skippedSubmitted = 0; ///< Captures dropped without upload because every provisioned backend
+                                 ///< already holds them (ADR-0065 gate C, generalised to both backends by
+                                 ///< ADR-0109 #3), resolved like a purge, not counted as an upload error.
+    size_t pwncrackAccepted = 0; ///< pwncrack uploads taken (ADR-0109). pwncrack never answers Duplicate.
+    size_t pwncrackRejected = 0; ///< pwncrack uploads kept for retry (non-success/unrecognised).
+    size_t pwncrackUnderivable = 0; ///< Captures with no WPA*01 line for pwncrack (e.g. hidden SSID): pwncrack
+                                    ///< is terminal for them (never blocks removal; wpa-sec still has the pcap).
     size_t storeErrors = 0;    ///< Removes that could not complete — a purge or post-upload delete that
                                ///< failed, leaving the entry stuck (fail loud — §3; keeps the cycle dirty).
     size_t submittedStoreErrors = 0; ///< A flushSubmitted() that failed (ADR-0065 #3). Logged loud by the
@@ -135,6 +143,19 @@ public:
     /// the exact pre-gate-C drain behaviour, no submitted state consulted or written.
     void setSubmittedRecorder(SubmittedRecorder& recorder) { submitted_ = &recorder; }
 
+    /// Wire the optional pwncrack second backend (ADR-0109): its upload seam, its API key, and its OWN
+    /// submitted set (a second SubmittedManifest instance, decision #4 / §4 #46c). When set, each drained
+    /// capture is uploaded to pwncrack (a WPA*01 hc22000 line re-derived from the persisted pcap) as well
+    /// as to wpa-sec, in the same STA window, and is removed only once BOTH provisioned backends are
+    /// terminal for it (decision #3 / §4 #46b). Set post-construction, mirroring the other seam wiring, so
+    /// the constructor stays unchanged for a wpa-sec-only device. Unset, or an empty @p key, leaves the
+    /// pwncrack legs off and the drain behaves exactly as it does without this call (decision #7 / §4 #46).
+    void setPwncrackBackend(Hc22000Uploader& uploader, const char* key, SubmittedRecorder& submitted) {
+        pwncrackUploader_ = &uploader;
+        pwncrackKey_ = key;
+        pwncrackSubmitted_ = &submitted;
+    }
+
     /// Seed the drain clock and pick up any captures already on flash from a prior run. Call after
     /// the engine has begun and before the first tick().
     void begin(uint32_t nowMs);
@@ -164,6 +185,18 @@ private:
     /// fully succeeded (every upload terminal, no store error). @p nowMs stamps each new submitted-set
     /// mark (gate C, ADR-0065) recorded on a terminal upload.
     bool drainQueue(DrainOutcome& outcome, uint32_t nowMs);
+    /// Whether the pwncrack second backend is wired and enabled. An unset uploader/key or an empty key
+    /// disables it (ADR-0109 #7), so a wpa-sec-only device never runs the pwncrack legs.
+    bool pwncrackProvisioned() const {
+        return pwncrackUploader_ != nullptr && pwncrackKey_ != nullptr && pwncrackKey_[0] != '\0';
+    }
+    /// Upload one capture's re-derived hc22000 line to pwncrack (ADR-0109). @p pcap/@p len are the
+    /// capture's persisted pcap bytes already read for the wpa-sec leg. Returns whether pwncrack is now
+    /// terminal for this @p bssid: Accepted, or no WPA*01 line to send (hidden SSID); false if pwncrack
+    /// rejected it (keep and retry). On a terminal accept it marks the pwncrack submitted set and sets
+    /// @p flushNeeded. Uses the member scratch buffers so nothing large sits on the drain stack.
+    bool uploadToPwncrack(const uint8_t* pcap, size_t len, const uint8_t bssid[6], DrainOutcome& outcome,
+                          uint32_t nowMs, bool& flushNeeded);
     /// Broadcast the cosmetic HandshakeCaptured fact (identity only) for a successfully enqueued
     /// capture, so surfaces can announce it (ADR-0031, §4 #17). No-op when no bus is wired.
     void publishCaptured(const CapturedHandshake& handshake);
@@ -180,6 +213,10 @@ private:
     const CrackedLookup* crackedLookup_ = nullptr;  ///< Optional; drops already-cracked captures (ADR-0059).
     SubmittedRecorder* submitted_ = nullptr;  ///< Optional; drops already-submitted captures and records
                                               ///< each terminal upload as submitted (ADR-0065 gate C).
+    Hc22000Uploader* pwncrackUploader_ = nullptr;  ///< Optional pwncrack second backend (ADR-0109 #1).
+    const char* pwncrackKey_ = nullptr;            ///< pwncrack API key; nullptr/empty disables the backend (#7).
+    SubmittedRecorder* pwncrackSubmitted_ = nullptr;  ///< pwncrack's OWN submitted set: a second
+                                                      ///< SubmittedManifest instance, not a tag on the first (#4).
 
     State state_ = State::Hunting;
     size_t activity_ = 0;             ///< Uploadable captures known pending since the last success.
@@ -191,6 +228,12 @@ private:
     uint32_t drainCount_ = 0;         ///< Monotonic count of cycles run (drainCount()).
     DrainOutcome lastDrain_;
     uint8_t uploadBuffer_[kMaxSerializedPcapLen];  ///< Read target during a drain; no heap.
+    // pwncrack drain scratch (ADR-0109 #2). Members, not stack locals: the CapturedHandshake alone is a
+    // few KB, and putting it on the drain stack would sit under the nested TLS upload and risk overflow
+    // (the same reason uploadBuffer_ is a member). Only touched when pwncrack is provisioned; a wpa-sec-only
+    // device never reads them, it just carries the unused space (the runtime-optional backend's RAM cost).
+    CapturedHandshake pwncrackHandshake_;      ///< the persisted pcap re-parsed back to a handshake.
+    char pwncrackLine_[kHc22000LineMax] = {};  ///< the WPA*01 hc22000 line derived from it.
 };
 
 }  // namespace sapper

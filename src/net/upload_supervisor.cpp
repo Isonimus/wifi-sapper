@@ -9,6 +9,9 @@
 #include "core/deadline.h"  // reached(): the wrap-safe deadline test shared across clock-driven units.
 #include "core/event_bus.h"
 #include "net/cracked_lookup.h"
+#include "net/hc22000.h"           // buildHc22000Line: the pwncrack hashline from a re-parsed handshake.
+#include "net/hc22000_uploader.h"  // Hc22000Uploader: the pwncrack upload seam.
+#include "net/pcap_reader.h"       // parseHandshakePcap: re-derive the handshake from the persisted pcap.
 #include "net/submitted_lookup.h"
 #include "net/sync_session.h"
 #include "net/window_notifier.h"
@@ -181,37 +184,40 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome, uint32_t nowMs) {
     }
 
     bool allTerminal = true;
-    bool markedSubmitted = false;  // gate C: flush the submitted set once, only if the cycle marked anything.
+    bool markedWpaSec = false;    // gate C: flush the wpa-sec submitted set once, only if the cycle marked it.
+    bool markedPwncrack = false;  // likewise for pwncrack's own submitted set (ADR-0109 #4).
+    const bool pwncrackOn = pwncrackProvisioned();
     for (size_t i = 0; i < count; ++i) {
-        // ADR-0059 gate A: a network whose PSK we have already recovered needs no further upload —
-        // wpa-sec holds it and CrackedSync has brought it back. Drop the queued capture (freeing the
-        // bounded queue) instead of re-reading and re-uploading it. Gated on manifest knowledge, not
-        // hope: isCracked is `find() != nullptr`, so a captured-but-not-yet-cracked network still
-        // uploads (that upload is how it gets cracked). Off entirely when no lookup is wired. A
-        // successful remove resolves the entry (like a purge), so it does not fail the cycle; only a
-        // failed remove is a loud store error that keeps the cycle dirty.
-        if (crackedLookup_ != nullptr && crackedLookup_->isCracked(pending[i].bssid)) {
+        const uint8_t* bssid = pending[i].bssid;
+
+        // ADR-0059 gate A: a network whose PSK we have already recovered needs no upload to *either*
+        // backend: the shared cracked manifest is backend-agnostic (§4 #46d). Drop the queued capture
+        // (freeing the bounded queue) instead of re-reading and re-uploading it. Gated on manifest
+        // knowledge, not hope. Off entirely when no lookup is wired. A successful remove resolves the entry
+        // (like a purge), so it does not fail the cycle; only a failed remove is a loud store error.
+        if (crackedLookup_ != nullptr && crackedLookup_->isCracked(bssid)) {
             ++outcome.skippedCracked;
-            if (!queue_.remove(pending[i].id)) {
-                ++outcome.storeErrors;
-                allTerminal = false;
-            }
+            if (!queue_.remove(pending[i].id)) { ++outcome.storeErrors; allTerminal = false; }
             continue;
         }
-        // ADR-0065 gate C: the general form of gate A — a network we have already landed a valid
-        // handshake for at wpa-sec (Accepted/Duplicate earlier) needs no further upload, cracked yet or
-        // not: more handshakes of the same PSK add no cracking power. Drop the queued capture instead of
-        // re-uploading it. Checked after the cracked drop (cracked ⊆ submitted, but gate A keeps its own
-        // count and stays the durable floor). Like gate A, a successful remove resolves the entry (not a
-        // cycle failure); only a failed remove is a loud store error that keeps the cycle dirty.
-        if (submitted_ != nullptr && submitted_->isSubmitted(pending[i].bssid)) {
+
+        // Per-backend terminal state, from each backend's OWN submitted set (gate C, ADR-0065, made
+        // per-backend by ADR-0109 #4 / §4 #46c). A backend that already holds this BSSID is "done" and is
+        // not re-uploaded while the other still owes one (§4 #46b). pwncrack not provisioned => always done.
+        bool wpaSecDone = submitted_ != nullptr && submitted_->isSubmitted(bssid);
+        bool pwncrackDone = !pwncrackOn || (pwncrackSubmitted_ != nullptr && pwncrackSubmitted_->isSubmitted(bssid));
+
+        // Both provisioned backends already hold it: the capture is resolved, drop it without any upload.
+        // This is the general form of the single-backend gate-C drop: remove only when EVERY backend has
+        // it (ADR-0109 #3). (With pwncrack off this reduces exactly to the old "already submitted" drop.)
+        if (wpaSecDone && pwncrackDone) {
             ++outcome.skippedSubmitted;
-            if (!queue_.remove(pending[i].id)) {
-                ++outcome.storeErrors;
-                allTerminal = false;
-            }
+            if (!queue_.remove(pending[i].id)) { ++outcome.storeErrors; allTerminal = false; }
             continue;
         }
+
+        // At least one backend still owes an upload: read the persisted pcap once, both legs use these
+        // bytes (wpa-sec uploads them, pwncrack re-derives its hashline from them, ADR-0109 #2).
         size_t len = 0;
         if (!queue_.read(pending[i].id, uploadBuffer_, sizeof(uploadBuffer_), len)) {
             // Bytes unreadable/oversized. On a single-threaded LittleFS this is corruption, not a
@@ -220,49 +226,80 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome, uint32_t nowMs) {
             // unrecoverable, so this drops no capture we could have sent, and it lets the queue reach a
             // clean state. Loud via outcome.purged. Only a *failed* remove keeps the cycle dirty.
             ++outcome.purged;
-            if (!queue_.remove(pending[i].id)) {
-                ++outcome.storeErrors;
-                allTerminal = false;
-            }
+            if (!queue_.remove(pending[i].id)) { ++outcome.storeErrors; allTerminal = false; }
             continue;
         }
-        const UploadResult result = uploader_.upload(uploadBuffer_, len, wpaSecKey_);
-        switch (result) {
-            case UploadResult::Accepted:
-                ++outcome.accepted;
-                if (!queue_.remove(pending[i].id)) ++outcome.storeErrors;  // uploaded; delete failed.
-                break;
-            case UploadResult::Duplicate:
-                ++outcome.duplicate;  // wpa-sec already holds it — terminal success, delete it too.
-                if (!queue_.remove(pending[i].id)) ++outcome.storeErrors;
-                break;
-            case UploadResult::Rejected:
-                ++outcome.rejected;   // non-success/unrecognised: keep and retry, never assume success.
-                allTerminal = false;
-                break;
+
+        // wpa-sec leg (pcap). Skipped when wpa-sec already holds this BSSID (so a retry for pwncrack alone
+        // does not re-upload to wpa-sec). Record the submission on a terminal success only (Accepted or
+        // Duplicate), never on Rejected: gate on knowledge, not hope (ADR-0059 #4 / ADR-0065).
+        if (!wpaSecDone) {
+            const UploadResult result = uploader_.upload(uploadBuffer_, len, wpaSecKey_);
+            switch (result) {
+                case UploadResult::Accepted:  ++outcome.accepted;  wpaSecDone = true; break;
+                case UploadResult::Duplicate: ++outcome.duplicate; wpaSecDone = true; break;
+                case UploadResult::Rejected:  ++outcome.rejected;  allTerminal = false; break;
+            }
+            if (wpaSecDone && submitted_ != nullptr) {
+                submitted_->markSubmitted(bssid, nowMs);
+                markedWpaSec = true;
+            }
         }
-        // ADR-0065 gate C: record the BSSID submitted on a terminal success only — Accepted or Duplicate
-        // means wpa-sec has taken a valid handshake for it. Never on Rejected (it did not land — gate on
-        // knowledge, not hope, like ADR-0059 #4). RAM-only here; the one flush below persists the cycle.
-        if (submitted_ != nullptr &&
-            (result == UploadResult::Accepted || result == UploadResult::Duplicate)) {
-            submitted_->markSubmitted(pending[i].bssid, nowMs);
-            markedSubmitted = true;
+
+        // pwncrack leg (hc22000 re-derived from the same pcap). Skipped when pwncrack already holds this
+        // BSSID. uploadToPwncrack returns whether pwncrack is now terminal for it (Accepted, or no WPA*01
+        // line to send); a rejection leaves it owing and keeps the capture for the next window.
+        if (pwncrackOn && !pwncrackDone) {
+            pwncrackDone = uploadToPwncrack(uploadBuffer_, len, bssid, outcome, nowMs, markedPwncrack);
+            if (!pwncrackDone) allTerminal = false;
+        }
+
+        // Remove only when EVERY provisioned backend is terminal for this capture (ADR-0109 #3). If either
+        // still owes an upload the capture stays queued (and the cycle is not clean), so the next window
+        // re-attempts only the owing backend, the other's submitted set skips it. Removing on one backend
+        // alone would discard the capture for the backend that had not taken it yet (a lost handshake, §3).
+        if (wpaSecDone && pwncrackDone) {
+            if (!queue_.remove(pending[i].id)) ++outcome.storeErrors;
         }
     }
 
-    // Persist the cycle's submitted marks in one write (ADR-0065 #3). A flush failure is surfaced loud
-    // but does NOT fail the cycle: the uploads already landed and their queue entries are already gone,
+    // Persist each backend's submitted marks in one write apiece (ADR-0065 #3). A flush failure is surfaced
+    // loud but does NOT fail the cycle: the uploads already landed and their queue entries are already gone,
     // so there is nothing to retry — a lost submitted record only means a future cycle may re-target /
     // re-upload that BSSID (a degradation, never a lost handshake; the cracked floor still holds).
-    if (markedSubmitted && !submitted_->flushSubmitted()) ++outcome.submittedStoreErrors;
-    // Success only when every attempted upload was terminal AND no remove failed — an associated cycle
-    // that still had a rejection or a stuck remove backs off and retries (decision #7, Scenario C). A
-    // purged corrupt entry, or one skipped as already-cracked (ADR-0059) or already-submitted (ADR-0065),
-    // does NOT block success: it is resolved (gone), so a cycle that only had to purge/skip still counts
-    // clean and lets backoff recover. A submittedStoreError likewise does not block success (ADR-0065 #3).
-    // Terminal uploads, purges and skips shrink the queue; the rejected leftovers wait for the next cycle.
+    if (markedWpaSec && !submitted_->flushSubmitted()) ++outcome.submittedStoreErrors;
+    if (markedPwncrack && !pwncrackSubmitted_->flushSubmitted()) ++outcome.submittedStoreErrors;
+    // Success only when every attempted upload was terminal AND no remove failed: an associated cycle that
+    // still had a rejection (from either backend) or a stuck remove backs off and retries (decision #7). A
+    // purged corrupt entry, or one skipped as already-cracked (ADR-0059) or already-held by every backend
+    // (ADR-0065/-0109), does NOT block success: it is resolved (gone). A submittedStoreError likewise does
+    // not block success (ADR-0065 #3). Terminal uploads, purges and skips shrink the queue; rejected
+    // leftovers wait for the next cycle.
     return allTerminal && outcome.storeErrors == 0;
+}
+
+bool UploadSupervisor::uploadToPwncrack(const uint8_t* pcap, size_t len, const uint8_t bssid[6],
+                                        DrainOutcome& outcome, uint32_t nowMs, bool& flushNeeded) {
+    // Re-derive the hashline from the persisted pcap (ADR-0109 #2): parse the pcap back to a
+    // CapturedHandshake, then ADR-0108 buildHc22000Line, both pure and round-trip-tested. A capture with
+    // no WPA*01 line (a hidden SSID, or not a full 4-way) yields nothing pwncrack can take, now or ever, so
+    // treat it as terminal for pwncrack: it must not block the capture's removal once wpa-sec is done
+    // (wpa-sec still uploads the pcap, which its own ESSID discovery can crack). Counted so it is visible.
+    if (!parseHandshakePcap(pcap, len, pwncrackHandshake_) ||
+        !buildHc22000Line(pwncrackHandshake_, pwncrackLine_, sizeof(pwncrackLine_))) {
+        ++outcome.pwncrackUnderivable;
+        return true;
+    }
+    const UploadResult result = pwncrackUploader_->upload(pwncrackLine_, pwncrackKey_);
+    if (result == UploadResult::Rejected) {
+        ++outcome.pwncrackRejected;  // non-success/unrecognised: keep and retry, never assume success.
+        return false;
+    }
+    // Accepted (pwncrack never answers Duplicate, ADR-0109 amendment; a Duplicate would be terminal too).
+    ++outcome.pwncrackAccepted;
+    pwncrackSubmitted_->markSubmitted(bssid, nowMs);  // record on terminal success only, like the wpa-sec leg.
+    flushNeeded = true;
+    return true;
 }
 
 }  // namespace sapper

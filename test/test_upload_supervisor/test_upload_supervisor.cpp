@@ -22,6 +22,7 @@
 #include "net/capture_queue.h"
 #include "net/cracked_lookup.h"
 #include "net/handshake_collector.h"
+#include "net/hc22000_uploader.h"
 #include "net/hunt_engine.h"
 #include "net/submitted_manifest.h"
 #include "net/upload_supervisor.h"
@@ -798,6 +799,195 @@ void test_d_flush_failure_is_loud_but_not_a_cycle_failure(void) {
     TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.pendingActivity());  // cycle counted clean (backoff reset).
 }
 
+// --- Dual-backend drain: pwncrack alongside wpa-sec (ADR-0109 #3/#4, §4 #46b/c) --------------------
+
+/// A scripted fake pwncrack upload seam, the Hc22000Uploader twin of FakeUploader: records each call's
+/// hashline + key and returns a scripted-then-default result, so a test can force accept/reject sequences.
+class FakeHc22000Uploader : public Hc22000Uploader {
+public:
+    UploadResult defaultResult = UploadResult::Accepted;
+    std::vector<UploadResult> scripted;  // consumed front-to-back; falls back to defaultResult.
+    struct Call { std::string line; std::string key; };
+    std::vector<Call> calls;
+    UploadResult upload(const char* line, const char* key) override {
+        calls.push_back({line != nullptr ? line : "", key != nullptr ? key : ""});
+        if (!scripted.empty()) {
+            const UploadResult r = scripted.front();
+            scripted.erase(scripted.begin());
+            return r;
+        }
+        return defaultResult;
+    }
+};
+
+static const char* kPwncrackKey = "test-pwncrack-key";
+
+/// A beacon+M1+M2 handshake for a hidden network (empty SSID): wpa-sec-valid (uploads as a pcap), but it
+/// has no crackable WPA*01 line, so pwncrack's buildHc22000Line yields nothing (ADR-0108 decision #4).
+static CapturedHandshake makeHiddenHandshake(const uint8_t bssid[6]) {
+    HandshakeCollector collector(bssid, 6);
+    const std::vector<uint8_t> beacon = buildBeacon(bssid, "", 6);  // hidden: empty SSID element.
+    collector.ingest(beacon.data(), static_cast<uint16_t>(beacon.size()));
+    const std::vector<uint8_t> m1 = buildEapol(bssid, kClient, sapper_test::kKeyInfoM1, true);
+    collector.ingest(m1.data(), static_cast<uint16_t>(m1.size()));
+    const std::vector<uint8_t> m2 = buildEapol(bssid, kClient, sapper_test::kKeyInfoM2, false);
+    collector.ingest(m2.data(), static_cast<uint16_t>(m2.size()));
+    return collector.handshake();
+}
+
+void test_pwncrack_capture_removed_only_when_both_backends_terminal(void) {
+    // Both backends upload the same capture in one window; it leaves the queue only after BOTH accept, and
+    // each records the BSSID in its OWN submitted set (two SubmittedManifest instances, ADR-0109 #3/#4).
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+
+    FakeSubmittedStore wpaStore;
+    SubmittedManifest wpaSubmitted(wpaStore);
+    FakeSubmittedStore pwnStore;
+    SubmittedManifest pwnSubmitted(pwnStore);
+    TEST_ASSERT_TRUE(wpaSubmitted.begin());
+    TEST_ASSERT_TRUE(pwnSubmitted.begin());
+    FakeHc22000Uploader pwnUploader;
+    pwnUploader.defaultResult = UploadResult::Accepted;
+    rig.supervisor.setSubmittedRecorder(wpaSubmitted);
+    rig.supervisor.setPwncrackBackend(pwnUploader, kPwncrackKey, pwnSubmitted);
+    rig.start(0);
+
+    const auto ap = bssidN(1);
+    rig.supervisor.onCaptureReady(makeHandshake(ap.data()));
+    rig.supervisor.tick(100);
+    rig.supervisor.tick(106);
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());       // wpa-sec uploaded once (the pcap),
+    TEST_ASSERT_EQUAL_UINT32(1, pwnUploader.calls.size());        // pwncrack uploaded once in the same window,
+    TEST_ASSERT_EQUAL_STRING(kPwncrackKey, pwnUploader.calls[0].key.c_str());
+    TEST_ASSERT_EQUAL_size_t(0, pwnUploader.calls[0].line.rfind("WPA*01*", 0));  // a real hc22000 line,
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().accepted);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().pwncrackAccepted);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());                // removed only after BOTH accepted,
+    TEST_ASSERT_TRUE(wpaSubmitted.isSubmitted(ap.data()));        // each backend recorded it in its own set,
+    TEST_ASSERT_TRUE(pwnSubmitted.isSubmitted(ap.data()));
+    TEST_ASSERT_EQUAL_INT(1, wpaStore.saveCount);                 // one flush per backend this cycle.
+    TEST_ASSERT_EQUAL_INT(1, pwnStore.saveCount);
+}
+
+void test_pwncrack_rejection_keeps_capture_without_reuploading_wpasec(void) {
+    // wpa-sec accepts but pwncrack rejects: the capture is KEPT (not both terminal). On the retry window,
+    // wpa-sec already holds it so it is NOT re-uploaded (its submitted set skips it); pwncrack alone retries
+    // and, on success, the capture is finally removed (ADR-0109 #3/#4: a backend already holding a capture
+    // is not re-uploaded while the other owes one).
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.backoffBaseMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+
+    FakeSubmittedStore wpaStore;
+    SubmittedManifest wpaSubmitted(wpaStore);
+    FakeSubmittedStore pwnStore;
+    SubmittedManifest pwnSubmitted(pwnStore);
+    TEST_ASSERT_TRUE(wpaSubmitted.begin());
+    TEST_ASSERT_TRUE(pwnSubmitted.begin());
+    FakeHc22000Uploader pwnUploader;
+    pwnUploader.scripted = {UploadResult::Rejected, UploadResult::Accepted};  // fail, then succeed.
+    rig.supervisor.setSubmittedRecorder(wpaSubmitted);
+    rig.supervisor.setPwncrackBackend(pwnUploader, kPwncrackKey, pwnSubmitted);
+    rig.start(0);
+
+    const auto ap = bssidN(1);
+    rig.supervisor.onCaptureReady(makeHandshake(ap.data()));
+
+    rig.supervisor.tick(0);
+    rig.supervisor.tick(6);   // cycle 1: wpa-sec accepts + records, pwncrack rejects -> capture kept.
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());
+    TEST_ASSERT_EQUAL_UINT32(1, pwnUploader.calls.size());
+    TEST_ASSERT_EQUAL_UINT32(1, rig.store.size());               // still queued (pwncrack owes it),
+    TEST_ASSERT_TRUE(wpaSubmitted.isSubmitted(ap.data()));
+    TEST_ASSERT_FALSE(pwnSubmitted.isSubmitted(ap.data()));
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().pwncrackRejected);
+
+    rig.supervisor.tick(106);
+    rig.supervisor.tick(112);  // cycle 2 (past backoff): wpa-sec skipped, pwncrack retries + accepts.
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());      // wpa-sec NOT re-uploaded (submitted skip),
+    TEST_ASSERT_EQUAL_UINT32(2, pwnUploader.calls.size());       // pwncrack retried,
+    TEST_ASSERT_TRUE(pwnSubmitted.isSubmitted(ap.data()));       // now recorded,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());               // and removed once BOTH terminal.
+}
+
+void test_pwncrack_already_submitted_skips_only_pwncrack(void) {
+    // pwncrack already holds X (seeded); wpa-sec does not. One drain: wpa-sec uploads, pwncrack is skipped
+    // (not re-uploaded), both are then terminal so X is removed, the per-backend skip in isolation.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+
+    FakeSubmittedStore wpaStore;
+    SubmittedManifest wpaSubmitted(wpaStore);
+    FakeSubmittedStore pwnStore;
+    pwnStore.seed({{{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}, 1}});  // X pre-submitted to pwncrack.
+    SubmittedManifest pwnSubmitted(pwnStore);
+    TEST_ASSERT_TRUE(wpaSubmitted.begin());
+    TEST_ASSERT_TRUE(pwnSubmitted.begin());
+    FakeHc22000Uploader pwnUploader;
+    rig.supervisor.setSubmittedRecorder(wpaSubmitted);
+    rig.supervisor.setPwncrackBackend(pwnUploader, kPwncrackKey, pwnSubmitted);
+    rig.start(0);
+
+    const auto x = bssidN(1);
+    TEST_ASSERT_TRUE(pwnSubmitted.isSubmitted(x.data()));
+    rig.supervisor.onCaptureReady(makeHandshake(x.data()));
+    rig.supervisor.tick(100);
+    rig.supervisor.tick(106);
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());   // wpa-sec uploaded (it had not submitted it),
+    TEST_ASSERT_EQUAL_UINT32(0, pwnUploader.calls.size());    // pwncrack skipped (already holds it),
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());            // both terminal -> removed,
+    TEST_ASSERT_TRUE(wpaSubmitted.isSubmitted(x.data()));     // wpa-sec now recorded it too.
+}
+
+void test_pwncrack_underivable_capture_does_not_block_removal(void) {
+    // A hidden-SSID capture has no WPA*01 line, so pwncrack can never take it. It must not block removal:
+    // pwncrack is treated terminal (counted underivable, not uploaded, not recorded submitted) while
+    // wpa-sec still uploads the pcap and the capture is removed once wpa-sec is done (ADR-0109 #2/#3).
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+
+    FakeSubmittedStore wpaStore;
+    SubmittedManifest wpaSubmitted(wpaStore);
+    FakeSubmittedStore pwnStore;
+    SubmittedManifest pwnSubmitted(pwnStore);
+    TEST_ASSERT_TRUE(wpaSubmitted.begin());
+    TEST_ASSERT_TRUE(pwnSubmitted.begin());
+    FakeHc22000Uploader pwnUploader;
+    rig.supervisor.setSubmittedRecorder(wpaSubmitted);
+    rig.supervisor.setPwncrackBackend(pwnUploader, kPwncrackKey, pwnSubmitted);
+    rig.start(0);
+
+    const auto hidden = bssidN(9);
+    rig.supervisor.onCaptureReady(makeHiddenHandshake(hidden.data()));
+    rig.supervisor.tick(100);
+    rig.supervisor.tick(106);
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());                      // wpa-sec uploaded the pcap,
+    TEST_ASSERT_EQUAL_UINT32(0, pwnUploader.calls.size());                       // pwncrack had nothing to send,
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().pwncrackUnderivable); // counted underivable,
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());                               // and the capture was removed.
+    TEST_ASSERT_FALSE(pwnSubmitted.isSubmitted(hidden.data()));                  // underivable is not a submission.
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_capture_below_threshold_is_enqueued_without_pausing_the_hunt);
@@ -824,5 +1014,9 @@ int main(int, char**) {
     RUN_TEST(test_c_no_recorder_wired_uploads_and_records_nothing);
     RUN_TEST(test_d_only_a_terminal_success_records_submitted);
     RUN_TEST(test_d_flush_failure_is_loud_but_not_a_cycle_failure);
+    RUN_TEST(test_pwncrack_capture_removed_only_when_both_backends_terminal);
+    RUN_TEST(test_pwncrack_rejection_keeps_capture_without_reuploading_wpasec);
+    RUN_TEST(test_pwncrack_already_submitted_skips_only_pwncrack);
+    RUN_TEST(test_pwncrack_underivable_capture_does_not_block_removal);
     return UNITY_END();
 }
