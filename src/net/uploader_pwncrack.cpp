@@ -55,14 +55,19 @@ int readByte(WiFiClientSecure& client, uint32_t& lastMs) {
 }
 
 // Parse the numeric status code out of an HTTP status line like "HTTP/1.1 200 OK". Returns 0 if the line is
-// not a recognisable status line (fail-closed: classify() rejects a 0 status).
+// not a recognisable status line (fail-closed: classify() rejects a 0 status). A code must be exactly three
+// digits: a 4th digit means a malformed status, so fail closed rather than silently truncate "2001" to 200.
 int parseStatusCode(const char* line) {
     const char* space = std::strchr(line, ' ');
     if (space == nullptr) return 0;
-    int code = 0;
     const char* p = space + 1;
     if (*p < '0' || *p > '9') return 0;
-    for (int i = 0; i < 3 && *p >= '0' && *p <= '9'; ++i, ++p) code = code * 10 + (*p - '0');
+    int code = 0;
+    int digits = 0;
+    for (; *p >= '0' && *p <= '9'; ++p) {
+        if (++digits > 3) return 0;  // a 4th consecutive digit: not a 3-digit HTTP status.
+        code = code * 10 + (*p - '0');
+    }
     return code;
 }
 
@@ -164,7 +169,11 @@ UploadResult PwncrackUploader::upload(const char* hc22000Line, const char* key) 
     client.write(reinterpret_cast<const uint8_t*>(hc22000Line), lineLen);
     client.write(reinterpret_cast<const uint8_t*>(footer), static_cast<size_t>(footerLen));
 
-    char body[kPwncrackResponseMax];
+    // One byte larger than the classifier's bound: a reply that fills all kPwncrackResponseMax + 1 bytes
+    // reports bodyLen past the bound, so classifyPwncrackResponse rejects it rather than parsing a body
+    // that may have been truncated mid-object (the over-bound guard is reachable, not just a ceiling the
+    // device read can never reach). A body of kPwncrackResponseMax or fewer bytes read complete and parses.
+    char body[kPwncrackResponseMax + 1];
     size_t bodyLen = 0;
     const int status = readResponse(client, body, sizeof(body), bodyLen);
     client.stop();

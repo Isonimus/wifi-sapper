@@ -39,9 +39,10 @@ constexpr size_t kPwncrackResponseMax = 256;
  * @param httpStatus the HTTP status line code (e.g. 200, 400).
  * @param body       the response body; need not be NUL-terminated (parsed over @p len).
  * @param len        length of @p body in bytes.
- * @return Accepted only when @p httpStatus is 200 and @p body is JSON whose `success` is boolean true;
- *         Rejected on everything else (non-200, nullptr/empty/over-bound body, non-JSON, a `success` that
- *         is missing, false, or not a boolean). Never Duplicate (pwncrack has no duplicate signal).
+ * @return Accepted only when @p httpStatus is 200 and @p body is a JSON object whose `success` is boolean
+ *         true; Rejected on everything else (non-200, nullptr/empty/over-bound body, non-JSON, a non-object
+ *         JSON root, a `success` that is missing, false, or not a boolean). Never Duplicate (pwncrack has no
+ *         duplicate signal).
  */
 UploadResult classifyPwncrackResponse(int httpStatus, const char* body, size_t len);
 

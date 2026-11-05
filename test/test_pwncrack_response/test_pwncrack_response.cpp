@@ -27,23 +27,27 @@ static UploadResult classify(int status, const char* body) {
 
 // --- The four measured legs (frozen fixtures). ---
 
-// Leg 1 accept and leg 2 re-upload both answer HTTP 200 {"success":true}: both Accepted (no dup signal).
-void test_accept_and_reupload_both_accepted(void) {
-    TEST_ASSERT_EQUAL(UploadResult::Accepted, classify(200, "{\"success\":true}"));
-    // re-upload is byte-identical; pwncrack cannot distinguish it, so it is Accepted again, never Duplicate.
-    TEST_ASSERT_EQUAL(UploadResult::Accepted, classify(200, "{\"success\":true}"));
-}
-
-// Leg 3 malformed content also answers HTTP 200 {"success":true} (content is validated async server-side).
-// Harmless here: the firmware only ever uploads a well-formed WPA*01 line, and pwncrack is the secondary
-// backend under both-terminal removal, so a residual accept costs no handshake (ADR-0109 amendment).
-void test_malformed_content_still_accepted(void) {
+// The three success legs (leg 1 accept, leg 2 re-upload, leg 3 malformed content) all answer HTTP 200
+// {"success":true}: all Accepted, never Duplicate. pwncrack cannot distinguish a fresh submit from a
+// re-submit (no dup signal), and content is validated async server-side so a malformed line still gets a
+// success body here (harmless: the firmware only uploads well-formed WPA*01 lines, and pwncrack is the
+// secondary backend under both-terminal removal, so a residual accept costs no handshake, ADR-0109 amendment).
+void test_the_success_body_is_accepted(void) {
     TEST_ASSERT_EQUAL(UploadResult::Accepted, classify(200, "{\"success\":true}"));
 }
 
 // Leg 4 bad key answers HTTP 400 {"error":"Invalid session key."}: Rejected (synchronous auth fails loud).
 void test_bad_key_rejected(void) {
     TEST_ASSERT_EQUAL(UploadResult::Rejected, classify(400, "{\"error\":\"Invalid session key.\"}"));
+}
+
+// A JSON root that is not an object (a bare boolean, a number, an array, a string) is not the pwncrack
+// shape and is Rejected, even a bare `true` that a laxer check might coerce (review finding, no-coercion).
+void test_non_object_json_root_rejected(void) {
+    TEST_ASSERT_EQUAL(UploadResult::Rejected, classify(200, "true"));
+    TEST_ASSERT_EQUAL(UploadResult::Rejected, classify(200, "1"));
+    TEST_ASSERT_EQUAL(UploadResult::Rejected, classify(200, "[true]"));
+    TEST_ASSERT_EQUAL(UploadResult::Rejected, classify(200, "\"success\""));
 }
 
 // --- Fail-closed cases. ---
@@ -80,6 +84,22 @@ void test_empty_null_and_overbound_rejected(void) {
     TEST_ASSERT_EQUAL(UploadResult::Rejected, classifyPwncrackResponse(200, big.data(), big.size()));
 }
 
+// The over-bound guard is reachable at the exact boundary: a valid success object of exactly
+// kPwncrackResponseMax bytes parses and is Accepted (it read complete), while one of kPwncrackResponseMax+1
+// bytes is Rejected before any parse (the device reads into a +1 buffer so a filled reply is detectably
+// over-bound, review MED #1). Pins both sides of the bound.
+void test_body_bound_boundary(void) {
+    const std::string base = "{\"success\":true,\"p\":\"";  // + pad + "\"}" closes the object.
+    const size_t overhead = base.size() + 2;               // the trailing `"}`.
+    std::string at = base + std::string(kPwncrackResponseMax - overhead, 'x') + "\"}";
+    TEST_ASSERT_EQUAL_size_t(kPwncrackResponseMax, at.size());
+    TEST_ASSERT_EQUAL(UploadResult::Accepted, classifyPwncrackResponse(200, at.data(), at.size()));
+
+    std::string over = base + std::string(kPwncrackResponseMax + 1 - overhead, 'x') + "\"}";
+    TEST_ASSERT_EQUAL_size_t(kPwncrackResponseMax + 1, over.size());
+    TEST_ASSERT_EQUAL(UploadResult::Rejected, classifyPwncrackResponse(200, over.data(), over.size()));
+}
+
 // The classifier reads exactly `len` bytes, not a NUL terminator: a success object followed by trailing
 // non-JSON bytes beyond `len` must not be read, and a truncated-at-len success object still classifies on
 // what was given. (Guards against a future switch to strlen that would overread an unterminated TLS buffer.)
@@ -91,13 +111,14 @@ void test_respects_explicit_length(void) {
 
 int main(int, char**) {
     UNITY_BEGIN();
-    RUN_TEST(test_accept_and_reupload_both_accepted);
-    RUN_TEST(test_malformed_content_still_accepted);
+    RUN_TEST(test_the_success_body_is_accepted);
     RUN_TEST(test_bad_key_rejected);
+    RUN_TEST(test_non_object_json_root_rejected);
     RUN_TEST(test_non_json_200_rejected);
     RUN_TEST(test_success_body_with_non_200_rejected);
     RUN_TEST(test_success_false_or_mistyped_or_missing_rejected);
     RUN_TEST(test_empty_null_and_overbound_rejected);
+    RUN_TEST(test_body_bound_boundary);
     RUN_TEST(test_respects_explicit_length);
     return UNITY_END();
 }

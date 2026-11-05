@@ -22,9 +22,14 @@ UploadResult classifyPwncrackResponse(int httpStatus, const char* body, size_t l
     const DeserializationError err = deserializeJson(doc, body, len);
     if (err) return UploadResult::Rejected;  // not JSON (e.g. a Cloudflare HTML challenge served 200): reject.
 
+    // The contract's body is a JSON *object* (`{"success": true}` / `{"error": ...}`). Require an object
+    // root explicitly: a non-object root (a bare `true`, a number, an array) is not the pwncrack shape, so
+    // reject it rather than lean on the key lookup below happening to return null for a non-object.
+    if (!doc.is<JsonObject>()) return UploadResult::Rejected;
+
     // `success` must be a real JSON boolean true. Requiring the boolean type rejects a string "true" or a
     // numeric 1, so a truthy-but-wrong-typed field never false-accepts, and a missing key (the HTTP 400
-    // `{"error": ...}` shape, or any unrecognised body) reads as not-a-bool and is Rejected.
+    // `{"error": ...}` shape, or any unrecognised object) reads as not-a-bool and is Rejected.
     JsonVariantConst success = doc["success"];
     if (success.is<bool>() && success.as<bool>()) return UploadResult::Accepted;
     return UploadResult::Rejected;
