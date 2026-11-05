@@ -1,0 +1,52 @@
+pwncrack upload-response schema probe (ADR-0109) — redacted: field names + value types only
+generated: 2026-11-05T14:56:26.998Z
+source: POST https://pwncrack.org/upload_handshake, four legs (accept / re-upload / malformed content / bad key)
+
+=== leg 1 accept (expect: HTTP 200 {"success":true}) ===
+HTTP status: 200
+content-type: application/json; charset=utf-8
+cloudflare-challenge: false
+is-json: true
+positive-token (HTTP 200 + success===true): true
+shape:
+{
+  "success": "<boolean>"
+}
+
+=== leg 2 re-upload (duplicate?) (expect: same as #1 (pwncrack has no dup signal)) ===
+HTTP status: 200
+content-type: application/json; charset=utf-8
+cloudflare-challenge: false
+is-json: true
+positive-token (HTTP 200 + success===true): true
+shape:
+{
+  "success": "<boolean>"
+}
+
+=== leg 3 malformed content (expect: a NON-success reject (if it also says success:true, the token is untrustworthy)) ===
+HTTP status: 200
+content-type: application/json; charset=utf-8
+cloudflare-challenge: false
+is-json: true
+positive-token (HTTP 200 + success===true): true
+shape:
+{
+  "success": "<boolean>"
+}
+
+=== leg 4 bad key (expect: an auth reject (if it also says success:true, the token is untrustworthy)) ===
+HTTP status: 400
+content-type: application/json; charset=utf-8
+cloudflare-challenge: false
+is-json: true
+positive-token (HTTP 200 + success===true): false
+shape:
+{
+  "error": "<string>"
+}
+
+=== verdict ===
+positive token LEAKED into negative leg(s): 3 malformed content. Classifier design must change (ADR-0109 #6).
+
+Next: paste the stdout back so the PwncrackResponseClassifier fixtures are frozen on measured data (quality bar §3).
