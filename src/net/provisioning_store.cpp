@@ -20,6 +20,7 @@ constexpr char kKeyPass[] = "wifi_pass";
 constexpr char kKeyKey[] = "wpasec_key";
 constexpr char kKeyWebhook[] = "webhook_url";  // 11 chars, within NVS's 15-char key limit.
 constexpr char kKeyDeauth[] = "deauth_arm";    // 10 chars; the default-off deauth arm flag (ADR-0029).
+constexpr char kKeyPmkid[] = "pmkid_arm";      // 9 chars; the default-off PMKID-solicit arm flag (ADR-0110).
 // Per-type push selector (ADR-0035, §4 #19); each within NVS's 15-char key limit. notify_crk defaults
 // TRUE on read to preserve the pre-0035 crack push; the other two default FALSE (opt-in, high-volume).
 constexpr char kKeyNotifyCap[] = "notify_cap";
@@ -53,6 +54,10 @@ bool loadProvisioning(ProvisioningRecord& out) {
     // left the box unchecked, reads back disarmed — arming is never silent. Not part of the validity
     // gate below (deauth is optional, like the webhook).
     out.deauthEnabled = prefs.getBool(kKeyDeauth, /*defaultValue=*/false);
+    // Default-off (ADR-0110 #5d): the second active-TX arm. A device provisioned before it existed,
+    // or one whose operator left the box unchecked, reads back un-armed — solicitation (which
+    // impersonates a station) is never silent. Independent of the deauth arm; not part of the gate.
+    out.pmkidSolicit = prefs.getBool(kKeyPmkid, /*defaultValue=*/false);
     // Per-type push selector (ADR-0035 decision 5). notifyCracked defaults TRUE so a device provisioned
     // before this slice keeps its ADR-0023 crack push; the two new, high-volume types default FALSE so an
     // upgrade never starts a surprise flood. Optional, like the webhook — not part of the validity gate.
@@ -110,6 +115,9 @@ bool persistProvisioning(const ProvisioningRecord& record) {
     // all-or-nothing clear() below, so a partial write never leaves a stale arm state beside a fresh
     // triad — a re-provision that fails mid-way disarms rather than silently keeping deauth on.
     const bool wroteDeauth = prefs.putBool(kKeyDeauth, record.deauthEnabled) == sizeof(uint8_t);
+    // The PMKID-solicit arm (ADR-0110 #5d): one byte, riding the same all-or-nothing clear() below so
+    // a partial write never leaves a stale arm state beside a fresh triad (the deauth-arm shape).
+    const bool wrotePmkid = prefs.putBool(kKeyPmkid, record.pmkidSolicit) == sizeof(uint8_t);
     // The per-type push selector (ADR-0035): three one-byte flags, riding the same all-or-nothing clear()
     // below so a partial write never leaves a stale selector beside a fresh triad.
     const bool wroteNotifyCap = prefs.putBool(kKeyNotifyCap, record.notifyCaptured) == sizeof(uint8_t);
@@ -130,8 +138,8 @@ bool persistProvisioning(const ProvisioningRecord& record) {
     const bool wrotePwncrack =
         prefs.putString(kKeyPwncrack, record.pwncrackKey) == std::strlen(record.pwncrackKey);
     const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook && wroteDeauth &&
-                       wroteNotifyCap && wroteNotifyCrk && wroteNotifyErr && wroteMaintPass &&
-                       wroteDimAfter && wroteOffAfter && wrotePwncrack;
+                       wrotePmkid && wroteNotifyCap && wroteNotifyCrk && wroteNotifyErr &&
+                       wroteMaintPass && wroteDimAfter && wroteOffAfter && wrotePwncrack;
     if (!wrote) {
         prefs.clear();  // partial write — wipe so no mixed triad can survive to the next boot.
     }

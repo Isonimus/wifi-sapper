@@ -164,6 +164,7 @@ void MaintenancePortal::handleConfig() {
     // a provisioned device (ADR-0039 decision 2), so there is always a stored record here.
     SetupFormModel model = {};
     model.deauthArmed = m_creds.deauthEnabled;
+    model.pmkidSolicit = m_creds.pmkidSolicit;  // the second active-TX arm (ADR-0110 #5d).
     model.notifyCaptured = m_creds.notifyCaptured;
     model.notifyCracked = m_creds.notifyCracked;
     model.notifySyncError = m_creds.notifySyncError;
@@ -210,6 +211,7 @@ void MaintenancePortal::handleSave() {
     // An HTML checkbox posts "on" when checked and is absent otherwise; an unchecked box is a deliberate
     // disarm now the form renders the stored state (ADR-0029/ADR-0035/ADR-0037).
     submitted.deauthEnabled = (m_http.arg("deauth") == "on");
+    submitted.pmkidSolicit = (m_http.arg("pmkid") == "on");  // the second active-TX arm (ADR-0110 #5d).
     submitted.notifyCaptured = (m_http.arg("nCaptured") == "on");
     submitted.notifyCracked = (m_http.arg("nCracked") == "on");
     submitted.notifySyncError = (m_http.arg("nSyncErr") == "on");

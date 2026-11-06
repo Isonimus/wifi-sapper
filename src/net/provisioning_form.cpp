@@ -89,6 +89,12 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "<p><label><input name='deauth' type='checkbox'%s> Enable deauth (arm)</label><br>"
         "<small>Only on networks you are authorized to test. Knocks clients off discovered APs to force "
         "handshakes. Off by default.</small></p>"
+        // The second active-TX arm (ADR-0110 #5d): clientless PMKID solicitation, independent of deauth
+        // (the four combinations give passive / Deauth / PMKID / Both). Armed only by an explicit check
+        // like deauth, since it impersonates a station (a new active behaviour). Off by default.
+        "<p><label><input name='pmkid' type='checkbox'%s> Enable PMKID solicitation (arm)</label><br>"
+        "<small>Only on networks you are authorized to test. Solicits a PMKID from PMK-caching APs with "
+        "no client present. Off by default.</small></p>"
         "<p>Maintenance dashboard passphrase (min 8 chars)<br>"
         "<input name='maintpass' type='password' maxlength='63' placeholder='%s'><br>"
         "<small>Protects the results dashboard shown when you press BOOT during the boot splash. Blank "
@@ -104,7 +110,8 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "</form></div></body></html>",
         kPortalThemeCss, kPortalWordmarkSvg, ssidField, passField, wifiHelp,
         keyField, pwncrackPlaceholder, webhookPlaceholder, checkedAttr(model.notifyCracked), checkedAttr(model.notifyCaptured),
-        checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed), maintPlaceholder,
+        checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed),
+        checkedAttr(model.pmkidSolicit), maintPlaceholder,
         static_cast<unsigned>(model.screenDimAfterSec), static_cast<unsigned>(model.screenOffAfterSec));
 
     // snprintf returns what it *would* have written: >= outSize means it truncated. Serve nothing

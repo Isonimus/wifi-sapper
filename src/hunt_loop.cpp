@@ -273,6 +273,13 @@ constexpr uint32_t kDeauthHeartbeatMs = 2000;
 bool g_deauthArmed = false;
 uint32_t g_deauthHbDueMs = 0;
 
+// PMKID-solicit arm state + heartbeat (ADR-0110 #5d, the §4 #16 refinement): when armed, log the
+// engine's solicit TX counts on the same 2 s cadence as deauth so a surface and the on-air verify can
+// see a shipped binary injecting the blind auth/assoc pair while hunting. Its own due-timer, not the
+// deauth one, so arming only solicit does not depend on the deauth timer having advanced.
+bool g_solicitArmed = false;
+uint32_t g_solicitHbDueMs = 0;
+
 // Edge-tracks the supervisor's drain counter so a submitted-store flush failure (ADR-0065 #3) is logged
 // loud once per failing drain, not re-logged every pump (§3 fail-loud, without the spam).
 uint32_t g_lastLoggedDrainCount = 0;
@@ -390,16 +397,20 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     }
 
     g_creds = creds;  // own the credentials so the adapter/supervisor pointers never dangle.
-    // Inject the raw-TX path iff the operator armed deauth in NVS (ADR-0029, default-off); disarmed injects
-    // a null transmitter -> the passive hunt. A non-null transmitter no longer alone arms anything
-    // (ADR-0110 #5, the §4 #16 refinement), so arm deauth explicitly through setDeauthArmed below. (Slice 3
-    // widens the injection condition to `|| pmkidSolicit` and adds setSolicitArmed.) Built before the
-    // supervisor, which holds it by ref.
+    // Inject the raw-TX path iff the operator armed EITHER active-TX behaviour in NVS (ADR-0029 deauth,
+    // ADR-0110 #5d PMKID solicit; both default-off). A non-null transmitter no longer alone arms anything
+    // (ADR-0110 #5, the §4 #16 refinement) — it means only "raw-TX path available"; the two flags below
+    // gate what is actually sent (the four combinations give passive / Deauth / PMKID / Both). Neither
+    // armed injects a null transmitter -> the byte-for-byte passive hunt. Built before the supervisor,
+    // which holds it by ref.
     g_deauthArmed = g_creds.deauthEnabled;
+    g_solicitArmed = g_creds.pmkidSolicit;
+    const bool rawTxArmed = g_deauthArmed || g_solicitArmed;
     g_engine = new (g_engineStorage)
         HuntEngine(g_sniffer, g_registry, g_relay, kShippedHopChannels, kShippedHopChannelCount,
-                   HuntConfig{}, g_deauthArmed ? &g_rawTx : nullptr);
+                   HuntConfig{}, rawTxArmed ? &g_rawTx : nullptr);
     g_engine->setDeauthArmed(g_deauthArmed);
+    g_engine->setSolicitArmed(g_solicitArmed);
     g_station = new (g_stationStorage) Esp32StationControl(g_creds.ssid, g_creds.pass);
     g_sync = new (g_syncStorage) CrackedSync(g_fetcher, *g_manifest, g_creds.key, g_bus);
     g_session = new (g_sessionStorage) ScheduledSyncSession(g_scheduler, *g_sync);
@@ -524,6 +535,11 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     Serial.println(g_deauthArmed
         ? "[DEAUTH] ARMED - deauthing discovered APs to force handshakes (authorized use only)"
         : "[DEAUTH] disarmed - passive hunt (arm via the provisioning portal)");
+    // Announce the solicit arm (ADR-0110 #5d): an armed appliance injects the blind auth/assoc pair at
+    // PMK-caching APs it captures, soliciting a clientless PMKID. The on-air verify greps the ARMED line.
+    Serial.println(g_solicitArmed
+        ? "[SOLICIT] ARMED - soliciting clientless PMKIDs from captured APs (authorized use only)"
+        : "[SOLICIT] disarmed - no PMKID solicitation (arm via the provisioning portal)");
     g_supervisor->begin(millis());  // also seeds the hourly sync cadence (SyncSession::begin).
     g_ledDriver.begin();            // configure the LED GPIO now the Arduino core is up.
     g_ledSurface.begin(millis());   // light the LED in its hunting heartbeat.
@@ -595,6 +611,16 @@ void huntLoopPump() {
         Serial.printf("[DEAUTH] txOk=%lu txFail=%lu capturing=%d\n",
                       static_cast<unsigned long>(g_engine->deauthTxOk()),
                       static_cast<unsigned long>(g_engine->deauthTxFail()),
+                      g_engine->capturingBssid() != nullptr ? 1 : 0);
+    }
+    // Solicit heartbeat (ADR-0110 #5d): only when armed, so a disarmed shipped binary stays silent on it.
+    // The repeating txOk line is what the on-air verify gates on (a boot-once line can be missed on the S3
+    // USB-CDC, the slice-0028 lesson the deauth heartbeat above already encodes).
+    if (g_solicitArmed && reached(now, g_solicitHbDueMs)) {
+        g_solicitHbDueMs = now + kDeauthHeartbeatMs;
+        Serial.printf("[SOLICIT] txOk=%lu txFail=%lu capturing=%d\n",
+                      static_cast<unsigned long>(g_engine->solicitTxOk()),
+                      static_cast<unsigned long>(g_engine->solicitTxFail()),
                       g_engine->capturingBssid() != nullptr ? 1 : 0);
     }
 }

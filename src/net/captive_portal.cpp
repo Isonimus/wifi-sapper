@@ -77,6 +77,7 @@ void CaptivePortal::handleRoot() {
     SetupFormModel model = {};
     if (loadProvisioning(stored)) {
         model.deauthArmed = stored.deauthEnabled;
+        model.pmkidSolicit = stored.pmkidSolicit;  // the second active-TX arm (ADR-0110 #5d).
         model.notifyCaptured = stored.notifyCaptured;
         model.notifyCracked = stored.notifyCracked;
         model.notifySyncError = stored.notifySyncError;
@@ -121,6 +122,9 @@ void CaptivePortal::handleSave() {
     // "on" when checked and is absent otherwise, so an unset field is the default-off disarmed state.
     // The form now renders the stored state (ADR-0037), so an unchecked box is a deliberate disarm.
     submitted.deauthEnabled = (m_http.arg("deauth") == "on");
+    // Arm PMKID solicitation only on an explicit check (ADR-0110 #5d), the same default-off checkbox
+    // shape as deauth: unchecked is the disarmed default now the form renders stored state (ADR-0037).
+    submitted.pmkidSolicit = (m_http.arg("pmkid") == "on");
     // Per-type push selector (ADR-0035, §4 #19): each box posts "on" when checked, absent otherwise.
     submitted.notifyCaptured = (m_http.arg("nCaptured") == "on");
     submitted.notifyCracked = (m_http.arg("nCracked") == "on");

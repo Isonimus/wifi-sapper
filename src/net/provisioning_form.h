@@ -27,6 +27,8 @@ namespace sapper {
  */
 struct SetupFormModel {
     bool deauthArmed;       ///< Render the deauth arm checkbox `checked`.
+    bool pmkidSolicit;      ///< Render the PMKID-solicit arm checkbox `checked` (ADR-0110 #5d). A toggle,
+                            ///< not a secret, so its stored state renders back like the deauth arm.
     bool notifyCaptured;    ///< Render the "captures" push checkbox `checked`.
     bool notifyCracked;     ///< Render the "cracked" push checkbox `checked`.
     bool notifySyncError;   ///< Render the "sync errors" push checkbox `checked`.
@@ -56,11 +58,14 @@ struct SetupFormModel {
 
 /// Buffer size for the rendered setup form. Since slice-0098 the form carries the shared portal theme
 /// (CSS 1620 B + the SVG wordmark 621 B, injected into the head); ADR-0106 added the Wi-Fi keep/open
-/// markup, and ADR-0109 the optional pwncrack-key field. The measured worst case (every "leave blank to
-/// keep" placeholder, the Open checkbox + help line, and both dim fields at 65535) is 4728 B; 5 KB leaves
-/// ~392 B margin. A compile-time size so `buildSetupForm` fails loud (returns 0) rather than truncating if
-/// it ever outgrows this (the worst-case render is pinned by test_form_carries_the_theme_and_wordmark_in_the_head).
-constexpr size_t kSetupFormBufSize = 5120;
+/// markup, ADR-0109 the optional pwncrack-key field, and ADR-0110 the PMKID-solicit arm checkbox + help
+/// line (~241 B). The true worst case (every "leave blank to keep" placeholder, the Open checkbox + help
+/// line, both arm checkboxes `checked` at +8 B each, and both dim fields at 65535) is ~4999 B; 5632 B
+/// leaves ~633 B margin. The pinning test test_form_carries_the_theme_and_wordmark_in_the_head renders a
+/// zeroed model (every box unchecked), so it asserts only that this fit holds, ~40 B under the checked
+/// worst case. A compile-time size so `buildSetupForm` fails loud (returns 0) rather than truncating if it
+/// ever outgrows this, which is the real guard regardless of the exact worst-case byte count.
+constexpr size_t kSetupFormBufSize = 5632;
 
 /**
  * @brief Render the setup form HTML from @p model into @p out. Pure; no secret can appear (see the
@@ -86,8 +91,8 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize);
  *   value replaces it. `maintenancePass` is a secret handled exactly like the others (ADR-0039 #6), and
  *   `pwncrackKey` likewise (ADR-0109 #46): a blank re-save keeps the pwncrack backend wired, a non-blank
  *   value rotates the key, and clearing it to unwire pwncrack is a deliberate separate action (not a blank).
- * - the four notify/deauth booleans: always taken from the submission — the form now renders their
- *   stored state, so an unchecked box is a deliberate disarm, not a stateless reset.
+ * - the five notify/deauth/pmkid-solicit booleans: always taken from the submission — the form now
+ *   renders their stored state, so an unchecked box is a deliberate disarm, not a stateless reset.
  *
  * When @p hasStored is false (first boot) the SSID/pass are taken from @p submitted (with @p openNetwork
  * clearing the passphrase) and the secrets verbatim, so a blank key still fails `validateCredentials`

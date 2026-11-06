@@ -83,14 +83,22 @@ portal** instead of trying to hunt (ADR-0006):
    unchecked device hunts passively and transmits nothing. **Arm it only where every network in radio
    range is one you own or are explicitly authorized to test** — deauthing networks you are not
    authorized to test is illegal in most jurisdictions.
-8. Optionally, **screen dimming** (ADR-0093), two idle delays in seconds on a board with a panel:
+8. Optionally, **Enable PMKID solicitation (arm)** (ADR-0110): when checked, the hunt loop solicits a
+   PMKID from each PMK-caching AP it captures by injecting a blind open-auth then association request
+   from a spoofed station MAC, so a handshake can be recovered **with no client on the network at all**.
+   It is a second, independent arm beside deauth (the four on/off combinations give passive / deauth /
+   PMKID / both), and like deauth it is **off by default** and impersonates a station, so the same rule
+   applies: **arm it only where every network in radio range is one you own or are explicitly authorized
+   to test.** A solicited PMKID uploads over the same path as a 4-way handshake (wpa-sec as a pcap,
+   pwncrack as a `WPA*02` line).
+9. Optionally, **screen dimming** (ADR-0093), two idle delays in seconds on a board with a panel:
    **Screen dim after** (the backlight drops to a readable ~15% after this long idle; 0 = never dim) and
    **Screen off after** (fully dark after this long; 0 = dim only, never off). Both **off by default**.
    The screen brightens again on a capture or a crack (and on a button press, on button boards), and the
    hunt keeps running the whole time: dimming only changes the backlight, it never sleeps the device.
    Saves battery and reduces the lit-screen tell of a planted unit. Both fields are pre-filled with their
    stored value when you reopen the form, so a re-save to change something else preserves them.
-9. Save. The device stores the credentials and reboots to join the network.
+10. Save. The device stores the credentials and reboots to join the network.
 
 On a board **with a screen**, these join details (the `Sapper-XXXX` name, the `sapper-setup`
 passphrase, and `http://192.168.4.1/`) are shown on the panel while the setup portal is up
@@ -105,7 +113,7 @@ to the setup portal automatically, so a moved or reconfigured appliance can be p
 network without a reflash.
 
 The re-opened form shows your **stored settings** so a re-save does not silently undo them (ADR-0037):
-the **Push these** and **Enable deauth** checkboxes come up reflecting how the device is currently set,
+the **Push these**, **Enable deauth** and **Enable PMKID solicitation** checkboxes come up reflecting how the device is currently set,
 and the Wi-Fi, wpa-sec key, pwncrack key and webhook URL fields all carry a *"leave blank to keep"* hint. Secret values
 (and the SSID) are never displayed — only the fact that one is stored — so nothing sensitive is exposed to
 anyone on the setup AP. **Leave the network name blank to keep your current Wi-Fi**, and **leave the key
@@ -373,6 +381,7 @@ This repo's `package.json` is the verification-script registry (ADR-0004), not a
 | `npm run verify:screen` | Serial-driven status-HUD/toast verify on an attached board with a panel (slice-0026, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_SCREEN=1` (no network or credentials needed — rendering is local); dumps the canvas to `artifacts/0026-screen-toast.png`. Fails if the panel is blank; confirm the HUD (status, counters, sync line) and the CRACKED banner render legibly against the artifact. See the script header. |
 | `npm run verify:deauth` | Serial-driven deauth-TX verify on an attached board (slice-0028, lane 3). **Authorized targets only.** Flash the `cardputer_testhooks` build with `SAPPER_TEST_DEAUTH_BSSID` + `SAPPER_TEST_DEAUTH_CHANNEL` set to a network you own; proves the device puts real deauth/disassoc frames on air (the SDK bypass is active and `txOk>0`). Logs to `artifacts/0028-deauth-tx.txt`; if a client on the target reconnects during the run, the forced handshake is saved as `artifacts/0028-deauth-forced-handshake.pcap`. See the script header. |
 | `npm run verify:deauth-loop` | Serial-driven autonomous-deauth verify on an attached board (slice-0030, lane 3). **Authorized environments only.** Drives the **shipped** `cardputer` binary, provisioned via the portal with **Enable deauth** checked and an authorized AP on air; proves an armed *shipped* loop transmits real deauth during its hunt (`[DEAUTH] ARMED`, repeating `txOk>0`). Logs to `artifacts/0030-deauth-loop-tx.txt`. See the script header. |
+| `npm run verify:solicit` | Serial-driven autonomous clientless-PMKID-solicitation verify on an attached board (slice-0113, lane 3). **Authorized environments only.** Drives a **shipped** binary, provisioned via the portal with **Enable PMKID solicitation** checked and an authorized AP on air; proves an armed *shipped* loop injects the blind auth/assoc pair during its hunt (`[SOLICIT] ARMED`, repeating `txOk>0`). Logs to `artifacts/0113-solicit-loop-tx.txt`. See the script header. |
 | `npm run verify:capture-notify` | Serial-driven capture-notification verify on an attached board with a panel (slice-0032, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_CAPTURE=1` (no network or credentials needed — a capture is announced at enqueue); proves a real board emits a repeating `[CAPTURE] essid=…` line and dumps the panel to `artifacts/0032-capture-notify.png`. Confirm the CAPTURED banner names the injected network against the artifact. See the script header. |
 | `npm run verify:hunt-hud` | Serial-driven live-hunt-HUD verify on an attached board with a panel (slice-0034, lane 3). Flash the `cardputer_testhooks` build with `SAPPER_TEST_HUNT_HUD=1` (no network needed), on a quiet channel; injects a synthetic AP + handshake through the engine's `onFrame` seam so the panel shows the live-hunt line, and dumps it to `artifacts/0034-hunt-hud.png`. Confirm the target + Beacon/M1/M2 indicators + progress bar render against the artifact. See the script header. |
 | `npm run verify:webhook-capture` | Serial-driven capture-push webhook verify on an attached board (slice-0036, lane 3). Flash the `cardputer_testhooks` build with the same real credentials, a real `SAPPER_TEST_WEBHOOK_URL`, and `SAPPER_TEST_WEBHOOK_CAPTURE=1`; forces capture-push on, injects a synthetic capture fact, and proves the transport POSTs a "captured" notification (ESSID/BSSID, no PSK) to the live endpoint (2xx). Confirm it arrived. See the script header. |

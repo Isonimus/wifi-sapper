@@ -38,6 +38,15 @@ struct ProvisioningRecord {
     /// a fresh, upgraded, or unarmed device never jams. Set from the captive-portal checkbox; absent
     /// from NVS on a device provisioned before it existed, where getBool() reads it back as false.
     bool deauthEnabled;
+    /// Whether the operator has *armed* clientless PMKID solicitation (ADR-0110 #5d). Default
+    /// **false**, the second of the two decoupled active-TX arms (§4 #16 refined): the raw-TX path
+    /// ships in every binary, but the hunt loop injects it and sets this arm only when the box is
+    /// checked, so a fresh, upgraded, or unarmed device never impersonates a station. Independent of
+    /// `deauthEnabled` — the four combinations give passive / Deauth / PMKID / Both. Set from the
+    /// captive-portal checkbox; absent from NVS on a device provisioned before it existed, where
+    /// getBool() reads it back as false (never silent arming). Optional, like the deauth arm: never
+    /// part of the credential validity gate.
+    bool pmkidSolicit;
     /// Per-type off-device push selector (ADR-0035, §4 #19). Each gates whether that notification kind
     /// reaches the webhook; the local LED/screen/serial surfaces render every fact regardless. Set from
     /// the captive-portal checkboxes and read back with behaviour-preserving defaults for a device

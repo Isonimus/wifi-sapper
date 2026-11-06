@@ -133,6 +133,43 @@ void test_deauth_absent_key_loads_disarmed(void) {
     TEST_ASSERT_FALSE(out.deauthEnabled);
 }
 
+// --- slice-0113: the PMKID-solicit arm flag round-trips, and defaults OFF (ADR-0110 #5d) -------
+
+void test_pmkid_solicit_arm_roundtrips_and_defaults_off(void) {
+    // A default record is un-armed and stays so across a round-trip — soliciting (which impersonates a
+    // station) is never a side effect of provisioning credentials, exactly like the deauth arm.
+    ProvisioningRecord disarmed = makeRecord("net-a", "passAAAAAAAA", "keyAAAAAAAA");
+    TEST_ASSERT_FALSE(disarmed.pmkidSolicit);
+    TEST_ASSERT_TRUE(persistProvisioning(disarmed));
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_FALSE(out.pmkidSolicit);
+
+    // Explicitly armed: the flag persists and loads back armed, independent of the deauth arm (left off).
+    ProvisioningRecord armed = makeRecord("net-b", "passBBBBBBBB", "keyBBBBBBBB");
+    armed.pmkidSolicit = true;
+    TEST_ASSERT_TRUE(persistProvisioning(armed));
+    ProvisioningRecord out2 = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out2));
+    TEST_ASSERT_TRUE(out2.pmkidSolicit);
+    TEST_ASSERT_FALSE(out2.deauthEnabled);  // the two arms are independent
+}
+
+void test_pmkid_solicit_absent_key_loads_disarmed(void) {
+    // A device provisioned before the solicit arm existed: a valid triad in NVS but no pmkid_arm key.
+    // loadProvisioning must read the missing key as false — an upgrade never silently arms solicitation.
+    Preferences prefs;
+    TEST_ASSERT_TRUE(prefs.begin("sapper", /*readOnly=*/false));
+    prefs.putString("wifi_ssid", "legacy-net");
+    prefs.putString("wifi_pass", "legacypass1");
+    prefs.putString("wpasec_key", "legacykey01");
+    prefs.end();
+
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_FALSE(out.pmkidSolicit);
+}
+
 // --- slice-0036: the per-type push selector round-trips, with migration defaults (ADR-0035) ---------
 
 void test_notify_selector_roundtrips(void) {
@@ -268,6 +305,8 @@ int main(int, char**) {
     RUN_TEST(test_seed_valid_replaces_triad);
     RUN_TEST(test_deauth_arm_roundtrips_and_defaults_off);
     RUN_TEST(test_deauth_absent_key_loads_disarmed);
+    RUN_TEST(test_pmkid_solicit_arm_roundtrips_and_defaults_off);
+    RUN_TEST(test_pmkid_solicit_absent_key_loads_disarmed);
     RUN_TEST(test_notify_selector_roundtrips);
     RUN_TEST(test_notify_absent_keys_load_with_migration_defaults);
     RUN_TEST(test_maintenance_pass_roundtrips);

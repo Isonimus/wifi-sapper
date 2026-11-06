@@ -80,6 +80,25 @@ void test_checkboxes_reflect_model(void) {
     TEST_ASSERT_NULL(strstr(html, "name='nCracked' type='checkbox' checked>"));
 }
 
+// --- slice-0113: the PMKID-solicit arm checkbox renders its stored state (ADR-0110 #5d) ----------
+
+void test_pmkid_checkbox_reflects_model(void) {
+    // Armed: the checkbox renders ` checked`; and the arm is a toggle, not a secret, so the model
+    // carries only a bool (no value to echo), like the deauth arm.
+    SetupFormModel armed = {};
+    armed.pmkidSolicit = true;
+    char html[kSetupFormBufSize];
+    TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(armed, html, sizeof(html)));
+    TEST_ASSERT_NOT_NULL(strstr(html, "name='pmkid' type='checkbox' checked>"));
+
+    // Un-armed (the default model): the checkbox closes immediately, never ` checked`.
+    SetupFormModel disarmed = {};
+    char html2[kSetupFormBufSize];
+    TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(disarmed, html2, sizeof(html2)));
+    TEST_ASSERT_NOT_NULL(strstr(html2, "name='pmkid' type='checkbox'>"));
+    TEST_ASSERT_NULL(strstr(html2, "name='pmkid' type='checkbox' checked>"));
+}
+
 // --- buildSetupForm: "a secret is stored" invites keep, never echoes it ------
 
 void test_stored_key_drops_required_and_hints_keep(void) {
@@ -362,10 +381,12 @@ void test_toggles_and_pair_always_from_submission(void) {
     stored.notifyCaptured = true;
     ProvisioningRecord submitted;
     setRecord(submitted, "old", "oldpass12", "k", "https://ntfy.sh/x");
+    stored.pmkidSolicit = true;
     submitted.deauthEnabled = false;    // deliberate disarm
     submitted.notifyCracked = false;    // deliberate off
     submitted.notifyCaptured = true;
     submitted.notifySyncError = true;   // deliberate on
+    submitted.pmkidSolicit = false;     // deliberate solicit disarm (ADR-0110 #5d)
     ProvisioningRecord out;
     resolveProvisioningUpdate(submitted, stored, /*hasStored=*/true, /*openNetwork=*/false, out);
 
@@ -373,6 +394,7 @@ void test_toggles_and_pair_always_from_submission(void) {
     TEST_ASSERT_FALSE(out.notifyCracked);
     TEST_ASSERT_TRUE(out.notifyCaptured);
     TEST_ASSERT_TRUE(out.notifySyncError);
+    TEST_ASSERT_FALSE(out.pmkidSolicit);  // taken from the submission, not kept from stored
 }
 
 void test_blank_ssid_keeps_the_whole_network_pair(void) {
@@ -496,6 +518,7 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_form_carries_the_theme_and_wordmark_in_the_head);
     RUN_TEST(test_checkboxes_reflect_model);
+    RUN_TEST(test_pmkid_checkbox_reflects_model);
     RUN_TEST(test_stored_key_drops_required_and_hints_keep);
     RUN_TEST(test_absent_key_keeps_required);
     RUN_TEST(test_stored_webhook_hints_keep);
