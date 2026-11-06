@@ -178,3 +178,16 @@ is tiny, 16-32 bytes, but the buffer is fixed and an over-long body is Rejected,
 **Cloudflare first-contact (LEDGER gate), workstation leg:** all four legs returned the pwncrack app's JSON
 through `server: cloudflare` with `cloudflare-challenge: false` and no interstitial, so the workstation leg
 is clean. The device on-air leg (a different TLS client) still confirms on the slice-2/4 run.
+
+## Amendment - 2026-11-06: pwncrack device on-air leg verified
+
+The slice-5 build was flashed to an M5StickC Plus2 (classic ESP32) and provisioned through the captive
+portal with a real pwncrack key. The device-leg unknowns the written `uploader_pwncrack.cpp` /
+`cracked_fetcher_pwncrack.cpp` were deferred against (the LEDGER gate) all resolved in the operator's
+favour: the pinned GTS Root R4 chain validated the live Cloudflare-fronted endpoint (no device/region edge
+cert mismatch), the response bodies parsed with no `Transfer-Encoding: chunked` framing to de-chunk, and no
+bot-challenge interstitial was served to the device TLS client. Both legs ran green on air: the pwncrack
+`upload_handshake` POST was accepted and the `download_potfile_script` sync pulled the potfile into the
+shared manifest. So the fail-closed handling (Transport/Rejected + `[ERROR]` on a chain mismatch or a
+chunked body) stays as a safety net but was not exercised; the LEDGER device-leg item is closed. This does
+not change any decision above; it records that the deferred firsthand device verification passed.

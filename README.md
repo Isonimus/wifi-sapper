@@ -404,7 +404,7 @@ Known limitations to weigh before a field deployment:
   and the pwncrack key (if set); flash encryption is a tracked follow-up (ADR-0006).
 - **The wpa-sec CA pin expires 2036-06-22 and fails closed.** A firmware release updates the pinned
   certificate (ADR-0017). The pwncrack link reuses the same pinned root (GTS Root R4, ADR-0109) and
-  fails closed the same way; its live device leg behind Cloudflare is pending an on-air proof (`LEDGER.md`).
+  fails closed the same way; its live device leg behind Cloudflare was verified on air (2026-11-06).
 - **Self-hosted webhooks behind a private CA are unsupported.** Use a publicly-trusted certificate
   (ADR-0023).
 - **A green verify does not yet catch every ESP-IDF fault.** An assurance gap being hardened
