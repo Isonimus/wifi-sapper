@@ -17,10 +17,14 @@
 using namespace sapper;
 using sapper_test::buildBeacon;
 using sapper_test::buildEapol;
+using sapper_test::buildPmkidM1;
 
 static const uint8_t kBssid[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
 static const uint8_t kOther[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
 static const uint8_t kClient[6] = {0x06, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
+static const uint8_t kPmkid[16] = {
+    0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81,
+    0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09};
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -109,6 +113,46 @@ void test_reset_clears_but_keeps_target(void) {
     TEST_ASSERT_EQUAL_STRING("AgainNet", c.handshake().ssid);
 }
 
+// A clientless-PMKID capture (ADR-0110 #1): beacon + an M1 carrying a PMKID KDE, no M2. It is
+// isPmkidValid (the engine's second terminal condition) but not isWpaSecValid (no M2 for the pcap).
+void test_beacon_plus_pmkid_m1_is_pmkid_valid(void) {
+    HandshakeCollector c(kBssid);
+    ingestVec(c, buildBeacon(kBssid, "TargetNet"));
+    ingestVec(c, buildPmkidM1(kBssid, kClient, kPmkid));
+    TEST_ASSERT_TRUE(c.has(HandshakeMessage::M1));
+    TEST_ASSERT_TRUE(c.isPmkidValid());
+    TEST_ASSERT_FALSE(c.isWpaSecValid());  // no M2.
+}
+
+// A plain M1 with no PMKID KDE (the common 4-way M1) is not isPmkidValid even with a beacon.
+void test_beacon_plus_plain_m1_is_not_pmkid_valid(void) {
+    HandshakeCollector c(kBssid);
+    ingestVec(c, buildBeacon(kBssid, "TargetNet"));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true));  // no KDE.
+    TEST_ASSERT_TRUE(c.has(HandshakeMessage::M1));
+    TEST_ASSERT_FALSE(c.isPmkidValid());
+}
+
+// A PMKID M1 with no beacon yet is not isPmkidValid (the ESSID is needed for the WPA*02 line).
+void test_pmkid_m1_without_beacon_is_not_pmkid_valid(void) {
+    HandshakeCollector c(kBssid);
+    ingestVec(c, buildPmkidM1(kBssid, kClient, kPmkid));
+    TEST_ASSERT_TRUE(c.has(HandshakeMessage::M1));
+    TEST_ASSERT_FALSE(c.hasBeacon());
+    TEST_ASSERT_FALSE(c.isPmkidValid());
+}
+
+// A full 4-way capture is isWpaSecValid and is not isPmkidValid (its M1 carries no PMKID KDE), so
+// the two terminal conditions stay distinct.
+void test_four_way_is_wpasec_valid_and_not_pmkid(void) {
+    HandshakeCollector c(kBssid);
+    ingestVec(c, buildBeacon(kBssid, "TargetNet"));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM2, false));
+    TEST_ASSERT_TRUE(c.isWpaSecValid());
+    TEST_ASSERT_FALSE(c.isPmkidValid());
+}
+
 void test_retarget_clears_and_aims_at_a_new_bssid(void) {
     // The endless hunt re-uses one collector across its round-robin, re-targeting between APs
     // (ADR-0015). A frame for the old target after retarget must be dropped, and one for the new
@@ -142,6 +186,10 @@ int main(int, char**) {
     RUN_TEST(test_only_m1_is_not_wpasec_valid);
     RUN_TEST(test_full_four_way_is_complete);
     RUN_TEST(test_foreign_only_stays_empty);
+    RUN_TEST(test_beacon_plus_pmkid_m1_is_pmkid_valid);
+    RUN_TEST(test_beacon_plus_plain_m1_is_not_pmkid_valid);
+    RUN_TEST(test_pmkid_m1_without_beacon_is_not_pmkid_valid);
+    RUN_TEST(test_four_way_is_wpasec_valid_and_not_pmkid);
     RUN_TEST(test_reset_clears_but_keeps_target);
     RUN_TEST(test_retarget_clears_and_aims_at_a_new_bssid);
     return UNITY_END();

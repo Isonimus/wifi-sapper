@@ -83,6 +83,81 @@ static CapturedHandshake makeHandshake(const char* ssid,
     return hs;
 }
 
+// A clientless-PMKID capture: an M1 (AP->client kClient) carrying a PMKID KDE, and the ESSID. No M2.
+static CapturedHandshake makePmkidHandshake(const char* ssid, const uint8_t pmkid[16]) {
+    CapturedHandshake hs;
+    std::memcpy(hs.bssid, kBssid, 6);
+    std::strncpy(hs.ssid, ssid, sizeof(hs.ssid) - 1);
+    putFrame(hs.msg[0], sapper_test::buildPmkidM1(kBssid, kClient, pmkid));
+    return hs;
+}
+
+static const uint8_t kPmkid16[16] = {
+    0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81,
+    0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09};
+
+// The exact WPA*02 line against a known PMKID M1: WPA*02*PMKID*AP*STA*ESSID*** with the STA taken
+// from M1's Addr1 (the addressed client, here kClient) and the three trailing fields empty.
+void test_builds_wpa02_line_known_vector(void) {
+    CapturedHandshake hs = makePmkidHandshake("TestNet", kPmkid16);
+
+    std::string expected = "WPA*02*";
+    expected += toHex(kPmkid16, 16);                                  expected += "*";
+    expected += toHex(kBssid, 6);                                     expected += "*";
+    expected += toHex(kClient, 6);                                    expected += "*";
+    expected += toHex(reinterpret_cast<const uint8_t*>("TestNet"), 7); expected += "***";
+
+    char out[kHc22000LineMax];
+    TEST_ASSERT_TRUE(buildPmkidHc22000Line(hs, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING(expected.c_str(), out);
+}
+
+// The STA is M1's Addr1 (our spoofed solicit MAC / a real client), never the BSSID (ADR-0110 #6).
+void test_wpa02_sta_is_m1_addr1_not_bssid(void) {
+    CapturedHandshake hs = makePmkidHandshake("TestNet", kPmkid16);
+    char out[kHc22000LineMax];
+    TEST_ASSERT_TRUE(buildPmkidHc22000Line(hs, out, sizeof(out)));
+
+    const std::string line(out);
+    // The STA field (the addressed client) is present; the BSSID is not where the STA goes.
+    TEST_ASSERT_TRUE(line.find("*" + toHex(kClient, 6) + "*") != std::string::npos);
+    // The AP field is the BSSID, right after the 32-hex PMKID.
+    const std::string head = "WPA*02*" + toHex(kPmkid16, 16) + "*" + toHex(kBssid, 6) + "*";
+    TEST_ASSERT_EQUAL_size_t(0, line.rfind(head, 0));
+}
+
+void test_wpa02_missing_m1_returns_false(void) {
+    CapturedHandshake hs = makePmkidHandshake("TestNet", kPmkid16);
+    hs.msg[0].len = 0;  // drop M1.
+    char out[kHc22000LineMax];
+    TEST_ASSERT_FALSE(buildPmkidHc22000Line(hs, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("", out);
+}
+
+// A plain M1 with no PMKID KDE (the common 4-way M1) yields no WPA*02 line.
+void test_wpa02_m1_without_pmkid_returns_false(void) {
+    CapturedHandshake hs;
+    std::memcpy(hs.bssid, kBssid, 6);
+    std::strncpy(hs.ssid, "TestNet", sizeof(hs.ssid) - 1);
+    putFrame(hs.msg[0], buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true));  // no KDE.
+    char out[kHc22000LineMax];
+    TEST_ASSERT_FALSE(buildPmkidHc22000Line(hs, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("", out);
+}
+
+void test_wpa02_hidden_ssid_returns_false(void) {
+    CapturedHandshake hs = makePmkidHandshake("", kPmkid16);  // hidden: empty ESSID.
+    char out[kHc22000LineMax];
+    TEST_ASSERT_FALSE(buildPmkidHc22000Line(hs, out, sizeof(out)));
+}
+
+void test_wpa02_undersized_buffer_returns_false_no_partial(void) {
+    CapturedHandshake hs = makePmkidHandshake("TestNet", kPmkid16);
+    char out[10];  // far too small for a full line.
+    TEST_ASSERT_FALSE(buildPmkidHc22000Line(hs, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("", out);  // no partial line left behind (quality bar §3).
+}
+
 // The exact WPA*01 line against a fully known capture.
 void test_builds_wpa01_line_known_vector(void) {
     uint8_t anonce[32], snonce[32], mic[16];
@@ -225,6 +300,12 @@ void test_undersized_buffer_returns_false_no_partial(void) {
 
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_builds_wpa02_line_known_vector);
+    RUN_TEST(test_wpa02_sta_is_m1_addr1_not_bssid);
+    RUN_TEST(test_wpa02_missing_m1_returns_false);
+    RUN_TEST(test_wpa02_m1_without_pmkid_returns_false);
+    RUN_TEST(test_wpa02_hidden_ssid_returns_false);
+    RUN_TEST(test_wpa02_undersized_buffer_returns_false_no_partial);
     RUN_TEST(test_builds_wpa01_line_known_vector);
     RUN_TEST(test_anonce_comes_from_m1_not_m2);
     RUN_TEST(test_mic_zeroed_in_blob_but_emitted_as_field);

@@ -41,6 +41,12 @@ struct CapturedHandshake {
 
     /// The minimum a wpa-sec upload needs: beacon + M1 + M2 (ADR-0009 decision #3).
     bool isWpaSecValid() const;
+    /// A clientless-PMKID capture: beacon + an M1 whose Key Data carries a PMKID KDE (ADR-0110 #1).
+    /// The second terminal condition beside isWpaSecValid() (a PMKID M1 has no M2), read at build
+    /// time through the pure extractor (net/pmkid) off the whole M1 the collector already keeps, so
+    /// ADR-0009 #3 / §4 #8 hold like the hc22000 WPA*01 path. A 4-way capture is isWpaSecValid; a
+    /// solicited or deauth-forced PMKID M1 is isPmkidValid; the engine (slice 2) treats either as a win.
+    bool isPmkidValid() const;
     /// All four messages captured. Reported, but not required for upload.
     bool isComplete() const;
 };
@@ -66,6 +72,7 @@ public:
     bool hasBeacon() const { return handshake_.hasBeacon(); }
     bool has(HandshakeMessage message) const { return handshake_.has(message); }
     bool isWpaSecValid() const { return handshake_.isWpaSecValid(); }
+    bool isPmkidValid() const { return handshake_.isPmkidValid(); }
     bool isComplete() const { return handshake_.isComplete(); }
     const CapturedHandshake& handshake() const { return handshake_; }
 

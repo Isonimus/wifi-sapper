@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "net/eapol.h"
+#include "net/pmkid.h"
 
 namespace sapper {
 namespace {
@@ -29,6 +30,11 @@ constexpr uint16_t kNonceEnd = kNonceOffset + kNonceLen;        // 49: M1 must h
 // 802.11 address fields sit at fixed offsets regardless of QoS/HT header extensions (eapol.cpp).
 constexpr uint16_t kStaAddrOffset = 10;
 constexpr uint16_t kMacLen = 6;
+
+// The addressed station MAC in M1 (Addr1). M1 is AP→client (From-DS), so Addr1 is the destination
+// station: our spoofed solicit MAC in the solicited path, a real client in the deauth-forced path
+// (ADR-0110 #6). Fixed offset regardless of QoS/HT header extensions, like kStaAddrOffset above.
+constexpr uint16_t kDestAddrOffset = 4;
 
 }  // namespace
 
@@ -106,6 +112,64 @@ bool buildHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen) {
         appendHex(eapolCopy, eapolLen) &&
         // messagepair 00: M1 ANonce + M2 MIC/SNonce, replay counters matched (ADR-0108 decision #2).
         appendStr("*00");
+    if (!ok || pos >= outLen) {
+        out[0] = '\0';
+        return false;
+    }
+    out[pos] = '\0';
+    return true;
+}
+
+bool buildPmkidHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen) {
+    if (out == nullptr || outLen == 0) return false;
+    out[0] = '\0';
+
+    if (!hs.has(HandshakeMessage::M1)) return false;
+
+    // A hidden network has no crackable line (the ESSID is part of PMK derivation), like WPA*01;
+    // an embedded/leading-NUL SSID reads short here and is treated as hidden (same LEDGER limitation).
+    const size_t ssidLen = std::strlen(hs.ssid);
+    if (ssidLen == 0) return false;
+
+    const CapturedFrame& m1 = hs.msg[0];
+    if (m1.len < kDestAddrOffset + kMacLen) return false;  // too short to hold the STA (Addr1).
+
+    uint16_t m1EapolLen = 0;
+    const uint8_t* m1Eapol = locateEapol(m1.data, m1.len, m1EapolLen);
+    if (m1Eapol == nullptr) return false;
+
+    uint8_t pmkid[kPmkidLen];
+    if (!extractPmkidFromEapol(m1Eapol, m1EapolLen, pmkid)) return false;  // no PMKID KDE: no line.
+
+    // Bounded appenders: the second use of the WPA*01 pattern above, duplicated at two per the rule
+    // of three (a third hashline type would extract a shared file-local helper, LEDGER). Each returns
+    // false on any overflow so a partial line is never emitted.
+    size_t pos = 0;
+    auto appendStr = [&](const char* s) -> bool {
+        while (*s) {
+            if (pos + 1 >= outLen) return false;  // keep room for the NUL.
+            out[pos++] = *s++;
+        }
+        return true;
+    };
+    auto appendHex = [&](const uint8_t* d, size_t n) -> bool {
+        static const char kHex[] = "0123456789abcdef";
+        for (size_t i = 0; i < n; ++i) {
+            if (pos + 2 >= outLen) return false;
+            out[pos++] = kHex[d[i] >> 4];
+            out[pos++] = kHex[d[i] & 0x0F];
+        }
+        return true;
+    };
+
+    const bool ok =
+        appendStr("WPA*02*") &&
+        appendHex(pmkid, kPmkidLen) && appendStr("*") &&
+        appendHex(hs.bssid, kMacLen) && appendStr("*") &&
+        appendHex(m1.data + kDestAddrOffset, kMacLen) && appendStr("*") &&
+        appendHex(reinterpret_cast<const uint8_t*>(hs.ssid), ssidLen) &&
+        // ANONCE, EAPOL and messagepair are all empty for a PMKID line (no 4-way).
+        appendStr("***");
     if (!ok || pos >= outLen) {
         out[0] = '\0';
         return false;

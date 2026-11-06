@@ -91,4 +91,31 @@ inline std::vector<uint8_t> buildEapol(const uint8_t bssid[6], const uint8_t cli
     return f;
 }
 
+/// Build an EAPOL-Key M1 (AP->client) whose Key Data carries a single PMKID KDE
+/// (`DD 14 00-0F-AC 04 <16-byte pmkid>`), the clientless-PMKID M1 (ADR-0110). Addr1 is @p client,
+/// the station the AP addressed M1 to (the hashcat WPA*02 STA). Built on buildEapol so the
+/// 802.11/EAPOL framing stays single-sourced; only the Key Data Length field and the KDE are poked
+/// in. Shared by test_hc22000 and test_handshake_collector (the support header's rule-of-three role).
+inline std::vector<uint8_t> buildPmkidM1(const uint8_t bssid[6], const uint8_t client[6],
+                                         const uint8_t pmkid[16]) {
+    constexpr uint16_t kKdeLen = 22;  // tag(1) + len(1) + OUI(3) + type(1) + pmkid(16)
+    std::vector<uint8_t> f = buildEapol(bssid, client, kKeyInfoM1, true, kKdeLen);
+    // The EAPOL header sits at frame offset 32 (24-byte MAC header + 8-byte LLC/SNAP). The Key Data
+    // Length field is at EAPOL offset 97 and the Key Data at EAPOL offset 99 (mirrors hc22000.cpp /
+    // net/pmkid offsets: key-data-length 93 + the 4-byte EAPOL header = 97).
+    constexpr size_t kEapolAt = 32;
+    constexpr size_t kKeyDataLenAt = kEapolAt + 97;
+    constexpr size_t kKeyDataAt = kEapolAt + 99;
+    f[kKeyDataLenAt] = 0x00;
+    f[kKeyDataLenAt + 1] = kKdeLen;  // Key Data Length = 22 (the single KDE).
+    f[kKeyDataAt + 0] = 0xDD;        // KDE tag: vendor-specific.
+    f[kKeyDataAt + 1] = 0x14;        // KDE length = 20 (OUI(3)+type(1)+pmkid(16)).
+    f[kKeyDataAt + 2] = 0x00;        // OUI 00-0F-AC.
+    f[kKeyDataAt + 3] = 0x0F;
+    f[kKeyDataAt + 4] = 0xAC;
+    f[kKeyDataAt + 5] = 0x04;        // KDE type 4 = PMKID.
+    std::memcpy(&f[kKeyDataAt + 6], pmkid, 16);
+    return f;
+}
+
 }  // namespace sapper_test

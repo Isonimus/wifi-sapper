@@ -45,4 +45,25 @@ constexpr size_t kHc22000LineMax = 1280;
  */
 bool buildHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen);
 
+/**
+ * @brief Build a hashcat WPA*02 (PMKID) line from a captured M1 carrying a PMKID KDE (ADR-0110).
+ *
+ * Writes a single NUL-terminated line `WPA*02*PMKID*MAC_AP*MAC_STA*ESSID*** ` into @p out (the
+ * three trailing fields: ANONCE, EAPOL, messagepair, are empty because a PMKID line has no 4-way),
+ * where PMKID is read from M1's Key Data (net/pmkid), MAC_AP is the record BSSID, MAC_STA is M1's
+ * Addr1 (the station the AP addressed M1 to: our spoofed solicit MAC in the solicited path, a real
+ * client in the deauth-forced path, single-sourced from the frame either way; ADR-0110 decision #6),
+ * and ESSID is the record SSID. This is the PMKID sibling of buildHc22000Line, host-tested like it.
+ *
+ * Returns false, writing nothing usable, when no line can be built correctly: M1 is missing or too
+ * short to hold its Addr1, M1 carries no PMKID KDE, the ESSID is empty (a hidden network has no
+ * crackable line, like WPA*01), or @p out is too small. A partial line is never emitted (quality
+ * bar §3). Reads from M1 only; M2/M3/M4 are not consulted (a PMKID capture need not have them).
+ *
+ * @param hs     the captured handshake (whole frames; nothing is mutated).
+ * @param out    destination buffer (use at least kHc22000LineMax).
+ * @param outLen size of @p out in bytes.
+ */
+bool buildPmkidHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen);
+
 }  // namespace sapper

@@ -6,6 +6,8 @@
 
 #include <cstring>
 
+#include "net/pmkid.h"
+
 namespace sapper {
 namespace {
 
@@ -36,6 +38,16 @@ bool CapturedHandshake::has(HandshakeMessage message) const {
 
 bool CapturedHandshake::isWpaSecValid() const {
     return hasBeacon() && has(HandshakeMessage::M1) && has(HandshakeMessage::M2);
+}
+
+bool CapturedHandshake::isPmkidValid() const {
+    if (!hasBeacon() || !has(HandshakeMessage::M1)) return false;
+    const CapturedFrame& m1 = msg[0];
+    uint16_t eapolLen = 0;
+    const uint8_t* eapol = locateEapol(m1.data, m1.len, eapolLen);
+    if (eapol == nullptr) return false;
+    uint8_t pmkid[kPmkidLen];
+    return extractPmkidFromEapol(eapol, eapolLen, pmkid);
 }
 
 bool CapturedHandshake::isComplete() const {
