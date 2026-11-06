@@ -57,6 +57,11 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
     const char* maintPlaceholder = model.hasStoredMaintenancePass
                                        ? "leave blank to keep current passphrase"
                                        : "blank = use default AP password";
+    // The pwncrack key (ADR-0109 #46): optional second cracking backend, so never `required`. A stored one
+    // invites "leave blank to keep"; the value, a secret, is never rendered (only the stored-flag, #20).
+    const char* pwncrackPlaceholder = model.hasStoredPwncrackKey
+                                          ? "leave blank to keep current pwncrack key"
+                                          : "optional: a pwncrack.org API key";
 
     const int written = std::snprintf(
         out, outSize,
@@ -71,6 +76,10 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "<p>Passphrase<br>%s<br>"
         "<label><input name='open' type='checkbox'> Open network (no passphrase)</label><br>%s</p>"
         "<p>wpa-sec API key<br>%s</p>"
+        // The pwncrack key sits beside the wpa-sec key: ADR-0109 makes pwncrack a parallel SECOND cracking
+        // backend, uploaded to alongside wpa-sec, so the two credentials are grouped. Optional, never echoed.
+        "<p>pwncrack.org API key (optional; second cracking backend)<br>"
+        "<input name='pwncrack' maxlength='128' placeholder='%s'></p>"
         "<p>Push webhook URL (optional; ntfy or Discord, https)<br>"
         "<input name='webhook' type='url' maxlength='160' placeholder='%s'></p>"
         "<fieldset><legend>Push these (only if a webhook is set)</legend>"
@@ -94,7 +103,7 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
         "<p><button type='submit'>Save &amp; reboot</button></p>"
         "</form></div></body></html>",
         kPortalThemeCss, kPortalWordmarkSvg, ssidField, passField, wifiHelp,
-        keyField, webhookPlaceholder, checkedAttr(model.notifyCracked), checkedAttr(model.notifyCaptured),
+        keyField, pwncrackPlaceholder, webhookPlaceholder, checkedAttr(model.notifyCracked), checkedAttr(model.notifyCaptured),
         checkedAttr(model.notifySyncError), checkedAttr(model.deauthArmed), maintPlaceholder,
         static_cast<unsigned>(model.screenDimAfterSec), static_cast<unsigned>(model.screenOffAfterSec));
 
@@ -150,6 +159,11 @@ void resolveProvisioningUpdate(const ProvisioningRecord& submitted, const Provis
     // re-save keeps the stored passphrase rather than dropping the AP back to the default password.
     if (submitted.maintenancePass[0] == '\0')
         std::memcpy(out.maintenancePass, stored.maintenancePass, sizeof(out.maintenancePass));
+    // The pwncrack key (ADR-0109 #46) merges like the key/webhook/maintpass: a blank re-save keeps the
+    // stored key (so a WiFi fix does not silently unwire the pwncrack second backend), a non-blank value
+    // rotates it. Unwiring pwncrack is thus a deliberate act (clearing the stored key), never a side effect.
+    if (submitted.pwncrackKey[0] == '\0')
+        std::memcpy(out.pwncrackKey, stored.pwncrackKey, sizeof(out.pwncrackKey));
 }
 
 NetworkEntryError validateNetworkEntry(const char* submittedSsid, const char* submittedPass,

@@ -12,13 +12,11 @@
 #include "net/filesystem_mount.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 namespace sapper {
 namespace {
-
-constexpr const char* kSubmittedPath = "/submitted.bin";
-constexpr const char* kSubmittedTempPath = "/submitted.tmp";
 
 /// File header: 4 magic bytes + 2 count bytes (LE). No fresh flag (submitted has none; ADR-0065 #1).
 constexpr size_t kHeaderLen = 6;
@@ -53,7 +51,22 @@ uint32_t readU32LE(const uint8_t* buf) {
 
 }  // namespace
 
+LittleFsSubmittedStore::LittleFsSubmittedStore(const char* basePath) {
+    // Derive the two backing-file paths from the stem (ADR-0109 #46c: each submitted set gets its own
+    // namespace). snprintf never overflows; a stem that would truncate is marked invalid so begin() fails
+    // loud (§3) rather than this set silently colliding with another's file. Validity is checked in
+    // begin() (Serial is up there), not here (this runs at static-init, before Serial).
+    const int binLen = std::snprintf(binPath_, sizeof(binPath_), "%s.bin", basePath);
+    const int tmpLen = std::snprintf(tmpPath_, sizeof(tmpPath_), "%s.tmp", basePath);
+    pathValid_ = binLen > 0 && binLen < static_cast<int>(sizeof(binPath_)) && tmpLen > 0 &&
+                 tmpLen < static_cast<int>(sizeof(tmpPath_));
+}
+
 bool LittleFsSubmittedStore::begin() {
+    if (!pathValid_) {
+        Serial.println("[ERROR] submitted store base path too long");  // fail loud, never a silent collide.
+        return false;
+    }
     // Mount through the one seam (ADR-0074, §4 #34): fails loud + breadcrumbs on a corrupt partition,
     // never a silent reformat. Only a dead filesystem returns Failed; the caller (hunt_loop) logs the
     // one [FATAL]. Idempotent: another store may already have mounted this filesystem.
@@ -69,12 +82,12 @@ bool LittleFsSubmittedStore::load(SubmittedEntry* out, size_t capacity, size_t& 
     }
 
     // First-boot: no file yet — not an error, just an empty set.
-    if (!LittleFS.exists(kSubmittedPath)) {
+    if (!LittleFS.exists(binPath_)) {
         count = 0;
         return true;
     }
 
-    File f = LittleFS.open(kSubmittedPath, "r");
+    File f = LittleFS.open(binPath_, "r");
     if (!f) {
         Serial.println("[ERROR] submitted set open failed");
         return false;
@@ -137,7 +150,7 @@ bool LittleFsSubmittedStore::save(const SubmittedEntry* entries, size_t count) {
         return false;
     }
 
-    File f = LittleFS.open(kSubmittedTempPath, "w");
+    File f = LittleFS.open(tmpPath_, "w");
     if (!f) {
         Serial.println("[ERROR] submitted set temp open failed");
         return false;
@@ -152,7 +165,7 @@ bool LittleFsSubmittedStore::save(const SubmittedEntry* entries, size_t count) {
     if (f.write(headerBuf, sizeof(headerBuf)) != sizeof(headerBuf)) {
         Serial.println("[ERROR] submitted set temp header write failed");
         f.close();
-        LittleFS.remove(kSubmittedTempPath);
+        LittleFS.remove(tmpPath_);
         return false;
     }
 
@@ -164,7 +177,7 @@ bool LittleFsSubmittedStore::save(const SubmittedEntry* entries, size_t count) {
         if (f.write(buf, kRecordLenV2) != kRecordLenV2) {
             Serial.println("[ERROR] submitted set temp record write failed");
             f.close();
-            LittleFS.remove(kSubmittedTempPath);
+            LittleFS.remove(tmpPath_);
             return false;
         }
     }
@@ -174,9 +187,9 @@ bool LittleFsSubmittedStore::save(const SubmittedEntry* entries, size_t count) {
     // Atomically replace the old set by rename alone (see LittleFsCrackedStore::save for the full
     // rationale): renaming straight over the target keeps the prior set intact on any failure, so a
     // power loss mid-write never leaves /submitted.bin gone. We only drop the temp on a failed rename.
-    if (!LittleFS.rename(kSubmittedTempPath, kSubmittedPath)) {
+    if (!LittleFS.rename(tmpPath_, binPath_)) {
         Serial.println("[ERROR] submitted set rename failed");
-        LittleFS.remove(kSubmittedTempPath);
+        LittleFS.remove(tmpPath_);
         return false;
     }
 

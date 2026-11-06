@@ -171,6 +171,7 @@ void MaintenancePortal::handleConfig() {
     model.hasStoredKey = m_creds.key[0] != '\0';
     model.hasStoredWebhook = m_creds.webhookUrl[0] != '\0';
     model.hasStoredMaintenancePass = m_creds.maintenancePass[0] != '\0';
+    model.hasStoredPwncrackKey = m_creds.pwncrackKey[0] != '\0';  // pwncrack second backend (ADR-0109 #46).
 
     // Heap, not the 8 KB loopTask stack: a 5 KB buffer on the stack under the WebServer frames overflows it
     // (same cause as handleRoot). Single-threaded serve, so malloc/free per request is fine; fail loud on a
@@ -201,7 +202,8 @@ void MaintenancePortal::handleSave() {
         !copyBounded(submitted.key, sizeof(submitted.key), m_http.arg("key")) ||
         !copyBounded(submitted.webhookUrl, sizeof(submitted.webhookUrl), m_http.arg("webhook")) ||
         !copyBounded(submitted.maintenancePass, sizeof(submitted.maintenancePass),
-                     m_http.arg("maintpass"))) {
+                     m_http.arg("maintpass")) ||
+        !copyBounded(submitted.pwncrackKey, sizeof(submitted.pwncrackKey), m_http.arg("pwncrack"))) {
         m_http.send(400, "text/html", "<h2>A field is too long.</h2><p><a href='/config'>Back</a></p>");
         return;
     }

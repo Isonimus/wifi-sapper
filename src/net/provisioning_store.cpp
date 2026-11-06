@@ -28,6 +28,7 @@ constexpr char kKeyNotifyErr[] = "notify_err";
 constexpr char kKeyMaintPass[] = "maint_pass";  // 10 chars; the optional Maintenance AP passphrase (ADR-0039).
 constexpr char kKeyDimAfter[] = "dim_after";    // 9 chars; inactivity screen-dim delay in seconds (ADR-0093).
 constexpr char kKeyOffAfter[] = "off_after";    // 9 chars; inactivity screen-off delay in seconds (ADR-0093).
+constexpr char kKeyPwncrack[] = "pwncrack_key";  // 12 chars; the optional pwncrack second-backend key (ADR-0109).
 
 }  // namespace
 
@@ -67,6 +68,10 @@ bool loadProvisioning(ProvisioningRecord& out) {
     // the operator opts in. Optional, not part of the validity gate below.
     out.screenDimAfterSec = prefs.getUShort(kKeyDimAfter, /*defaultValue=*/0);
     out.screenOffAfterSec = prefs.getUShort(kKeyOffAfter, /*defaultValue=*/0);
+    // Optional pwncrack key (ADR-0109 #46): absent on a device provisioned before it existed, which
+    // getString leaves empty — the behaviour-preserving default (the pwncrack backend stays unwired, so a
+    // wpa-sec-only device is byte-for-byte unchanged). Validated separately, never in the gate below.
+    prefs.getString(kKeyPwncrack, out.pwncrackKey, sizeof(out.pwncrackKey));
     prefs.end();
 
     // A half-written or corrupt triad reads as "not provisioned" so the boot gate opens the
@@ -119,9 +124,14 @@ bool persistProvisioning(const ProvisioningRecord& record) {
     // partial write never leaves a stale delay beside a fresh triad.
     const bool wroteDimAfter = prefs.putUShort(kKeyDimAfter, record.screenDimAfterSec) == sizeof(uint16_t);
     const bool wroteOffAfter = prefs.putUShort(kKeyOffAfter, record.screenOffAfterSec) == sizeof(uint16_t);
+    // The pwncrack key (ADR-0109 #46): optional, so an empty value stores 0 bytes == its strlen and counts
+    // as written. It rides the same all-or-nothing clear() below, so a partial write never leaves a stale
+    // pwncrack key beside a fresh triad.
+    const bool wrotePwncrack =
+        prefs.putString(kKeyPwncrack, record.pwncrackKey) == std::strlen(record.pwncrackKey);
     const bool wrote = wrotePass && wroteKey && wroteSsid && wroteWebhook && wroteDeauth &&
                        wroteNotifyCap && wroteNotifyCrk && wroteNotifyErr && wroteMaintPass &&
-                       wroteDimAfter && wroteOffAfter;
+                       wroteDimAfter && wroteOffAfter && wrotePwncrack;
     if (!wrote) {
         prefs.clear();  // partial write — wipe so no mixed triad can survive to the next boot.
     }

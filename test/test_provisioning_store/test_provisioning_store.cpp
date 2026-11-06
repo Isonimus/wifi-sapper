@@ -229,6 +229,36 @@ void test_screen_dim_delays_default_zero_for_a_preexisting_record(void) {
     TEST_ASSERT_EQUAL_UINT16(0, out.screenOffAfterSec);
 }
 
+// --- ADR-0109 slice 5: the pwncrack key round-trips, absent = empty (pwncrack off) ------------------
+
+void test_pwncrack_key_roundtrips(void) {
+    ProvisioningRecord in = makeRecord("net-p", "passPPPPPPPP", "keyPPPPPPPP");
+    std::snprintf(in.pwncrackKey, sizeof(in.pwncrackKey), "pwncrack-secret-token");
+    TEST_ASSERT_TRUE(persistProvisioning(in));
+
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_EQUAL_STRING("pwncrack-secret-token", out.pwncrackKey);
+}
+
+void test_pwncrack_key_defaults_empty_for_a_preexisting_record(void) {
+    // A device provisioned before the field existed: a valid triad in NVS, no pwncrack_key key. Seeded raw
+    // (the store's wire names) to reproduce the upgrade. loadProvisioning must read it back empty — the
+    // behaviour-preserving default, so the pwncrack second backend stays unwired and a wpa-sec-only device
+    // is byte-for-byte unchanged (ADR-0109 #46, the optional-key boundary). The record still loads usable,
+    // which also proves the empty pwncrack key does not gate the wpa-sec association triad.
+    Preferences prefs;
+    TEST_ASSERT_TRUE(prefs.begin("sapper", /*readOnly=*/false));
+    prefs.putString("wifi_ssid", "legacy-net");
+    prefs.putString("wifi_pass", "legacypass1");
+    prefs.putString("wpasec_key", "legacykey01");
+    prefs.end();
+
+    ProvisioningRecord out = {};
+    TEST_ASSERT_TRUE(loadProvisioning(out));
+    TEST_ASSERT_EQUAL_STRING("", out.pwncrackKey);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_persist_then_load_roundtrips);
@@ -244,5 +274,7 @@ int main(int, char**) {
     RUN_TEST(test_maintenance_pass_defaults_empty_for_a_preexisting_record);
     RUN_TEST(test_screen_dim_delays_roundtrip);
     RUN_TEST(test_screen_dim_delays_default_zero_for_a_preexisting_record);
+    RUN_TEST(test_pwncrack_key_roundtrips);
+    RUN_TEST(test_pwncrack_key_defaults_empty_for_a_preexisting_record);
     return UNITY_END();
 }

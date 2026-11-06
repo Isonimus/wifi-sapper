@@ -42,6 +42,11 @@ struct SetupFormModel {
                                     ///< "leave blank to keep" hint. Optional (empty = the AP falls back
                                     ///< to the published default), so never `required`. The value, being
                                     ///< a secret, is never rendered — only the fact that one is stored.
+    bool hasStoredPwncrackKey;  ///< A pwncrack API key is stored (ADR-0109 #46): show the "leave blank to
+                                ///< keep" hint. Optional (empty = the pwncrack second backend stays
+                                ///< unwired, so a wpa-sec-only device is unchanged), so never `required`.
+                                ///< The value, being a secret, is never rendered — only the fact one is
+                                ///< stored, handled no-echo like the wpa-sec key/webhook/maintenance pass.
     /// Inactivity screen-dim delays in seconds (ADR-0093), prefilled into the two number inputs so a
     /// re-save preserves them like the checkboxes preserve their state (these are config, not secrets, so
     /// rendering the value is safe — unlike the secret fields above, which only ever carry a stored-flag).
@@ -51,10 +56,10 @@ struct SetupFormModel {
 
 /// Buffer size for the rendered setup form. Since slice-0098 the form carries the shared portal theme
 /// (CSS 1620 B + the SVG wordmark 621 B, injected into the head); ADR-0106 added the Wi-Fi keep/open
-/// markup. The measured worst case (every "leave blank to keep" placeholder, the Open checkbox + help
-/// line, and both dim fields at 65535) is 4567 B; 5 KB leaves ~553 B margin. A compile-time size so
-/// `buildSetupForm` fails loud (returns 0) rather than truncating if it ever outgrows this (the worst-case
-/// render is pinned by test_form_carries_the_theme_and_wordmark_in_the_head).
+/// markup, and ADR-0109 the optional pwncrack-key field. The measured worst case (every "leave blank to
+/// keep" placeholder, the Open checkbox + help line, and both dim fields at 65535) is 4728 B; 5 KB leaves
+/// ~392 B margin. A compile-time size so `buildSetupForm` fails loud (returns 0) rather than truncating if
+/// it ever outgrows this (the worst-case render is pinned by test_form_carries_the_theme_and_wordmark_in_the_head).
 constexpr size_t kSetupFormBufSize = 5120;
 
 /**
@@ -76,9 +81,11 @@ size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize);
  *   bound to a different SSID), with @p openNetwork forcing it empty. In every "setting a network" case
  *   (new SSID or first boot) a blank passphrase with Open unticked means "open" is *not* chosen here; that
  *   case is refused upstream by `validateNetworkEntry`, never silently stored open — the brick footgun.
- * - `key`, `webhookUrl`, `maintenancePass`: a **blank** submitted field keeps the @p stored value (a
- *   re-save to fix WiFi must not silently wipe the secret the operator did not retype); a non-blank
- *   value replaces it. `maintenancePass` is a secret handled exactly like the others (ADR-0039 #6).
+ * - `key`, `webhookUrl`, `maintenancePass`, `pwncrackKey`: a **blank** submitted field keeps the @p stored
+ *   value (a re-save to fix WiFi must not silently wipe the secret the operator did not retype); a non-blank
+ *   value replaces it. `maintenancePass` is a secret handled exactly like the others (ADR-0039 #6), and
+ *   `pwncrackKey` likewise (ADR-0109 #46): a blank re-save keeps the pwncrack backend wired, a non-blank
+ *   value rotates the key, and clearing it to unwire pwncrack is a deliberate separate action (not a blank).
  * - the four notify/deauth booleans: always taken from the submission — the form now renders their
  *   stored state, so an unchecked box is a deliberate disarm, not a stateless reset.
  *

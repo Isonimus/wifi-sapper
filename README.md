@@ -30,9 +30,10 @@
 </p>
 
 A portable, headless-first ESP-32 firmware appliance: it hunts WPA/WPA2 handshakes endlessly,
-auto-uploads each capture to [wpa-sec.stanev.org](https://wpa-sec.stanev.org), and once an hour
-fetches cracked results back and announces any newly recovered passwords. The capture→upload→sync
-engine has no UI dependency, so the same firmware runs on hardware with or without a screen — and
+auto-uploads each capture to [wpa-sec.stanev.org](https://wpa-sec.stanev.org) (and, if you provide a
+key, to [pwncrack.org](https://pwncrack.org) as a parallel second cracking backend, ADR-0109), and
+once an hour fetches cracked results back from both and announces any newly recovered passwords. The
+capture→upload→sync engine has no UI dependency, so the same firmware runs on hardware with or without a screen — and
 if a panel *fails to initialise* at boot, the unit logs `[FATAL] display init failed` and keeps
 hunting fully headless rather than stalling on the dead screen (ADR-0045).
 
@@ -61,7 +62,11 @@ portal** instead of trying to hunt (ADR-0006):
 4. Enter the network the appliance should join (SSID + passphrase; for a passphrase-less network,
    tick **Open network** instead of leaving the passphrase blank, ADR-0106) and your **wpa-sec API
    key** (from your wpa-sec.stanev.org account — the appliance cannot upload captures without it).
-5. Optionally, a **push webhook URL** (ADR-0023): an [ntfy](https://ntfy.sh) topic URL
+5. Optionally, a **pwncrack.org API key** (ADR-0109): when set, every capture is uploaded to
+   pwncrack (as a hashcat `.hc22000` line) *in addition to* wpa-sec, and cracked results are synced
+   back from both into one shared list — a parallel second cracking backend. Leave it blank to use
+   wpa-sec alone; a wpa-sec-only device behaves exactly as before.
+6. Optionally, a **push webhook URL** (ADR-0023): an [ntfy](https://ntfy.sh) topic URL
    (`https://ntfy.sh/your-topic`, or a self-hosted instance) or a Discord webhook URL. When set, the
    appliance pushes a notification naming the network (ESSID + BSSID). The URL must be `https://`; leave
    it blank to disable push. The plaintext password is **never** sent — only which network is involved.
@@ -72,20 +77,20 @@ portal** instead of trying to hunt (ADR-0006):
    otherwise associated; a *total* loss of connectivity raises no push, since with no network there is no
    window to send one — that is what the on-device LED/screen are for). These gate the off-device push
    only; the on-device screen, LED, and serial log always show every event.
-6. Optionally, **Enable deauth (arm)** (ADR-0029): when checked, the hunt loop broadcasts deauth
+7. Optionally, **Enable deauth (arm)** (ADR-0029): when checked, the hunt loop broadcasts deauth
    frames at every AP it discovers, knocking clients off so they re-associate and their handshake can
    be captured — the appliance's active industrial-pentest mode. It is **off by default**: a fresh or
    unchecked device hunts passively and transmits nothing. **Arm it only where every network in radio
    range is one you own or are explicitly authorized to test** — deauthing networks you are not
    authorized to test is illegal in most jurisdictions.
-7. Optionally, **screen dimming** (ADR-0093), two idle delays in seconds on a board with a panel:
+8. Optionally, **screen dimming** (ADR-0093), two idle delays in seconds on a board with a panel:
    **Screen dim after** (the backlight drops to a readable ~15% after this long idle; 0 = never dim) and
    **Screen off after** (fully dark after this long; 0 = dim only, never off). Both **off by default**.
    The screen brightens again on a capture or a crack (and on a button press, on button boards), and the
    hunt keeps running the whole time: dimming only changes the backlight, it never sleeps the device.
    Saves battery and reduces the lit-screen tell of a planted unit. Both fields are pre-filled with their
    stored value when you reopen the form, so a re-save to change something else preserves them.
-8. Save. The device stores the credentials and reboots to join the network.
+9. Save. The device stores the credentials and reboots to join the network.
 
 On a board **with a screen**, these join details (the `Sapper-XXXX` name, the `sapper-setup`
 passphrase, and `http://192.168.4.1/`) are shown on the panel while the setup portal is up
@@ -101,10 +106,10 @@ network without a reflash.
 
 The re-opened form shows your **stored settings** so a re-save does not silently undo them (ADR-0037):
 the **Push these** and **Enable deauth** checkboxes come up reflecting how the device is currently set,
-and the Wi-Fi, wpa-sec key and webhook URL fields all carry a *"leave blank to keep"* hint. Secret values
+and the Wi-Fi, wpa-sec key, pwncrack key and webhook URL fields all carry a *"leave blank to keep"* hint. Secret values
 (and the SSID) are never displayed — only the fact that one is stored — so nothing sensitive is exposed to
 anyone on the setup AP. **Leave the network name blank to keep your current Wi-Fi**, and **leave the key
-and webhook blank to keep them** unchanged, or type a new value to replace one (ADR-0106). To change only
+pwncrack key and webhook blank to keep them** unchanged, or type a new value to replace one (ADR-0106). To change only
 the Wi-Fi password (same network), leave the name blank and type the new passphrase. To switch networks,
 type the new SSID and its passphrase, or tick **Open network** for a passphrase-less one — a new network
 entered with a blank passphrase and Open unticked is refused, so you can no longer strand the unit by
@@ -142,8 +147,8 @@ has recovered, plus two controls (ADR-0043):
    - **Resume & hunt** — reboots the device back into hunting (it also syncs cracked results on its first
      window after every reboot, so there is no separate "sync now" button).
    - **Re-provision / re-arm** — opens the setup form again, pre-filled with your current toggles. Use it
-     to arm or disarm deauth, flip the push selectors, or change the wpa-sec key / webhook / Maintenance
-     passphrase on a device that is already deployed — the stored secrets (and the SSID) are never shown,
+     to arm or disarm deauth, flip the push selectors, or change the wpa-sec key / pwncrack key / webhook /
+     Maintenance passphrase on a device that is already deployed — the stored secrets (and the SSID) are never shown,
      so leaving a field blank keeps its current value. **Leave the network name blank to keep the current
      Wi-Fi** (ADR-0106): a light-touch edit (flip a toggle, rotate a key) needs no network re-entry. To
      change only the Wi-Fi password, leave the name blank and type the new passphrase. To move the
@@ -170,7 +175,10 @@ you can join and read them — otherwise anyone in radio range who knows the def
 Once provisioned, the Sapper reboots, joins the network, syncs its clock over NTP, and then **hunts
 continuously with no further interaction**: it sweeps the full 2.4 GHz band (channels **1-13**),
 discovers access points, captures WPA/WPA2 4-way handshakes, and auto-uploads each new capture to
-wpa-sec. Once an hour it downloads cracked results and announces any newly recovered password. It
+wpa-sec (and to pwncrack too, if you provided a pwncrack key). Once an hour it downloads cracked
+results from every configured backend into one shared list and announces any newly recovered
+password. A capture is dropped from the queue only once every configured backend has accepted it, so
+a flaky second backend never costs a handshake (ADR-0109). It
 never stops on its own — a failed upload or sync is retried, and a network it cannot reach drops it
 back to the setup portal after a few attempts (see [Re-provisioning](#re-provisioning)). If **deauth
 is armed**, it also broadcasts deauth frames at discovered APs to force handshakes (authorized
@@ -392,10 +400,11 @@ the setup access point uses the public default password `sapper-setup`.
 
 Known limitations to weigh before a field deployment:
 
-- **Secrets at rest are plaintext NVS.** A flash dump reveals the WiFi passphrase and wpa-sec key;
-  flash encryption is a tracked follow-up (ADR-0006).
+- **Secrets at rest are plaintext NVS.** A flash dump reveals the WiFi passphrase, the wpa-sec key,
+  and the pwncrack key (if set); flash encryption is a tracked follow-up (ADR-0006).
 - **The wpa-sec CA pin expires 2036-06-22 and fails closed.** A firmware release updates the pinned
-  certificate (ADR-0017).
+  certificate (ADR-0017). The pwncrack link reuses the same pinned root (GTS Root R4, ADR-0109) and
+  fails closed the same way; its live device leg behind Cloudflare is pending an on-air proof (`LEDGER.md`).
 - **Self-hosted webhooks behind a private CA are unsupported.** Use a publicly-trusted certificate
   (ADR-0023).
 - **A green verify does not yet catch every ESP-IDF fault.** An assurance gap being hardened

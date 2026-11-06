@@ -84,6 +84,7 @@ void CaptivePortal::handleRoot() {
         model.hasStoredKey = stored.key[0] != '\0';
         model.hasStoredWebhook = stored.webhookUrl[0] != '\0';
         model.hasStoredMaintenancePass = stored.maintenancePass[0] != '\0';
+        model.hasStoredPwncrackKey = stored.pwncrackKey[0] != '\0';  // pwncrack second backend (ADR-0109 #46).
         // Prefill the screen-dim delays (ADR-0093): config, not secrets, so render the stored value back
         // (the two number inputs carry value='N'), so a re-save preserves them instead of wiping to 0.
         model.screenDimAfterSec = stored.screenDimAfterSec;
@@ -111,7 +112,8 @@ void CaptivePortal::handleSave() {
         !copyBounded(submitted.key, sizeof(submitted.key), m_http.arg("key")) ||
         !copyBounded(submitted.webhookUrl, sizeof(submitted.webhookUrl), m_http.arg("webhook")) ||
         !copyBounded(submitted.maintenancePass, sizeof(submitted.maintenancePass),
-                     m_http.arg("maintpass"))) {
+                     m_http.arg("maintpass")) ||
+        !copyBounded(submitted.pwncrackKey, sizeof(submitted.pwncrackKey), m_http.arg("pwncrack"))) {
         m_http.send(400, "text/html", "<h2>A field is too long.</h2><p><a href='/'>Back</a></p>");
         return;
     }
@@ -132,10 +134,10 @@ void CaptivePortal::handleSave() {
     submitted.screenDimAfterSec = parseDelaySeconds(m_http.arg("dimAfter").c_str());
     submitted.screenOffAfterSec = parseDelaySeconds(m_http.arg("offAfter").c_str());
 
-    // Merge over the stored record (ADR-0037/ADR-0106): a blank key/webhook/maintpass keeps its stored
-    // value and a blank SSID keeps the whole Wi-Fi pair, so a re-save to change one field does not wipe
-    // the rest; the toggles always come from this submission. First boot (no stored record) takes the
-    // submission, Open clearing the passphrase.
+    // Merge over the stored record (ADR-0037/ADR-0106/ADR-0109): a blank key/webhook/maintpass/pwncrack
+    // keeps its stored value and a blank SSID keeps the whole Wi-Fi pair, so a re-save to change one field
+    // does not wipe the rest; the toggles always come from this submission. First boot (no stored record)
+    // takes the submission, Open clearing the passphrase.
     ProvisioningRecord stored = {};
     const bool hasStored = loadProvisioning(stored);
     ProvisioningRecord record = {};

@@ -46,7 +46,7 @@ void test_form_carries_the_theme_and_wordmark_in_the_head(void) {
     // this pins that the brand assets are present and sit in <head>, before <body>.
     SetupFormModel model = {};
     model.hasStoredNetwork = model.hasStoredKey = model.hasStoredWebhook =
-        model.hasStoredMaintenancePass = true;
+        model.hasStoredMaintenancePass = model.hasStoredPwncrackKey = true;
     model.screenDimAfterSec = model.screenOffAfterSec = 65535;
     char html[kSetupFormBufSize];
     TEST_ASSERT_GREATER_THAN(0u, buildSetupForm(model, html, sizeof(html)));
@@ -131,6 +131,26 @@ void test_absent_maintpass_shows_default_placeholder(void) {
     TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='blank = use default AP password'"));
 }
 
+void test_stored_pwncrack_key_hints_keep(void) {
+    // The pwncrack key (ADR-0109 #46) is a secret handled like the wpa-sec key/webhook/maintpass: a stored
+    // one invites "leave blank to keep", and the value itself is never rendered (only the stored-flag, #20).
+    SetupFormModel model = {};
+    model.hasStoredPwncrackKey = true;
+    char html[kSetupFormBufSize];
+    TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
+    TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current pwncrack key'"));
+}
+
+void test_absent_pwncrack_shows_default_placeholder(void) {
+    SetupFormModel model = {};  // hasStoredPwncrackKey false
+    char html[kSetupFormBufSize];
+    TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
+    TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='optional: a pwncrack.org API key'"));
+    // pwncrack is optional: its field is never `required` even when nothing is stored (unlike the wpa-sec
+    // key), so a wpa-sec-only operator submits the form with it blank and pwncrack stays unwired (#46).
+    TEST_ASSERT_NULL(strstr(html, "name='pwncrack' maxlength='128' required"));
+}
+
 // --- buildSetupForm: Wi-Fi keep-on-blank-SSID + the open-network checkbox (ADR-0106) ----------
 
 void test_stored_network_drops_ssid_required_and_hints_keep(void) {
@@ -175,6 +195,7 @@ void test_form_never_prefills_a_secret_value(void) {
     model.hasStoredKey = true;
     model.hasStoredWebhook = true;
     model.hasStoredMaintenancePass = true;
+    model.hasStoredPwncrackKey = true;
     char html[kSetupFormBufSize];
     TEST_ASSERT_NOT_EQUAL(0, buildSetupForm(model, html, sizeof(html)));
     // Each secret input closes at '>' right after its placeholder/last attribute: no value= was injected.
@@ -183,6 +204,9 @@ void test_form_never_prefills_a_secret_value(void) {
     TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current key'>"));
     TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current webhook'>"));
     TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current passphrase'>"));
+    // The pwncrack key (ADR-0109 #46) is a secret too: it renders via a placeholder and closes with no value=.
+    TEST_ASSERT_NOT_NULL(strstr(html, "placeholder='leave blank to keep current pwncrack key'>"));
+    TEST_ASSERT_NULL(strstr(html, "name='pwncrack' maxlength='128' placeholder='leave blank to keep current pwncrack key' value="));
     // The only value= attributes in the form are the two numeric dim fields (type='number').
     TEST_ASSERT_NULL(strstr(html, "type='password' maxlength='63' value="));
     TEST_ASSERT_NULL(strstr(html, "type='url' maxlength='160' placeholder='leave blank to keep current webhook' value="));
@@ -304,6 +328,28 @@ void test_maintpass_blank_keeps_stored_nonblank_replaces(void) {
     ProvisioningRecord replacedOut;
     resolveProvisioningUpdate(submittedNew, stored, /*hasStored=*/true, /*openNetwork=*/false, replacedOut);
     TEST_ASSERT_EQUAL_STRING("freshmaint99", replacedOut.maintenancePass);  // replaced
+}
+
+void test_pwncrack_key_blank_keeps_stored_nonblank_replaces(void) {
+    // The pwncrack key (ADR-0109 #46) merges like the key/webhook/maintpass: a blank re-save keeps the
+    // stored key (a WiFi fix must not silently unwire the pwncrack second backend), a non-blank value
+    // rotates it. This is the optional-key boundary's keep-on-blank half.
+    ProvisioningRecord stored;
+    setRecord(stored, "old", "oldpass12", "k", "");
+    std::snprintf(stored.pwncrackKey, sizeof(stored.pwncrackKey), "stored-pwncrack-key");
+
+    ProvisioningRecord submittedBlank;
+    setRecord(submittedBlank, "new", "newpass12", "", "");  // pwncrack blank
+    ProvisioningRecord keptOut;
+    resolveProvisioningUpdate(submittedBlank, stored, /*hasStored=*/true, /*openNetwork=*/false, keptOut);
+    TEST_ASSERT_EQUAL_STRING("stored-pwncrack-key", keptOut.pwncrackKey);  // kept (backend stays wired)
+
+    ProvisioningRecord submittedNew;
+    setRecord(submittedNew, "new", "newpass12", "", "");
+    std::snprintf(submittedNew.pwncrackKey, sizeof(submittedNew.pwncrackKey), "fresh-pwncrack-key");
+    ProvisioningRecord replacedOut;
+    resolveProvisioningUpdate(submittedNew, stored, /*hasStored=*/true, /*openNetwork=*/false, replacedOut);
+    TEST_ASSERT_EQUAL_STRING("fresh-pwncrack-key", replacedOut.pwncrackKey);  // rotated
 }
 
 void test_toggles_and_pair_always_from_submission(void) {
@@ -456,6 +502,8 @@ int main(int, char**) {
     RUN_TEST(test_absent_webhook_shows_default_placeholder);
     RUN_TEST(test_stored_maintpass_hints_keep);
     RUN_TEST(test_absent_maintpass_shows_default_placeholder);
+    RUN_TEST(test_stored_pwncrack_key_hints_keep);
+    RUN_TEST(test_absent_pwncrack_shows_default_placeholder);
     RUN_TEST(test_stored_network_drops_ssid_required_and_hints_keep);
     RUN_TEST(test_absent_network_keeps_ssid_required);
     RUN_TEST(test_open_network_checkbox_is_rendered);
@@ -468,6 +516,7 @@ int main(int, char**) {
     RUN_TEST(test_blank_secrets_keep_stored);
     RUN_TEST(test_nonblank_secrets_replace);
     RUN_TEST(test_maintpass_blank_keeps_stored_nonblank_replaces);
+    RUN_TEST(test_pwncrack_key_blank_keeps_stored_nonblank_replaces);
     RUN_TEST(test_toggles_and_pair_always_from_submission);
     RUN_TEST(test_blank_ssid_keeps_the_whole_network_pair);
     RUN_TEST(test_blank_ssid_with_a_typed_pass_rotates_the_passphrase);

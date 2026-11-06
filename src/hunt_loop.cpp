@@ -19,6 +19,7 @@
 #include "net/ap_registry.h"
 #include "net/capture_queue.h"
 #include "net/capture_store_littlefs.h"
+#include "net/cracked_fetcher_pwncrack.h"  // PwncrackCrackedFetcher (ADR-0109 #46 second-backend sync).
 #include "net/cracked_fetcher_wpasec.h"
 #include "net/cracked_manifest.h"
 #include "net/cracked_store_littlefs.h"
@@ -32,6 +33,7 @@
 #include "net/station_control_esp32.h"
 #include "net/sync_scheduler.h"
 #include "net/sync_session.h"
+#include "net/uploader_pwncrack.h"  // PwncrackUploader (ADR-0109 #46 second-backend upload).
 #include "net/uploader_wpasec.h"
 #include "surface/battery_gauge_esp32.h"
 #include "surface/battery_model.h"  // batteryLevelName — the [BATT] diagnostic line.
@@ -100,6 +102,18 @@ SyncScheduler g_scheduler;
 // per entry, no ESSID/PSK); loaded whole at boot, rewritten whole per drain that recorded a submission.
 LittleFsSubmittedStore g_submittedStore;
 SubmittedManifest g_submitted(g_submittedStore);
+
+// The optional pwncrack SECOND cracking backend (ADR-0109 #46): its TLS upload + download seams, and its
+// OWN submitted set on a DISTINCT LittleFS file ("/pwncrack_sub.bin", §4 #46c) so the per-backend submitted
+// state never collides with wpa-sec's "/submitted.bin". All four sit inert at file scope and are wired into
+// the supervisor (drain) and the sync only when a pwncrack key is provisioned (huntLoopBegin), so a
+// wpa-sec-only device runs byte-for-byte as before (#46 optional-key boundary). Device-only like the
+// wpa-sec seams; the hashline is re-derived from the persisted pcap inside the supervisor (#46a/b).
+PwncrackUploader g_pwncrackUploader;
+PwncrackCrackedFetcher g_pwncrackFetcher;
+LittleFsSubmittedStore g_pwncrackSubmittedStore("/pwncrack_sub");
+SubmittedManifest g_pwncrackSubmitted(g_pwncrackSubmittedStore);
+bool g_pwncrackWired = false;  ///< True once the pwncrack backend is wired (a key was provisioned).
 
 // The surface event bus (ADR-0021): the sync publishes cracked facts and the supervisor publishes drain
 // facts onto it; the two sinks below subscribe. This is the single mechanism ADR-0001 always intended,
@@ -401,6 +415,30 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     g_supervisor->setSubmittedRecorder(g_submitted);
     g_engine->setSubmittedLookup(g_submitted);
 
+    // Wire the optional pwncrack SECOND backend (ADR-0109 #46) iff a pwncrack key is provisioned. Empty key
+    // -> nothing wired, so the supervisor drains only to wpa-sec and the sync fetches only wpa-sec, exactly
+    // as a single-backend device does (#46 optional-key boundary, like the webhook above). When wired, each
+    // drained capture also uploads a pcap-re-derived hc22000 line to pwncrack in the same STA window and is
+    // removed only once BOTH backends are terminal (#46b), recording pwncrack terminals in pwncrack's OWN
+    // submitted set (#46c); the sync pulls the pwncrack potfile into the shared, backend-agnostic manifest
+    // (#46d). Its submitted set is mounted/loaded now (fatal on corruption, §3) so the first drain sees flash.
+    if (g_creds.pwncrackKey[0] != '\0') {
+        if (!g_pwncrackSubmittedStore.begin()) {
+            Serial.println("[FATAL] pwncrack submitted store (LittleFS) mount failed");
+            return false;
+        }
+        if (!g_pwncrackSubmitted.begin()) {
+            Serial.println("[FATAL] pwncrack submitted set load failed");
+            return false;
+        }
+        g_supervisor->setPwncrackBackend(g_pwncrackUploader, g_creds.pwncrackKey, g_pwncrackSubmitted);
+        g_sync->setPwncrackSource(g_pwncrackFetcher, g_creds.pwncrackKey);
+        g_pwncrackWired = true;
+        Serial.println("[CRACK] pwncrack second backend enabled (upload + sync)");
+    } else {
+        Serial.println("[CRACK] pwncrack second backend disabled (no key)");
+    }
+
     // Wire the push-notification surface iff a usable webhook URL is provisioned (ADR-0023). A bad or
     // absent URL disables push loudly and never blocks the hunt — the webhook is optional. When enabled,
     // it subscribes to the bus (fatal if the bus is full, like the other surfaces) and is set as the
@@ -503,6 +541,9 @@ void huntLoopPump() {
     const uint32_t nowEpoch = static_cast<uint32_t>(std::time(nullptr));
     g_manifest->setVerificationClock(nowEpoch);
     g_submitted.setVerificationClock(nowEpoch);
+    // The pwncrack submitted set shares the same rotated-PSK re-verification cadence (ADR-0072 / §4 #33),
+    // fed only when the backend is wired (an unwired set is never queried, so its clock would be dead).
+    if (g_pwncrackWired) g_pwncrackSubmitted.setVerificationClock(nowEpoch);
     g_engine->tick(now);
     g_supervisor->tick(now);   // publishes DrainStarted/DrainCompleted (and runs a due sync) onto the bus.
     // Fail loud on a submitted-store flush failure (§3, ADR-0065 #3): rare and not a cycle failure (the

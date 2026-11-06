@@ -62,6 +62,15 @@ struct ProvisioningRecord {
     /// Optional, like the webhook/deauth fields: never part of the credential validity gate.
     uint16_t screenDimAfterSec;
     uint16_t screenOffAfterSec;
+    /// Optional pwncrack.org API key (ADR-0109 #46). Empty → the pwncrack second backend stays unwired
+    /// (the hunt loop attaches its uploader and cracked-source only when this is non-empty), so a
+    /// wpa-sec-only device is byte-for-byte unchanged, like the optional webhook (ADR-0023). It is a
+    /// *secret* like `key`/`maintenancePass`: never rendered back into served HTML (the setup form
+    /// accepts-but-never-echoes it, §4 #20). Absent from NVS on a device provisioned before it existed,
+    /// where getString leaves it empty — the behaviour-preserving default (pwncrack simply off). Validated
+    /// separately, never folded into validateCredentials(): a bad or empty pwncrack key must not gate the
+    /// wpa-sec association triad, exactly as the webhook URL does not.
+    char pwncrackKey[kMaxPwncrackKeyLen + 1];
 };
 
 /**

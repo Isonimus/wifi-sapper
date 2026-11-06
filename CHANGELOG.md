@@ -12,6 +12,16 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+- **pwncrack.org is now an optional second cracking backend, alongside wpa-sec.** Enter a
+  **pwncrack.org API key** in the setup form and every capture is uploaded to pwncrack (as a hashcat
+  `.hc22000` line re-derived on-device from the saved pcap) in addition to wpa-sec, and the hourly
+  sync pulls cracked results back from both into one shared list, announcing a recovered password
+  whichever backend cracked it. A capture is removed from the queue only once *every* configured
+  backend has accepted it, so adding pwncrack never costs a handshake if one backend is flaky. The
+  key is entirely optional and handled like the other secrets: leave it blank to keep using wpa-sec
+  alone (a wpa-sec-only device is byte-for-byte unchanged), and on re-provisioning it is never echoed
+  back and *"leave blank to keep"*. The live pwncrack link reuses the pinned wpa-sec TLS root and
+  fails closed; its on-air proof behind Cloudflare is still pending. (ADR-0109; slices 1-5)
 - **The hunt now sweeps the whole 2.4 GHz band (channels 1-13), not just 1/6/11.** An access point
   beacons on its own channel, so the former three-channel sweep silently missed every network on any other
   channel, including channels 12-13 which are standard under ETSI (most of Europe). The device now pins its

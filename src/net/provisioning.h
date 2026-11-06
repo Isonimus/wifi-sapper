@@ -24,6 +24,12 @@ constexpr size_t kMaxPassLen = 63;   ///< WPA2 PSK passphrase maximum (64 = a ra
 constexpr size_t kMaxKeyLen = 64;    ///< wpa-sec API key; generous upper bound.
 constexpr size_t kMaxWebhookUrlLen = 160;  ///< Optional push webhook URL (ADR-0023). A Discord webhook
                                            ///< URL is ~120 chars; 160 leaves margin. Empty = disabled.
+constexpr size_t kMaxPwncrackKeyLen = 128;  ///< Optional pwncrack API key (ADR-0109 #46). Double wpa-sec's
+                                            ///< generous 64 and well inside the fetcher's kUrlCap margin: an
+                                            ///< architecture-derived bound chosen wide because the real key
+                                            ///< format is confirmed firsthand only on air (LEDGER), so a
+                                            ///< valid long key is accepted rather than rejected. Empty =
+                                            ///< pwncrack second backend disabled.
 
 /// Buffer size for a SoftAP SSID "Sapper-XXXX": 7 + 4 hex + NUL. A compile-time size so
 /// formatSoftApSsid() cannot be handed a too-small buffer (no runtime cap, no silent truncation).
