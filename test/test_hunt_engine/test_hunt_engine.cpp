@@ -18,6 +18,7 @@
 #include "net/cracked_lookup.h"
 #include "net/deauth.h"
 #include "net/hunt_engine.h"
+#include "net/pmkid_solicit.h"  // kSolicitAuthFrameLen, defaultSolicitStaMac: assert the solicit frames.
 #include "net/submitted_lookup.h"
 
 #include "../support/fake_radio_sniffer.h"
@@ -27,6 +28,7 @@
 using namespace sapper;
 using sapper_test::buildBeacon;
 using sapper_test::buildEapol;
+using sapper_test::buildPmkidM1;
 using sapper_test::FakeRadioSniffer;
 using sapper_test::FakeRawTransmitter;
 
@@ -35,6 +37,14 @@ static const uint8_t kApB[6] = {0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
 static const uint8_t kApC[6] = {0x02, 0x01, 0x02, 0x03, 0x04, 0x05};
 static const uint8_t kClient[6] = {0x06, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
 static uint8_t kHopChannels[3] = {1, 6, 11};
+// A PMKID for the clientless-PMKID M1 fixture (ADR-0110); its bytes are opaque to the engine.
+static const uint8_t kPmkid[16] = {
+    0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81,
+    0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09};
+// 802.11 frame-control first byte of the solicit frames (pmkid_solicit.cpp), for asserting which frame
+// the injector transmitted: 0xB0 management/authentication, 0x00 management/association-request.
+static constexpr uint8_t kFcAuth = 0xB0;
+static constexpr uint8_t kFcAssocReq = 0x00;
 
 // Signal levels straddling the ADR-0068 kRssiFloor (-80) for the RSSI-floor ordering tests. kStrongRssi and
 // kVeryStrongRssi are both above the floor (kVeryStrongRssi the stronger, to prove no strongest-first sort
@@ -53,13 +63,17 @@ static HuntConfig testConfig() {
     c.captureWindowMs = 30;
     c.settleMs = 5;
     c.deauthIntervalMs = 10;  // short cadence so a burst-then-gap is visible within a capture window.
+    c.solicitIntervalMs = 20;    // short solicit cadence so a second burst is reachable within a window.
+    c.solicitInterFrameMs = 5;   // short auth->assoc gap so the two-phase burst is visible across ticks.
     return c;
 }
 
 struct RecordingObserver : public CaptureReadyObserver {
     std::vector<std::array<uint8_t, 6>> captured;
     void onCaptureReady(const CapturedHandshake& handshake) override {
-        TEST_ASSERT_TRUE(handshake.isWpaSecValid());  // the engine only reports valid captures.
+        // The engine reports only a valid capture, now either terminal condition (ADR-0110 #1): a
+        // wpa-sec-valid 4-way or a clientless-PMKID M1.
+        TEST_ASSERT_TRUE(handshake.isWpaSecValid() || handshake.isPmkidValid());
         std::array<uint8_t, 6> bssid{};
         std::memcpy(bssid.data(), handshake.bssid, 6);
         captured.push_back(bssid);
@@ -308,12 +322,19 @@ void test_quiesce_settle_is_wraparound_safe(void) {
 // first deauth burst has fired. Returns with phase == Capturing. Mirrors the discover→capture walk
 // the other tests use, so the deauth behaviour is exercised through the real state machine, not a
 // shortcut.
-static void driveToCapturingWithFirstBurst(HuntEngine& engine, FakeRadioSniffer& sniffer) {
+static void driveToCapturing(HuntEngine& engine, FakeRadioSniffer& sniffer) {
     TEST_ASSERT_TRUE(engine.begin(0));
-    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));  // SSID "Alpha" so the solicit assoc carries it.
     engine.tick(30);  // discovery window ends -> quiesce toward capture.
-    engine.tick(35);  // settle elapsed -> capture kApA on channel 1 (arms the deauth cadence at t=35).
+    engine.tick(35);  // settle elapsed -> capture kApA on channel 1 (arms both injector cadences at t=35).
     TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+}
+
+static void driveToCapturingWithFirstBurst(HuntEngine& engine, FakeRadioSniffer& sniffer) {
+    // Arm deauth explicitly: a non-null transmitter no longer alone arms it (ADR-0110 #5, the §4 #16
+    // refinement). A null-transmitter engine stays inert through this helper regardless (the guard).
+    engine.setDeauthArmed(true);
+    driveToCapturing(engine, sniffer);
     engine.tick(36);  // first Capturing tick: cadence due -> one deauth + disassoc burst.
 }
 
@@ -373,8 +394,9 @@ void test_deauth_respects_the_cadence_not_one_per_tick(void) {
 }
 
 void test_disarmed_engine_never_transmits(void) {
-    // The default-off safety gate (invariant #16): a nullptr transmitter (the ctor default) is a
-    // purely passive hunt. This is the property a lost or unarmed shipped unit depends on.
+    // The default-off safety gate (invariant #16): a nullptr transmitter (the ctor default) is a purely
+    // passive hunt, even though the helper arms deauth — the transmitter-null guard holds regardless of the
+    // arm flags (ADR-0110 #5). This is the property a lost or unarmed shipped unit depends on.
     FakeRadioSniffer sniffer;
     RecordingObserver observer;
     ApRegistry registry;
@@ -413,6 +435,7 @@ void test_deauth_only_while_capturing_and_stops_once_captured(void) {
     ApRegistry registry;
     FakeRawTransmitter tx;
     HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+    engine.setDeauthArmed(true);  // decoupled arm: a transmitter alone no longer deauths (ADR-0110 #5).
 
     TEST_ASSERT_TRUE(engine.begin(0));
     sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
@@ -1008,6 +1031,177 @@ void test_all_backed_off_degrades_to_rediscovery_not_a_spin(void) {
     TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Discovering), static_cast<int>(engine.phase()));
 }
 
+// --- Clientless-PMKID engine integration (slice-0112; ADR-0110) ------------------------------------
+
+void test_pmkid_m1_ends_the_window_reports_once_and_advances(void) {
+    // A clientless-PMKID M1 (beacon + an M1 carrying a PMKID KDE, no M2) is a terminal capture (ADR-0110
+    // #1): the window ends, the handshake is reported once through the observer, and the engine advances —
+    // via the same ReportThenAdvance resume a 4-way takes, which also clears the AP's backoff miss count
+    // (ADR-0070 #32), so DoD scenario 3's backoff-clear follows by construction. Fail-before: without the
+    // isPmkidValid terminal the window runs to timeout (AdvanceNoReport) and reports nothing.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    sniffer.deliver(buildBeacon(kApB, "Bravo", 6));
+    engine.tick(30);  // discovery ends -> quiesce toward capture.
+    engine.tick(35);  // capture kApA.
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApA));
+
+    // The collector (not the discovery registry) must see the beacon + PMKID M1 during this window.
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    sniffer.deliver(buildPmkidM1(kApA, kClient, kPmkid));
+    engine.tick(36);  // isPmkidValid -> quiesce toward report + advance (not a timeout).
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Quiescing), static_cast<int>(engine.phase()));
+    engine.tick(41);  // settle -> report kApA once, advance to kApB.
+
+    TEST_ASSERT_EQUAL_UINT32(1, observer.captured.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, observer.captured[0].data(), 6);
+    TEST_ASSERT_TRUE(bssidIs(engine.capturingBssid(), kApB));  // advanced to the next target.
+}
+
+void test_solicit_armed_engine_sends_auth_then_assoc_on_cadence(void) {
+    // The solicit injector (ADR-0110 #2): on a due cadence it sends an open-auth, then the association
+    // request an inter-frame gap later (two-phase, non-blocking), then repeats on the solicit interval.
+    // Deauth is NOT armed here, so this also proves the two arms are independent (ADR-0110 #5).
+    // Fail-before: with no solicit injector nothing is transmitted at all.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+    engine.setSolicitArmed(true);
+
+    driveToCapturing(engine, sniffer);  // Capturing kApA on ch1, SSID "Alpha"; solicitDue armed at t=35.
+
+    engine.tick(36);  // cadence due (>=35) -> open-auth; assoc armed for 36 + 5 = 41.
+    TEST_ASSERT_EQUAL_UINT32(1, tx.count());
+    TEST_ASSERT_EQUAL_UINT32(1, engine.solicitTxOk());
+    TEST_ASSERT_EQUAL_UINT8(kFcAuth, tx.frames[0][0]);
+    TEST_ASSERT_EQUAL_UINT32(kSolicitAuthFrameLen, tx.frames[0].size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, &tx.frames[0][4], 6);                    // addr1 = the AP.
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(defaultSolicitStaMac(), &tx.frames[0][10], 6); // addr2 = spoofed STA.
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxOk());  // deauth never fired (its arm is off).
+
+    engine.tick(39);  // within the inter-frame gap (<41): the assoc is not yet sent.
+    TEST_ASSERT_EQUAL_UINT32(1, tx.count());
+
+    engine.tick(41);  // gap elapsed -> association request; next cadence armed for 41 + 20 = 61.
+    TEST_ASSERT_EQUAL_UINT32(2, tx.count());
+    TEST_ASSERT_EQUAL_UINT8(kFcAssocReq, tx.frames[1][0]);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kApA, &tx.frames[1][4], 6);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(defaultSolicitStaMac(), &tx.frames[1][10], 6);
+    // The association carries the target SSID "Alpha": element tag 0x00, length 5, then the name, at
+    // offset 24 (header) + 2 (capability) + 2 (listen interval) = 28.
+    TEST_ASSERT_EQUAL_UINT8(0x00, tx.frames[1][28]);
+    TEST_ASSERT_EQUAL_UINT8(5, tx.frames[1][29]);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY("Alpha", &tx.frames[1][30], 5);
+
+    engine.tick(45);  // within the next cadence gap (<61): nothing.
+    TEST_ASSERT_EQUAL_UINT32(2, tx.count());
+    engine.tick(61);  // next cadence due -> the next burst's open-auth.
+    TEST_ASSERT_EQUAL_UINT32(3, tx.count());
+    TEST_ASSERT_EQUAL_UINT8(kFcAuth, tx.frames[2][0]);
+}
+
+void test_solicit_stops_on_pmkid_capture(void) {
+    // The injector must stop the instant a PMKID lands: the Capturing branch takes the terminal path and
+    // never reaches the injectors (ADR-0110 #2 stop-on-PMKID). A pending assoc is dropped, not sent.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+    engine.setSolicitArmed(true);
+
+    driveToCapturing(engine, sniffer);
+    engine.tick(36);  // first open-auth; assoc pending for t=41.
+    const uint32_t txAtCapture = tx.count();
+    TEST_ASSERT_GREATER_THAN_UINT32(0, txAtCapture);
+
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    sniffer.deliver(buildPmkidM1(kApA, kClient, kPmkid));
+    engine.tick(41);  // isPmkidValid wins over the pending assoc -> quiesce, no solicit frame this tick.
+    engine.tick(46);  // settle -> report + advance (one AP -> re-discover).
+    engine.tick(47);
+    engine.tick(48);
+
+    TEST_ASSERT_EQUAL_UINT32(txAtCapture, tx.count());   // nothing transmitted after the PMKID landed,
+    TEST_ASSERT_EQUAL_UINT32(1, observer.captured.size());  // and the PMKID was reported.
+}
+
+void test_solicit_armed_only_transmits_solicit_not_deauth(void) {
+    // Independent arms (ADR-0110 #5): solicit on, deauth off -> solicit frames, zero deauth.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+    engine.setSolicitArmed(true);
+
+    driveToCapturing(engine, sniffer);
+    engine.tick(36);  // open-auth.
+    engine.tick(41);  // assoc.
+    TEST_ASSERT_GREATER_THAN_UINT32(0, engine.solicitTxOk());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxOk());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxFail());
+}
+
+void test_deauth_armed_only_transmits_deauth_not_solicit(void) {
+    // Independent arms (ADR-0110 #5): deauth on, solicit off -> deauth frames, zero solicit.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+    engine.setDeauthArmed(true);
+
+    driveToCapturing(engine, sniffer);
+    engine.tick(36);  // deauth burst.
+    engine.tick(41);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, engine.deauthTxOk());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.solicitTxOk());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.solicitTxFail());
+}
+
+void test_transmitter_present_but_unarmed_transmits_nothing(void) {
+    // The §4 #16 refinement (ADR-0110 #5): a non-null transmitter alone arms NOTHING; neither arm is set.
+    // Fail-before: the pre-0110 engine deauthed whenever a transmitter was present.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);  // no arm set.
+
+    driveToCapturing(engine, sniffer);
+    engine.tick(36);
+    engine.tick(41);
+    engine.tick(46);
+    TEST_ASSERT_EQUAL_UINT32(0, tx.count());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.deauthTxOk());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.solicitTxOk());
+}
+
+void test_solicit_rejected_frames_count_as_fail(void) {
+    // A refused solicit frame lands in solicitTxFail, never silently vanishes or counts as a success (§3).
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    FakeRawTransmitter tx;
+    tx.nextResult = false;  // the radio refuses every frame.
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig(), &tx);
+    engine.setSolicitArmed(true);
+
+    driveToCapturing(engine, sniffer);
+    engine.tick(36);  // open-auth attempted -> refused.
+    TEST_ASSERT_EQUAL_UINT32(1, tx.count());
+    TEST_ASSERT_EQUAL_UINT32(0, engine.solicitTxOk());
+    TEST_ASSERT_EQUAL_UINT32(1, engine.solicitTxFail());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_discovers_then_captures_then_advances);
@@ -1042,5 +1236,12 @@ int main(int, char**) {
     RUN_TEST(test_capture_clears_the_backoff_miss_count);
     RUN_TEST(test_productive_hunt_is_never_backed_off);
     RUN_TEST(test_all_backed_off_degrades_to_rediscovery_not_a_spin);
+    RUN_TEST(test_pmkid_m1_ends_the_window_reports_once_and_advances);
+    RUN_TEST(test_solicit_armed_engine_sends_auth_then_assoc_on_cadence);
+    RUN_TEST(test_solicit_stops_on_pmkid_capture);
+    RUN_TEST(test_solicit_armed_only_transmits_solicit_not_deauth);
+    RUN_TEST(test_deauth_armed_only_transmits_deauth_not_solicit);
+    RUN_TEST(test_transmitter_present_but_unarmed_transmits_nothing);
+    RUN_TEST(test_solicit_rejected_frames_count_as_fail);
     return UNITY_END();
 }

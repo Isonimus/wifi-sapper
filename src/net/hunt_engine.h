@@ -29,6 +29,7 @@
 #include "net/channel_hopper.h"
 #include "net/deauth.h"  // ManagementSubtype, for the armed-deauth burst (ADR-0029).
 #include "net/handshake_collector.h"
+#include "net/pmkid_solicit.h"  // buildAuthRequest/buildAssocRequest, for the solicit injector (ADR-0110).
 #include "net/handshake_consumer.h"
 #include "net/hunt_snapshot.h"  // HuntPhase (aliased as Phase), HuntSnapshot, HuntSnapshotSource (ADR-0033).
 #include "net/radio_sniffer.h"
@@ -61,6 +62,16 @@ struct HuntConfig {
     /// 4-way handshake we want only completes *after* it does, so this leaves a listen gap rather
     /// than deauthing continuously. Architecture-derived, not yet a measurement (LEDGER, like dwell).
     uint32_t deauthIntervalMs = 2000;
+    /// Cadence of the clientless-PMKID solicit burst during Capturing when the solicit arm is set and a
+    /// transmitter is present (ADR-0110 #2). Each burst is the blind pair (open-auth, then the association
+    /// request an inter-frame gap later). Carried from the sibling's measured as-built ~1500 ms
+    /// (adversary:ADR-0138); architecture-derived against our capture window, tuning deferred (LEDGER).
+    uint32_t solicitIntervalMs = 1500;
+    /// Floor on the gap between the open-auth and the association request of one solicit burst (ADR-0110
+    /// #2). Realised non-blocking: the auth goes out on the due tick and the assoc on a later tick once
+    /// this has elapsed, so the real gap is this value plus at most one app-loop tick (the safe direction;
+    /// the AP holds the open-auth state well beyond it). The sibling's proven 25 ms (adversary:ADR-0138).
+    uint32_t solicitInterFrameMs = 25;
 };
 
 /// The RSSI partition floor for target ordering (ADR-0068 #31): an AP at or above it is attempted before
@@ -100,11 +111,14 @@ public:
     /// it while the pull-snapshot POD header can name the enum without including the engine.
     using Phase = HuntPhase;
 
-    /// @param transmitter Optional raw-TX seam (ADR-0029). When non-null the engine *arms*: during
-    ///        Capturing it broadcasts deauth/disassoc at the current target on the parked channel, to
-    ///        force handshakes. `nullptr` (the default) is a purely passive hunt — the pre-0029
-    ///        behaviour, and the disarmed state a shipped appliance holds until the operator arms it
-    ///        (invariant #16). The engine still *builds* frames only through the pure `buildDeauthFrame`.
+    /// @param transmitter Optional raw-TX seam (ADR-0029). A non-null transmitter means only that the
+    ///        raw-TX path is *available*; it no longer alone arms anything (ADR-0110 #5, the §4 #16
+    ///        refinement). What is transmitted is gated by two independent default-off arms,
+    ///        setDeauthArmed / setSolicitArmed: deauth needs a transmitter AND the deauth arm, solicit a
+    ///        transmitter AND the solicit arm. `nullptr` (the default) is a purely passive hunt — the
+    ///        disarmed state a shipped appliance holds until the operator arms it (invariant #16). The
+    ///        engine still *builds* frames only through the pure `buildDeauthFrame`/`buildAuthRequest`/
+    ///        `buildAssocRequest`.
     HuntEngine(RadioSniffer& sniffer, ApRegistry& registry, CaptureReadyObserver& observer,
                const uint8_t* channels, size_t channelCount, const HuntConfig& config = {},
                RawTransmitter* transmitter = nullptr);
@@ -125,6 +139,21 @@ public:
     /// replace — setCrackedLookup: a target is skipped if cracked OR submitted, keeping the cracked
     /// floor authoritative even after a local submitted-set loss (ADR-0065 #4).
     void setSubmittedLookup(const SubmittedLookup& lookup) { submittedLookup_ = &lookup; }
+
+    /// Arm deauth (ADR-0029, §4 #16): during Capturing, broadcast deauth/disassoc at the current target
+    /// to force reassociation. Off by default; takes effect only when a transmitter was also injected.
+    /// Decoupled from the transmitter's presence by ADR-0110 #5 (the §4 #16 refinement) so a device can
+    /// be solicit-armed with deauth off. App task only; the engine still builds frames only through the
+    /// pure `buildDeauthFrame`.
+    void setDeauthArmed(bool armed) { deauthArmed_ = armed; }
+
+    /// Arm clientless-PMKID solicitation (ADR-0110 #2/#5): during Capturing, inject the blind pair
+    /// (open-auth, then an association request with a CCMP+PSK RSN IE) on the solicit cadence to draw an
+    /// M1 with a PMKID KDE from a PMK-caching AP with no client present. Off by default; takes effect only
+    /// when a transmitter was also injected. Independent of the deauth arm — the four combinations give
+    /// the sibling's passive / Deauth / PMKID / Both strategy (ADR-0110 #5). App task only; frames are
+    /// built only through the pure `buildAuthRequest`/`buildAssocRequest`.
+    void setSolicitArmed(bool armed) { solicitArmed_ = armed; }
 
     /// Install the engine as the sniffer's consumer on the first hop channel and enter Discovering.
     /// Returns false (and stays Idle) if the sniffer could not enter promiscuous mode.
@@ -150,6 +179,10 @@ public:
     /// a surface and the on-air verify. Both stay 0 on a disarmed (nullptr-transmitter) engine.
     uint32_t deauthTxOk() const { return deauthTxOk_; }
     uint32_t deauthTxFail() const { return deauthTxFail_; }
+    /// Monotonic counts of solicit auth/assoc frames the raw-TX seam accepted / rejected (ADR-0110), for a
+    /// surface and the on-air verify. Both stay 0 unless the solicit arm is set and a transmitter present.
+    uint32_t solicitTxOk() const { return solicitTxOk_; }
+    uint32_t solicitTxFail() const { return solicitTxFail_; }
 
     /// The live pull snapshot the HUD reads (ADR-0033, §4 #18): current phase, parked channel, discovered
     /// count, and the in-flight target's identity + which of Beacon/M1–M4 the collector holds. A
@@ -175,6 +208,14 @@ private:
     void maybeTransmitDeauth(uint32_t nowMs);
     /// Build (pure) and transmit one broadcast frame of @p subtype at @p bssid; tally the outcome.
     void transmitDeauthFrame(ManagementSubtype subtype, const uint8_t bssid[6]);
+    /// While Capturing and solicit-armed, drive the non-blocking two-phase solicit burst (ADR-0110 #2):
+    /// on a due cadence transmit the open-auth and arm the assoc for an inter-frame gap later; on a later
+    /// tick once that gap has elapsed transmit the association request and arm the next cadence. A no-op
+    /// when the transmitter is null or the solicit arm is off. App task only (reached from tick()).
+    void maybeTransmitSolicit(uint32_t nowMs);
+    /// Build (pure) and transmit one solicit frame from @p frame of @p len bytes (0 = build failed, e.g.
+    /// buffer too small); tally the outcome into the solicit counters. A build failure counts as a fail.
+    void transmitSolicitFrame(const uint8_t* frame, uint16_t len);
 
     /// Record how the capture window that just ended for @p bssid resolved, for the never-captured backoff
     /// (ADR-0070 #32): @p captured true clears the AP's miss record (rehabilitated), false increments its
@@ -193,7 +234,9 @@ private:
     RadioSniffer& sniffer_;
     ApRegistry& registry_;
     CaptureReadyObserver& observer_;
-    RawTransmitter* transmitter_;  // null = disarmed (passive hunt); the default (invariant #16).
+    RawTransmitter* transmitter_;  // null = no raw-TX path; the default (invariant #16, ADR-0110 #5).
+    bool deauthArmed_ = false;     // deauth transmits only with a transmitter AND this (ADR-0110 #5).
+    bool solicitArmed_ = false;    // solicit transmits only with a transmitter AND this (ADR-0110 #5).
     const CrackedLookup* crackedLookup_ = nullptr;  // null = target every AP (gate B off; ADR-0061 #28).
     const SubmittedLookup* submittedLookup_ = nullptr;  // null = ignore submitted state (gate C off; ADR-0065 #30).
     HandshakeCollector collector_;         // owned; re-targeted across the round-robin.
@@ -214,6 +257,12 @@ private:
     uint32_t deauthDueMs_ = 0;      // next-burst deadline while Capturing (armed); wrap-safe via reached().
     uint32_t deauthTxOk_ = 0;       // deauth/disassoc frames the seam accepted.
     uint32_t deauthTxFail_ = 0;     // deauth/disassoc frames the seam rejected.
+    char capturingSsid_[33] = {0};  // the current target's SSID, copied at retarget for the solicit assoc.
+    uint32_t solicitDueMs_ = 0;        // next solicit-burst (auth) deadline while Capturing; wrap-safe.
+    uint32_t solicitAssocDueMs_ = 0;   // when the assoc of the in-flight burst may go out (auth time + gap).
+    bool solicitAssocPending_ = false; // true between a sent auth and its assoc (the two-phase gap).
+    uint32_t solicitTxOk_ = 0;         // solicit auth/assoc frames the seam accepted.
+    uint32_t solicitTxFail_ = 0;       // solicit auth/assoc frames the seam rejected (incl. build failures).
 
     /// One tracked AP's capture-attempt history for the never-captured backoff (ADR-0070 #32). The table is
     /// a packed array scanned linearly (<= kMaxDiscoveredAps entries, app-task only), so no index structure

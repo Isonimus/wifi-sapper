@@ -390,12 +390,16 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
     }
 
     g_creds = creds;  // own the credentials so the adapter/supervisor pointers never dangle.
-    // Arm the engine iff the operator armed deauth in NVS (ADR-0029, default-off). Disarmed injects a
-    // null transmitter -> the pre-0029 passive hunt. Built before the supervisor, which holds it by ref.
+    // Inject the raw-TX path iff the operator armed deauth in NVS (ADR-0029, default-off); disarmed injects
+    // a null transmitter -> the passive hunt. A non-null transmitter no longer alone arms anything
+    // (ADR-0110 #5, the §4 #16 refinement), so arm deauth explicitly through setDeauthArmed below. (Slice 3
+    // widens the injection condition to `|| pmkidSolicit` and adds setSolicitArmed.) Built before the
+    // supervisor, which holds it by ref.
     g_deauthArmed = g_creds.deauthEnabled;
     g_engine = new (g_engineStorage)
         HuntEngine(g_sniffer, g_registry, g_relay, kShippedHopChannels, kShippedHopChannelCount,
                    HuntConfig{}, g_deauthArmed ? &g_rawTx : nullptr);
+    g_engine->setDeauthArmed(g_deauthArmed);
     g_station = new (g_stationStorage) Esp32StationControl(g_creds.ssid, g_creds.pass);
     g_sync = new (g_syncStorage) CrackedSync(g_fetcher, *g_manifest, g_creds.key, g_bus);
     g_session = new (g_sessionStorage) ScheduledSyncSession(g_scheduler, *g_sync);

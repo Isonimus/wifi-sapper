@@ -73,9 +73,11 @@ bool parseHandshakePcap(const uint8_t* bytes, size_t len, CapturedHandshake& out
         cursor += inclLen;
     }
 
-    // Only a set good enough to upload (beacon + M1 + M2) is a success; anything less is reset so no
-    // caller derives a hashline from a partial handshake (ADR-0109 decision 2).
-    if (!out.isWpaSecValid()) {
+    // Only a set good enough to upload is a success: a wpa-sec-valid 4-way (beacon + M1 + M2) or a
+    // clientless-PMKID capture (beacon + M1 with a PMKID KDE, ADR-0110 #1). Anything less is reset so no
+    // caller derives a hashline from a partial handshake (ADR-0109 decision 2). The serialize side
+    // (net/pcap) emits exactly these two, so this mirrors it: the round trip never widens or narrows.
+    if (!out.isWpaSecValid() && !out.isPmkidValid()) {
         out = CapturedHandshake{};
         return false;
     }

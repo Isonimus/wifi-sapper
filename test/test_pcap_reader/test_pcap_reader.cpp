@@ -26,9 +26,13 @@
 using namespace sapper;
 using sapper_test::buildBeacon;
 using sapper_test::buildEapol;
+using sapper_test::buildPmkidM1;
 
 static const uint8_t kBssid[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
 static const uint8_t kClient[6] = {0x06, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
+static const uint8_t kPmkid[16] = {
+    0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81,
+    0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09};
 
 // The collector's watched channel is NOT carried by the pcap; the beacon's DS-param channel is the only
 // channel the pcap holds. They are deliberately kept different so the channel round-trip assertion proves
@@ -95,6 +99,17 @@ static CapturedHandshake makeHandshake(const char* ssid, bool withM3M4 = false) 
     return c.handshake();
 }
 
+// Build a clientless-PMKID capture (beacon + an M1 carrying a PMKID KDE, no M2) via the real collector,
+// so the stored frames and identity match the production path (ADR-0110).
+static CapturedHandshake makePmkidHandshake(const char* ssid) {
+    HandshakeCollector c(kBssid, kWatchedChannel);
+    std::vector<uint8_t> beacon = buildBeacon(kBssid, ssid, /*channel=*/kBeaconDsChannel);
+    c.ingest(beacon.data(), beacon.size());
+    std::vector<uint8_t> m1 = buildPmkidM1(kBssid, kClient, kPmkid);
+    c.ingest(m1.data(), m1.size());
+    return c.handshake();
+}
+
 static std::vector<uint8_t> serialize(const CapturedHandshake& hs) {
     BufferSink sink;
     TEST_ASSERT_TRUE(serializeHandshake(hs, sink));
@@ -139,6 +154,32 @@ void test_hc22000_from_pcap_equals_hc22000_from_handshake(void) {
     char viaPcap[kHc22000LineMax];
     TEST_ASSERT_TRUE(buildHc22000Line(original, direct, sizeof(direct)));
     TEST_ASSERT_TRUE(buildHc22000Line(parsed, viaPcap, sizeof(viaPcap)));
+    TEST_ASSERT_EQUAL_STRING(direct, viaPcap);
+}
+
+// --- A clientless-PMKID capture round-trips, and its WPA*02 line from the pcap equals the direct one. ---
+void test_pmkid_round_trips_and_wpa02_from_pcap_equals_direct(void) {
+    // The §4 #46a round-trip extended to the PMKID path (ADR-0110 #5e): a {beacon + M1} PMKID capture
+    // serialized and parsed back must reproduce the frames, stay isPmkidValid, and yield the identical
+    // WPA*02 line whether built from the original handshake or the pcap-parsed one (what the drain does).
+    CapturedHandshake original = makePmkidHandshake("TargetNet");
+    TEST_ASSERT_TRUE(original.isPmkidValid());
+    std::vector<uint8_t> bytes = serialize(original);
+
+    CapturedHandshake parsed;
+    TEST_ASSERT_TRUE(parseHandshakePcap(bytes.data(), bytes.size(), parsed));
+    TEST_ASSERT_TRUE(parsed.isPmkidValid());
+    TEST_ASSERT_FALSE(parsed.isWpaSecValid());  // no M2 survived (there was none).
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(original.bssid, parsed.bssid, 6);
+    TEST_ASSERT_EQUAL_STRING(original.ssid, parsed.ssid);
+    assertFrameEqual(original.beacon, parsed.beacon);
+    assertFrameEqual(original.msg[0], parsed.msg[0]);
+
+    char direct[kHc22000LineMax];
+    char viaPcap[kHc22000LineMax];
+    TEST_ASSERT_FALSE(buildHc22000Line(parsed, viaPcap, sizeof(viaPcap)));  // no WPA*01 (no 4-way).
+    TEST_ASSERT_TRUE(buildPmkidHc22000Line(original, direct, sizeof(direct)));
+    TEST_ASSERT_TRUE(buildPmkidHc22000Line(parsed, viaPcap, sizeof(viaPcap)));
     TEST_ASSERT_EQUAL_STRING(direct, viaPcap);
 }
 
@@ -281,6 +322,7 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_round_trip_reproduces_frames_bssid_ssid);
     RUN_TEST(test_hc22000_from_pcap_equals_hc22000_from_handshake);
+    RUN_TEST(test_pmkid_round_trips_and_wpa02_from_pcap_equals_direct);
     RUN_TEST(test_full_set_round_trips_all_five_frames);
     RUN_TEST(test_hidden_ssid_round_trips_but_empty_essid);
     RUN_TEST(test_null_or_short_buffer_fails);

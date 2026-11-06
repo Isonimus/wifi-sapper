@@ -61,7 +61,12 @@ bool writeRecord(CaptureSink& sink, const CapturedFrame& frame, uint32_t index) 
 }  // namespace
 
 bool serializeHandshake(const CapturedHandshake& handshake, CaptureSink& sink) {
-    if (!handshake.isWpaSecValid()) return false;  // nothing uploadable to emit; write nothing.
+    // Emit the pcap for either terminal capture (ADR-0110 #1): a wpa-sec-valid 4-way (beacon+M1+M2)
+    // or a clientless-PMKID capture (beacon+M1, no M2). The record loop below already writes the beacon
+    // then whichever of M1-M4 are present, so a beacon+M1 serializes with no new branch; wpa-sec takes
+    // the {beacon+M1} pcap unchanged and extracts the PMKID server-side (ADR-0110 #7). A capture that is
+    // neither (a lone M1, a lone beacon) has nothing uploadable to emit — write nothing.
+    if (!handshake.isWpaSecValid() && !handshake.isPmkidValid()) return false;
     if (!writeGlobalHeader(sink)) return false;
 
     // Order matters: hcxpcapngtool pairs the SSID from the beacon with the nonces from M1/M2, so

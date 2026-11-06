@@ -18,9 +18,13 @@
 using namespace sapper;
 using sapper_test::buildBeacon;
 using sapper_test::buildEapol;
+using sapper_test::buildPmkidM1;
 
 static const uint8_t kBssid[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
 static const uint8_t kClient[6] = {0x06, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
+static const uint8_t kPmkid[16] = {
+    0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81,
+    0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09};
 
 constexpr size_t kGlobalHeaderLen = 24;
 constexpr size_t kRecordHeaderLen = 16;
@@ -135,6 +139,35 @@ void test_refuses_not_wpasec_valid(void) {
     TEST_ASSERT_EQUAL_UINT32(0, sink.bytes.size());  // wrote nothing.
 }
 
+void test_serializes_pmkid_capture_beacon_plus_m1(void) {
+    // A clientless-PMKID capture (beacon + an M1 carrying a PMKID KDE, no M2) is uploadable (ADR-0110 #1):
+    // serializeHandshake emits the {beacon + M1} pcap, two records. Fail-before: the isWpaSecValid-only
+    // gate returned false for a capture with no M2, dropping every PMKID at the queue (a lost handshake).
+    HandshakeCollector c(kBssid, 6);
+    std::vector<uint8_t> beacon = buildBeacon(kBssid, "TargetNet");
+    std::vector<uint8_t> m1 = buildPmkidM1(kBssid, kClient, kPmkid);
+    c.ingest(beacon.data(), beacon.size());
+    c.ingest(m1.data(), m1.size());
+    TEST_ASSERT_TRUE(c.handshake().isPmkidValid());
+    TEST_ASSERT_FALSE(c.handshake().isWpaSecValid());  // no M2.
+
+    BufferSink sink;
+    TEST_ASSERT_TRUE(serializeHandshake(c.handshake(), sink));
+    const size_t expected = kGlobalHeaderLen + 2 * kRecordHeaderLen + beacon.size() + m1.size();
+    TEST_ASSERT_EQUAL_UINT32(expected, sink.bytes.size());  // global header + beacon record + M1 record.
+}
+
+void test_refuses_beacon_without_m1(void) {
+    // A lone beacon is neither wpa-sec-valid nor PMKID-valid (no M1): serialize nothing, like a lone M1.
+    HandshakeCollector c(kBssid, 6);
+    std::vector<uint8_t> beacon = buildBeacon(kBssid, "TargetNet");
+    c.ingest(beacon.data(), beacon.size());
+
+    BufferSink sink;
+    TEST_ASSERT_FALSE(serializeHandshake(c.handshake(), sink));
+    TEST_ASSERT_EQUAL_UINT32(0, sink.bytes.size());
+}
+
 void test_failing_sink_propagates_failure(void) {
     HandshakeCollector c(kBssid, 6);
     std::vector<uint8_t> beacon = buildBeacon(kBssid, "TargetNet");
@@ -157,6 +190,8 @@ int main(int, char**) {
     RUN_TEST(test_beacon_m1_m2_records_in_order);
     RUN_TEST(test_full_set_emits_five_records);
     RUN_TEST(test_refuses_not_wpasec_valid);
+    RUN_TEST(test_serializes_pmkid_capture_beacon_plus_m1);
+    RUN_TEST(test_refuses_beacon_without_m1);
     RUN_TEST(test_failing_sink_propagates_failure);
     return UNITY_END();
 }

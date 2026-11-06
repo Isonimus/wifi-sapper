@@ -40,6 +40,7 @@
 using namespace sapper;
 using sapper_test::buildBeacon;
 using sapper_test::buildEapol;
+using sapper_test::buildPmkidM1;
 using sapper_test::FakeCaptureStore;
 using sapper_test::FakeRadioSniffer;
 using sapper_test::FakeStationControl;
@@ -50,6 +51,9 @@ using sapper_test::FakeUploader;
 static const uint8_t kClient[6] = {0x06, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
 static uint8_t kHopChannels[3] = {1, 6, 11};
 static const char* kKey = "test-wpasec-key";
+static const uint8_t kPmkid[16] = {
+    0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81,
+    0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09};
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -835,6 +839,17 @@ static CapturedHandshake makeHiddenHandshake(const uint8_t bssid[6]) {
     return collector.handshake();
 }
 
+/// A clientless-PMKID capture (beacon + an M1 carrying a PMKID KDE, no M2): uploadable as a {beacon+M1}
+/// pcap, and pwncrack's hashline is the WPA*02 PMKID line (no WPA*01, since there is no 4-way) (ADR-0110).
+static CapturedHandshake makePmkidHandshake(const uint8_t bssid[6]) {
+    HandshakeCollector collector(bssid, 6);
+    const std::vector<uint8_t> beacon = buildBeacon(bssid, "Net", 6);
+    collector.ingest(beacon.data(), static_cast<uint16_t>(beacon.size()));
+    const std::vector<uint8_t> m1 = buildPmkidM1(bssid, kClient, kPmkid);
+    collector.ingest(m1.data(), static_cast<uint16_t>(m1.size()));
+    return collector.handshake();
+}
+
 void test_pwncrack_capture_removed_only_when_both_backends_terminal(void) {
     // Both backends upload the same capture in one window; it leaves the queue only after BOTH accept, and
     // each records the BSSID in its OWN submitted set (two SubmittedManifest instances, ADR-0109 #3/#4).
@@ -873,6 +888,43 @@ void test_pwncrack_capture_removed_only_when_both_backends_terminal(void) {
     TEST_ASSERT_TRUE(pwnSubmitted.isSubmitted(ap.data()));
     TEST_ASSERT_EQUAL_INT(1, wpaStore.saveCount);                 // one flush per backend this cycle.
     TEST_ASSERT_EQUAL_INT(1, pwnStore.saveCount);
+}
+
+void test_pwncrack_pmkid_capture_uploads_as_wpa02_line(void) {
+    // A clientless-PMKID capture drains to pwncrack as a WPA*02 line (ADR-0110 #5e): the drain finds no
+    // WPA*01 (no 4-way) and falls back to buildPmkidHc22000Line. wpa-sec takes the {beacon+M1} pcap
+    // unchanged. Fail-before: with only the WPA*01 derivation the capture was counted underivable and
+    // pwncrack got nothing, so a solicited/deauth-forced PMKID never reached pwncrack.
+    UploadSupervisorConfig config;
+    config.drainThreshold = 1;
+    config.settleMs = 5;
+    config.maxDrainIntervalMs = 1000000;
+    Rig rig(config);
+    rig.uploader.defaultResult = UploadResult::Accepted;
+
+    FakeSubmittedStore wpaStore;
+    SubmittedManifest wpaSubmitted(wpaStore);
+    FakeSubmittedStore pwnStore;
+    SubmittedManifest pwnSubmitted(pwnStore);
+    TEST_ASSERT_TRUE(wpaSubmitted.begin());
+    TEST_ASSERT_TRUE(pwnSubmitted.begin());
+    FakeHc22000Uploader pwnUploader;
+    pwnUploader.defaultResult = UploadResult::Accepted;
+    rig.supervisor.setSubmittedRecorder(wpaSubmitted);
+    rig.supervisor.setPwncrackBackend(pwnUploader, kPwncrackKey, pwnSubmitted);
+    rig.start(0);
+
+    const auto ap = bssidN(1);
+    rig.supervisor.onCaptureReady(makePmkidHandshake(ap.data()));
+    rig.supervisor.tick(100);
+    rig.supervisor.tick(106);
+
+    TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());       // wpa-sec uploaded the pcap,
+    TEST_ASSERT_EQUAL_UINT32(1, pwnUploader.calls.size());        // pwncrack uploaded one hashline,
+    TEST_ASSERT_EQUAL_size_t(0, pwnUploader.calls[0].line.rfind("WPA*02*", 0));  // and it is the WPA*02 line.
+    TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().pwncrackAccepted);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.lastDrain().pwncrackUnderivable);  // derivable, not skipped.
+    TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());                // removed after both backends accepted.
 }
 
 void test_pwncrack_rejection_keeps_capture_without_reuploading_wpasec(void) {
@@ -1015,6 +1067,7 @@ int main(int, char**) {
     RUN_TEST(test_d_only_a_terminal_success_records_submitted);
     RUN_TEST(test_d_flush_failure_is_loud_but_not_a_cycle_failure);
     RUN_TEST(test_pwncrack_capture_removed_only_when_both_backends_terminal);
+    RUN_TEST(test_pwncrack_pmkid_capture_uploads_as_wpa02_line);
     RUN_TEST(test_pwncrack_rejection_keeps_capture_without_reuploading_wpasec);
     RUN_TEST(test_pwncrack_already_submitted_skips_only_pwncrack);
     RUN_TEST(test_pwncrack_underivable_capture_does_not_block_removal);

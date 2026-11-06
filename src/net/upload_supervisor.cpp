@@ -281,12 +281,17 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome, uint32_t nowMs) {
 bool UploadSupervisor::uploadToPwncrack(const uint8_t* pcap, size_t len, const uint8_t bssid[6],
                                         DrainOutcome& outcome, uint32_t nowMs, bool& flushNeeded) {
     // Re-derive the hashline from the persisted pcap (ADR-0109 #2): parse the pcap back to a
-    // CapturedHandshake, then ADR-0108 buildHc22000Line, both pure and round-trip-tested. A capture with
-    // no WPA*01 line (a hidden SSID, or not a full 4-way) yields nothing pwncrack can take, now or ever, so
-    // treat it as terminal for pwncrack: it must not block the capture's removal once wpa-sec is done
-    // (wpa-sec still uploads the pcap, which its own ESSID discovery can crack). Counted so it is visible.
+    // CapturedHandshake, then build the hashcat line, both pure and round-trip-tested. Try the WPA*01
+    // 4-way line first (ADR-0108) and, when the capture holds no 4-way to make one, fall back to the
+    // WPA*02 PMKID line (ADR-0110 #5e: the drain tries WPA*01 then WPA*02 by what the capture holds) — a
+    // clientless-PMKID capture (beacon+M1, no M2) has no WPA*01 but a valid WPA*02. A capture from which
+    // NEITHER line derives (a hidden SSID, or neither a full 4-way nor a PMKID M1) yields nothing pwncrack
+    // can take, now or ever, so treat it as terminal for pwncrack: it must not block the capture's removal
+    // once wpa-sec is done (wpa-sec still uploads the pcap, which its own ESSID discovery can crack).
+    // Counted so it is visible.
     if (!parseHandshakePcap(pcap, len, pwncrackHandshake_) ||
-        !buildHc22000Line(pwncrackHandshake_, pwncrackLine_, sizeof(pwncrackLine_))) {
+        (!buildHc22000Line(pwncrackHandshake_, pwncrackLine_, sizeof(pwncrackLine_)) &&
+         !buildPmkidHc22000Line(pwncrackHandshake_, pwncrackLine_, sizeof(pwncrackLine_)))) {
         ++outcome.pwncrackUnderivable;
         return true;
     }
