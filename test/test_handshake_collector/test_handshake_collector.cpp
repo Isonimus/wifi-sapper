@@ -22,6 +22,7 @@ using sapper_test::buildPmkidM1;
 static const uint8_t kBssid[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
 static const uint8_t kOther[6] = {0x02, 0x99, 0x88, 0x77, 0x66, 0x55};
 static const uint8_t kClient[6] = {0x06, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
+static const uint8_t kOtherClient[6] = {0x0A, 0x11, 0x22, 0x33, 0x44, 0x55};
 static const uint8_t kPmkid[16] = {
     0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81,
     0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09};
@@ -153,6 +154,43 @@ void test_four_way_is_wpasec_valid_and_not_pmkid(void) {
     TEST_ASSERT_FALSE(c.isPmkidValid());
 }
 
+// ADR-0115 pairing: a beacon + M1 + M2 whose M1 and M2 come from DIFFERENT stations is not
+// wpa-sec-valid, even though all three messages are present. This is the solicited-PMKID / crowded-RF
+// mispair (our M1 addressed to a spoofed STA, an ambient client's M2) that wpa-sec rejects. Presence
+// alone passed before the fix (fail-before), the pairing check rejects it after (pass-after).
+void test_mismatched_client_m1_m2_is_not_wpasec_valid(void) {
+    HandshakeCollector c(kBssid);
+    ingestVec(c, buildBeacon(kBssid, "TargetNet"));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true));       // M1 to kClient.
+    ingestVec(c, buildEapol(kBssid, kOtherClient, sapper_test::kKeyInfoM2, false));  // M2 from another STA.
+    TEST_ASSERT_TRUE(c.has(HandshakeMessage::M1));
+    TEST_ASSERT_TRUE(c.has(HandshakeMessage::M2));
+    TEST_ASSERT_FALSE(c.isWpaSecValid());  // same BSSID, different stations: not one exchange.
+}
+
+// ADR-0115 pairing: a beacon + M1 + M2 from the SAME station but with MISMATCHED replay counters is
+// not wpa-sec-valid (the ANonce and MIC belong to different handshakes, as measured on the field
+// cards: MERCUSYS M1 rc=2 / M2 rc=3). Presence alone passed before the fix (fail-before).
+void test_mismatched_replay_m1_m2_is_not_wpasec_valid(void) {
+    HandshakeCollector c(kBssid);
+    ingestVec(c, buildBeacon(kBssid, "TargetNet"));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true, 0, /*replay=*/2));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM2, false, 0, /*replay=*/3));
+    TEST_ASSERT_TRUE(c.has(HandshakeMessage::M2));
+    TEST_ASSERT_FALSE(c.isWpaSecValid());  // same station, different exchange.
+}
+
+// ADR-0115 pairing: a genuine pair (same station, equal non-zero replay counter) is still
+// wpa-sec-valid. Guards the fix against over-rejecting: the real deauth-forced capture must pass, and
+// a non-zero counter proves the check compares the actual counters, not just the builder's default 0.
+void test_matched_client_and_replay_is_wpasec_valid(void) {
+    HandshakeCollector c(kBssid);
+    ingestVec(c, buildBeacon(kBssid, "TargetNet"));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true, 0, /*replay=*/7));
+    ingestVec(c, buildEapol(kBssid, kClient, sapper_test::kKeyInfoM2, false, 0, /*replay=*/7));
+    TEST_ASSERT_TRUE(c.isWpaSecValid());
+}
+
 void test_retarget_clears_and_aims_at_a_new_bssid(void) {
     // The endless hunt re-uses one collector across its round-robin, re-targeting between APs
     // (ADR-0015). A frame for the old target after retarget must be dropped, and one for the new
@@ -190,6 +228,9 @@ int main(int, char**) {
     RUN_TEST(test_beacon_plus_plain_m1_is_not_pmkid_valid);
     RUN_TEST(test_pmkid_m1_without_beacon_is_not_pmkid_valid);
     RUN_TEST(test_four_way_is_wpasec_valid_and_not_pmkid);
+    RUN_TEST(test_mismatched_client_m1_m2_is_not_wpasec_valid);
+    RUN_TEST(test_mismatched_replay_m1_m2_is_not_wpasec_valid);
+    RUN_TEST(test_matched_client_and_replay_is_wpasec_valid);
     RUN_TEST(test_reset_clears_but_keeps_target);
     RUN_TEST(test_retarget_clears_and_aims_at_a_new_bssid);
     return UNITY_END();

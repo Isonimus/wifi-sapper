@@ -80,6 +80,12 @@ constexpr uint16_t kKeyFrameOffset = 4;      ///< Key descriptor byte, relative 
 constexpr uint8_t kKeyDescWpa2 = 0x02;
 constexpr uint8_t kKeyDescWpa = 0xFE;
 
+// EAPOL-Key replay counter: 8 bytes, big-endian, at offset 9 from the EAPOL header (after the
+// 4-byte header + descriptor type(1) + Key Information(2) + key length(2)). M2 echoes M1's counter
+// within one exchange (ADR-0115). Matches the ANonce at offset 17 used by net/hc22000.
+constexpr uint16_t kReplayCounterOffset = 9;
+constexpr uint16_t kReplayCounterLen = 8;
+
 // Key Information bit masks (the 2-byte field at keyFrame[1..2], big-endian).
 constexpr uint16_t kKeyInfoDescVerMask = 0x0007;
 constexpr uint16_t kKeyInfoPairwise = 0x0008;
@@ -105,6 +111,29 @@ const uint8_t* frameBssid(const uint8_t* frame, uint16_t len) {
     if (toDs && !fromDs) return frame + kAddr1Offset;   // client → AP: BSSID in Addr1.
     if (!toDs && fromDs) return frame + kAddr2Offset;    // AP → client: BSSID in Addr2.
     return frame + kAddr3Offset;                         // mgmt/beacon or IBSS/WDS: BSSID in Addr3.
+}
+
+const uint8_t* stationMac(const uint8_t* frame, uint16_t len) {
+    // The complement of frameBssid: it returns the AP address, this the client's. Addresses sit at
+    // fixed offsets even for a QoS/HT-Control-extended header (those fields follow Sequence Control),
+    // so no header-length computation is needed, exactly as in frameBssid.
+    if (frame == nullptr || len < kAddr3Offset + kBssidLen) return nullptr;
+    const bool toDs = (frame[1] & kFcToDs) != 0;
+    const bool fromDs = (frame[1] & kFcFromDs) != 0;
+    if (toDs && !fromDs) return frame + kAddr2Offset;   // client → AP: station is the source, Addr2.
+    if (!toDs && fromDs) return frame + kAddr1Offset;   // AP → client: station is the destination, Addr1.
+    return nullptr;                                      // mgmt/beacon or IBSS/WDS: no single station.
+}
+
+bool eapolReplayCounter(const uint8_t* eapol, uint16_t eapolLen, uint64_t& out) {
+    out = 0;
+    if (eapol == nullptr || eapolLen < kReplayCounterOffset + kReplayCounterLen) return false;
+    uint64_t counter = 0;
+    for (uint16_t i = 0; i < kReplayCounterLen; ++i) {
+        counter = (counter << 8) | eapol[kReplayCounterOffset + i];
+    }
+    out = counter;
+    return true;
 }
 
 bool beaconSsid(const uint8_t* frame, uint16_t len, char (&out)[33]) {

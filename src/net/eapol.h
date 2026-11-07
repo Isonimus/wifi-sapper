@@ -88,6 +88,29 @@ uint8_t beaconChannel(const uint8_t* frame, uint16_t len);
 bool beaconIsOpen(const uint8_t* frame, uint16_t len);
 
 /**
+ * @brief Pointer to the 6-byte **station** (non-AP) MAC inside @p frame, or nullptr.
+ *
+ * The DS-direction complement of frameBssid(): where frameBssid returns the AP's address, this
+ * returns the client's. A client->AP data frame (To-DS) carries the station as the source (Addr2),
+ * an AP->client frame (From-DS) as the destination (Addr1). A management/beacon or IBSS/WDS frame
+ * has no single infrastructure station and returns nullptr. Used to pair a handshake's M1 (From-DS,
+ * station = Addr1) with its M2 (To-DS, station = Addr2) so both are confirmed to belong to one
+ * exchange before the capture is treated as valid (ADR-0115).
+ */
+const uint8_t* stationMac(const uint8_t* frame, uint16_t len);
+
+/**
+ * @brief Read an EAPOL-Key frame's 8-byte big-endian replay counter into @p out.
+ *
+ * @p eapol points at the EAPOL header (as locateEapol returns). The counter sits at EAPOL offset 9
+ * (after the 4-byte header, the 1-byte descriptor type, the 2-byte Key Information, and the 2-byte
+ * key length). Returns false (and leaves @p out 0) when @p eapolLen is too short to hold it, so a
+ * truncated frame fails closed rather than reading past its end (quality bar §3). M2 echoes M1's
+ * replay counter within one 4-way exchange, which the pairing check in ADR-0115 relies on.
+ */
+bool eapolReplayCounter(const uint8_t* eapol, uint16_t eapolLen, uint64_t& out);
+
+/**
  * @brief Locate the EAPOL payload inside an 802.11 data frame.
  *
  * Scans for the LLC/SNAP header `AA AA 03 00 00 00 88 8E` (the 802.11 header is 24-30 bytes, so

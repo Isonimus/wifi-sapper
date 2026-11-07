@@ -12,6 +12,18 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+- **Fixed: a handshake is now treated as valid only when its two halves came from the same
+  connection, so the device stops uploading captures wpa-sec rejects.** The capture only checked that
+  a first message (M1) and a reply (M2) were both present for the target network, not that they
+  belonged to the *same* exchange: on a busy access point two devices connecting at once could leave
+  one device's M1 paired with another's M2, and the clientless-PMKID feature made the mispair routine
+  (our solicited M1 is addressed to a made-up station while a real client's M2 arrives). The mixed
+  pair is an invalid handshake wpa-sec rejects as "no valid handshakes." The device now requires M1
+  and M2 to share a station address and replay counter before it counts the capture, uploads the
+  pcap, or builds the pwncrack line, so a crowded-air or solicited mispair keeps hunting for a real
+  pair instead. Latent since the hunt shipped (v0.1.0); PMKID solicitation is unreleased. The PMKID
+  path (crackable from M1 alone) is unaffected. (ADR-0115; carries the sibling Adversary repo's
+  handshake-pairing fix)
 - **Fixed: re-saving the setup form from the Maintenance dashboard no longer wipes your screen-dim
   delays.** The Maintenance `/config` editor never read the two inactivity-dim fields back on save (and
   rendered them blank), so any re-save from Maintenance silently reset screen dimming to off, even if

@@ -39,7 +39,10 @@ struct CapturedHandshake {
     bool hasBeacon() const { return beacon.present(); }
     bool has(HandshakeMessage message) const;
 
-    /// The minimum a wpa-sec upload needs: beacon + M1 + M2 (ADR-0009 decision #3).
+    /// The minimum a wpa-sec upload needs: beacon + an M1/M2 pair from one exchange (ADR-0009
+    /// decision #3, pairing added by ADR-0115). M1 and M2 must share a station MAC and replay
+    /// counter, read from the whole stored frames in the pure core; presence alone is not enough,
+    /// or a solicited/crowded-RF mispair would be uploaded and rejected as "no valid handshakes."
     bool isWpaSecValid() const;
     /// A clientless-PMKID capture: beacon + an M1 whose Key Data carries a PMKID KDE (ADR-0110 #1).
     /// The second terminal condition beside isWpaSecValid() (a PMKID M1 has no M2), read at build

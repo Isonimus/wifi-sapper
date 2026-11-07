@@ -44,8 +44,11 @@ bool buildHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen) {
     out[0] = '\0';
 
     // ANonce comes from M1 and the MIC/SNonce/EAPOL from M2, so the pair is replay-counter-consistent
-    // (messagepair 00; ADR-0108 decision #2). Both are required — isWpaSecValid already guarantees them
-    // for any capture worth sending, so a capture lacking either yields no line rather than a rejectable one.
+    // (messagepair 00; ADR-0108 decision #2). That consistency is now enforced upstream: isWpaSecValid
+    // gates on a matched M1/M2 pair (same station + replay counter, ADR-0115), and the sole production
+    // caller re-derives the handshake through that gate (upload_supervisor -> parseHandshakePcap ->
+    // isWpaSecValid). The presence check stays so a direct/partial handshake yields no line rather than
+    // a rejectable one (quality bar §3), never because a mispaired capture could reach here in production.
     if (!hs.has(HandshakeMessage::M1) || !hs.has(HandshakeMessage::M2)) return false;
 
     // A hidden network has no crackable WPA*02 line (the ESSID is part of PMK derivation). Skip it loudly

@@ -91,6 +91,40 @@ void test_frame_bssid_by_ds_bits(void) {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(kBssid, frameBssid(beacon.data(), beacon.size()), 6);
 }
 
+// stationMac is frameBssid's complement: it returns the client address, by DS direction (ADR-0115).
+void test_station_mac_by_ds_bits(void) {
+    // AP→client (From-DS): the station is the destination, Addr1 = the client.
+    std::vector<uint8_t> fromAp = buildEapol(kBssid, kClient, sapper_test::kKeyInfoM1, true);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kClient, stationMac(fromAp.data(), fromAp.size()), 6);
+    // client→AP (To-DS): the station is the source, Addr2 = the client.
+    std::vector<uint8_t> toAp = buildEapol(kBssid, kClient, sapper_test::kKeyInfoM2, false);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kClient, stationMac(toAp.data(), toAp.size()), 6);
+    // management/beacon (To-DS=From-DS=0): no single infrastructure station.
+    std::vector<uint8_t> beacon = buildBeacon(kBssid, "TestNet");
+    TEST_ASSERT_NULL(stationMac(beacon.data(), beacon.size()));
+    // Too short to hold the addresses: nullptr, never a read past the frame.
+    TEST_ASSERT_NULL(stationMac(fromAp.data(), 10));
+}
+
+// eapolReplayCounter reads the 8-byte big-endian counter at EAPOL offset 9, and fails closed when the
+// payload is too short to hold it (ADR-0115).
+void test_eapol_replay_counter_reads_big_endian(void) {
+    std::vector<uint8_t> m2 = buildEapol(kBssid, kClient, sapper_test::kKeyInfoM2, false, 0,
+                                         /*replayCounter=*/0x0102030405060708ULL);
+    uint16_t eapolLen = 0;
+    const uint8_t* eapol = locateEapol(m2.data(), static_cast<uint16_t>(m2.size()), eapolLen);
+    TEST_ASSERT_NOT_NULL(eapol);
+    uint64_t counter = 0xFFFFFFFFFFFFFFFFULL;
+    TEST_ASSERT_TRUE(eapolReplayCounter(eapol, eapolLen, counter));
+    TEST_ASSERT_EQUAL_UINT64(0x0102030405060708ULL, counter);
+
+    // A payload too short to hold offset 9..16 fails closed and leaves the out param zeroed.
+    uint64_t sink = 0xABCDEF;
+    TEST_ASSERT_FALSE(eapolReplayCounter(eapol, 16, sink));
+    TEST_ASSERT_EQUAL_UINT64(0, sink);
+    TEST_ASSERT_FALSE(eapolReplayCounter(nullptr, 99, sink));
+}
+
 void test_beacon_ssid_read(void) {
     char ssid[33];
     std::vector<uint8_t> named = buildBeacon(kBssid, "MyNetwork");
@@ -209,6 +243,8 @@ int main(int, char**) {
     RUN_TEST(test_too_short_eapol_is_unknown);
     RUN_TEST(test_locate_eapol_absent_without_snap_header);
     RUN_TEST(test_frame_bssid_by_ds_bits);
+    RUN_TEST(test_station_mac_by_ds_bits);
+    RUN_TEST(test_eapol_replay_counter_reads_big_endian);
     RUN_TEST(test_beacon_ssid_read);
     RUN_TEST(test_hidden_beacon_ssid_is_empty_but_present);
     RUN_TEST(test_oversize_ssid_ie_is_rejected);

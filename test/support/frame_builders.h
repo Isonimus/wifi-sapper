@@ -58,8 +58,11 @@ inline std::vector<uint8_t> buildBeacon(const uint8_t bssid[6], const std::strin
 /// (From-DS, BSSID in Addr2); false = client→AP (To-DS, BSSID in Addr1). @p extraKeyDataLen pads the
 /// EAPOL body past the 99-byte minimum (default 0) so a test can build a large-but-valid M2 near
 /// kMaxFrameLen; the 2-byte EAPOL length field is set consistently with the padded size.
+/// @p replayCounter sets the 8-byte big-endian EAPOL-Key replay counter (default 0) so a test can
+/// build a matched or mismatched M1/M2 pair (ADR-0115).
 inline std::vector<uint8_t> buildEapol(const uint8_t bssid[6], const uint8_t client[6],
-                                       uint16_t keyInfo, bool fromAp, size_t extraKeyDataLen = 0) {
+                                       uint16_t keyInfo, bool fromAp, size_t extraKeyDataLen = 0,
+                                       uint64_t replayCounter = 0) {
     std::vector<uint8_t> f(24, 0);
     f[0] = 0x08;  // FC: data frame.
     f[1] = fromAp ? 0x02 : 0x01;  // From-DS or To-DS.
@@ -87,6 +90,9 @@ inline std::vector<uint8_t> buildEapol(const uint8_t bssid[6], const uint8_t cli
     eapol[4] = 0x02;                                       // Key descriptor type: WPA2.
     eapol[5] = static_cast<uint8_t>(keyInfo >> 8);         // Key Information (big-endian).
     eapol[6] = static_cast<uint8_t>(keyInfo & 0xFF);
+    for (int i = 0; i < 8; ++i) {                          // Replay counter (8 bytes, big-endian) at offset 9.
+        eapol[9 + i] = static_cast<uint8_t>((replayCounter >> (8 * (7 - i))) & 0xFF);
+    }
     f.insert(f.end(), eapol.begin(), eapol.end());
     return f;
 }
