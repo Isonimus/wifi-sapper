@@ -16,6 +16,19 @@ namespace {
 /// The HTML `checked` attribute when @p on, else nothing — so a rendered checkbox reflects stored state.
 const char* checkedAttr(bool on) { return on ? " checked" : ""; }
 
+/// Copy @p src into @p dst[0..dstSize), rejecting an over-length value rather than truncating it: a
+/// truncated SSID could slip past validateCredentials as a different, shorter network, so a value that
+/// does not fit is a hard failure. Both device portals carried this inline before ADR-0114 unified it.
+bool copyBounded(char* dst, size_t dstSize, const char* src) {
+    const size_t len = std::strlen(src);
+    if (len >= dstSize) return false;
+    std::memcpy(dst, src, len + 1);  // includes the NUL
+    return true;
+}
+
+/// An HTML checkbox posts "on" when checked and is absent (an empty value here) otherwise.
+bool isCheckboxOn(const char* value) { return std::strcmp(value, "on") == 0; }
+
 }  // namespace
 
 size_t buildSetupForm(const SetupFormModel& model, char* out, size_t outSize) {
@@ -192,6 +205,37 @@ uint16_t parseDelaySeconds(const char* text) {
     if (value < 0) return 0;                 // negative/non-numeric -> off, never a wrapped huge value.
     if (value > 65535) return 65535;         // over-range -> capped, never wrapped (client max is advisory).
     return static_cast<uint16_t>(value);
+}
+
+FormParseError parseSetupFormSubmission(const FormArgReader& args, ProvisioningRecord& submitted,
+                                        bool& openNetwork) {
+    submitted = ProvisioningRecord{};
+    // Copy-then-advance: each copyBounded fully consumes its value before the next value() call, so the
+    // FormArgReader reuse-one-buffer contract (provisioning_form.h) holds — no two values held at once.
+    // Over-length any string field -> reject the whole submission rather than store a truncation.
+    if (!copyBounded(submitted.ssid, sizeof(submitted.ssid), args.value("ssid")) ||
+        !copyBounded(submitted.pass, sizeof(submitted.pass), args.value("pass")) ||
+        !copyBounded(submitted.key, sizeof(submitted.key), args.value("key")) ||
+        !copyBounded(submitted.webhookUrl, sizeof(submitted.webhookUrl), args.value("webhook")) ||
+        !copyBounded(submitted.maintenancePass, sizeof(submitted.maintenancePass), args.value("maintpass")) ||
+        !copyBounded(submitted.pwncrackKey, sizeof(submitted.pwncrackKey), args.value("pwncrack"))) {
+        return FormParseError::FieldTooLong;
+    }
+    // Toggles always come from the submission: the form renders stored state (ADR-0037), so an unchecked
+    // box is a deliberate disarm — deauth, the PMKID-solicit arm (ADR-0110 #5d), and the three selectors.
+    submitted.deauthEnabled = isCheckboxOn(args.value("deauth"));
+    submitted.pmkidSolicit = isCheckboxOn(args.value("pmkid"));
+    submitted.notifyCaptured = isCheckboxOn(args.value("nCaptured"));
+    submitted.notifyCracked = isCheckboxOn(args.value("nCracked"));
+    submitted.notifySyncError = isCheckboxOn(args.value("nSyncErr"));
+    // Screen-dim delays (ADR-0093), clamped to u16 server-side (the form max is advisory; a raw POST can
+    // exceed it): blank/negative -> 0 (off), over-range -> capped. This is the parse the Maintenance
+    // /config save dropped before ADR-0114, silently zeroing dimming on a re-save (the fixed defect).
+    submitted.screenDimAfterSec = parseDelaySeconds(args.value("dimAfter"));
+    submitted.screenOffAfterSec = parseDelaySeconds(args.value("offAfter"));
+    // Explicit open-network intent (ADR-0106): a passphrase-less network is ticked, never inferred.
+    openNetwork = isCheckboxOn(args.value("open"));
+    return FormParseError::None;
 }
 
 }  // namespace sapper

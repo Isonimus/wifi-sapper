@@ -10,12 +10,12 @@
 #include <esp_mac.h>
 
 #include <cstdlib>
-#include <cstring>
 
 #include "net/captive_portal.h"      // kSoftApPassword — the published fallback AP passphrase.
 #include "net/dashboard.h"           // buildDashboardHead, appendCrackedRow, kDashboardControls/Foot
 #include "net/filesystem_mount.h"    // filesystemReformatCount: the durable FS-health breadcrumb (ADR-0074)
-#include "net/provisioning_form.h"   // SetupFormModel, buildSetupForm, resolveProvisioningUpdate
+#include "net/provisioning_form.h"   // SetupFormModel, buildSetupForm, resolveProvisioningUpdate, parse
+#include "net/web_arg_reader.h"      // WebServerArgReader — the device FormArgReader adapter (ADR-0114)
 
 namespace sapper {
 namespace {
@@ -40,15 +40,6 @@ const char* effectiveApPass(const char* maintenancePass) {
         return maintenancePass;
     }
     return kSoftApPassword;
-}
-
-/// Copy a form field into a fixed buffer, rejecting an over-length value rather than truncating it (a
-/// truncated SSID could slip past validateCredentials as a different network). Second instance of the
-/// captive-portal helper — left duplicated per the rule of three (§3), see LEDGER (ADR-0043 decision 6).
-bool copyBounded(char* dst, size_t dstSize, const String& src) {
-    if (src.length() >= dstSize) return false;
-    std::memcpy(dst, src.c_str(), src.length() + 1);  // includes the NUL
-    return true;
 }
 
 }  // namespace
@@ -173,6 +164,12 @@ void MaintenancePortal::handleConfig() {
     model.hasStoredWebhook = m_creds.webhookUrl[0] != '\0';
     model.hasStoredMaintenancePass = m_creds.maintenancePass[0] != '\0';
     model.hasStoredPwncrackKey = m_creds.pwncrackKey[0] != '\0';  // pwncrack second backend (ADR-0109 #46).
+    // Prefill the screen-dim delays (ADR-0093) so the form shows the stored values and a re-save preserves
+    // them — like the captive portal's handleRoot. Omitting this (with handleSave not parsing them back)
+    // was the Maintenance /config re-save-wipes-dimming defect ADR-0114 fixes; both halves mirror the
+    // captive portal now. These are config, not secrets, so rendering the value is safe (§4 #20).
+    model.screenDimAfterSec = m_creds.screenDimAfterSec;
+    model.screenOffAfterSec = m_creds.screenOffAfterSec;
 
     // Heap, not the 8 KB loopTask stack: a 5 KB buffer on the stack under the WebServer frames overflows it
     // (same cause as handleRoot). Single-threaded serve, so malloc/free per request is fine; fail loud on a
@@ -194,30 +191,17 @@ void MaintenancePortal::handleConfig() {
 void MaintenancePortal::handleSave() {
     m_activity = true;
 
-    // Second instance of the captive-portal save wiring — left duplicated per the rule of three (§3),
-    // sharing the *pure* policy (resolveProvisioningUpdate) but repeating the WebServer::arg plumbing;
-    // see LEDGER (ADR-0043 decision 6). Over-length any field -> reject rather than store a truncation.
+    // Parse the whole submission through the one pure seam both portals share (ADR-0114), sharing the
+    // field list as well as the pure merge policy: it reads every field including the two screen-dim
+    // delays this handler dropped before ADR-0114 (the re-save-wipes-dimming defect). Over-length any
+    // field -> reject rather than store a truncation.
+    WebServerArgReader args(m_http);
     ProvisioningRecord submitted = {};
-    if (!copyBounded(submitted.ssid, sizeof(submitted.ssid), m_http.arg("ssid")) ||
-        !copyBounded(submitted.pass, sizeof(submitted.pass), m_http.arg("pass")) ||
-        !copyBounded(submitted.key, sizeof(submitted.key), m_http.arg("key")) ||
-        !copyBounded(submitted.webhookUrl, sizeof(submitted.webhookUrl), m_http.arg("webhook")) ||
-        !copyBounded(submitted.maintenancePass, sizeof(submitted.maintenancePass),
-                     m_http.arg("maintpass")) ||
-        !copyBounded(submitted.pwncrackKey, sizeof(submitted.pwncrackKey), m_http.arg("pwncrack"))) {
+    bool openNetwork = false;
+    if (parseSetupFormSubmission(args, submitted, openNetwork) != FormParseError::None) {
         m_http.send(400, "text/html", "<h2>A field is too long.</h2><p><a href='/config'>Back</a></p>");
         return;
     }
-    // An HTML checkbox posts "on" when checked and is absent otherwise; an unchecked box is a deliberate
-    // disarm now the form renders the stored state (ADR-0029/ADR-0035/ADR-0037).
-    submitted.deauthEnabled = (m_http.arg("deauth") == "on");
-    submitted.pmkidSolicit = (m_http.arg("pmkid") == "on");  // the second active-TX arm (ADR-0110 #5d).
-    submitted.notifyCaptured = (m_http.arg("nCaptured") == "on");
-    submitted.notifyCracked = (m_http.arg("nCracked") == "on");
-    submitted.notifySyncError = (m_http.arg("nSyncErr") == "on");
-    // Explicit open-network intent (ADR-0106): the common Maintenance edit leaves the SSID blank to keep
-    // the current Wi-Fi, so a passphrase-less network must be ticked, never inferred from a blank field.
-    const bool openNetwork = (m_http.arg("open") == "on");
 
     // Merge over the stored record (ADR-0037/ADR-0106): a blank key/webhook/maintpass keeps its stored
     // value and a blank SSID keeps the whole Wi-Fi pair (the light-touch edit this route exists for); the

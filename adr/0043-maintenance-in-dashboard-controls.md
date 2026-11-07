@@ -123,3 +123,14 @@ both POST-gated.**
 - **The MaintenancePortal constructor takes the full `ProvisioningRecord`** (not just the two
   fields slice-0040 needed), because the config form must render the record's `hasStored*`
   facts and merge a re-save over the stored record. A device-only interface change, review-only.
+
+## Amendment — 2026-11-07: decision 6 revised by ADR-0114
+
+Decision 6 kept the two portals' form-save arg parsing duplicated (the second instance, rule of
+three), to be hoisted "only when a third serving surface appears". ADR-0114 reverses that: the two
+copies share an invisible contract — the full submitted-field list — and drifted, dropping the
+screen-dim delays from the Maintenance save (a silent re-save-wipes-dimming bug, latent since
+slice-0094). When duplicated instances must stay identical over a shared, growing contract,
+divergence is the default failure, so the parse is now one pure `parseSetupFormSubmission` seam both
+portals call (ADR-0114, §4 #48). The rest of this ADR — the POST/GET split, reboot-scoped intents,
+§4 #23 — is unchanged, so this record stays `accepted`; only decision 6 is superseded in substance.

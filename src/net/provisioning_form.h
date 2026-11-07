@@ -136,4 +136,46 @@ NetworkEntryError validateNetworkEntry(const char* submittedSsid, const char* su
  */
 uint16_t parseDelaySeconds(const char* text);
 
+/**
+ * @brief A read-only view over a submitted form's fields, so the submission parser is host-testable.
+ *
+ * The one seam that lets `parseSetupFormSubmission` be pure (ADR-0114): the device wraps a live
+ * `WebServer` (`net/web_arg_reader.h`), the native lane a fake map. `value(name)` returns the
+ * submitted value, or the empty string (never `nullptr`) for an absent field, mirroring
+ * `WebServer::arg`'s contract. The returned pointer must stay valid only until the next `value()`
+ * call on the same reader (the device adapter reuses one scratch buffer); the parser honours this by
+ * copying or consuming each value before it reads the next, so no two values are ever held at once.
+ */
+struct FormArgReader {
+    virtual const char* value(const char* name) const = 0;
+
+protected:
+    ~FormArgReader() = default;  // not deleted through this type; no virtual dtor needed, no vtable cost.
+};
+
+/// Why `parseSetupFormSubmission` rejected a submission. `None` means the record was populated.
+enum class FormParseError : uint8_t {
+    None,
+    FieldTooLong,  ///< A string field exceeded its record buffer — rejected, never truncated (see below).
+};
+
+/**
+ * @brief Parse a re-provision submission from @p args into @p submitted and @p openNetwork. Pure.
+ *
+ * The single owner of the setup form's field-name list and per-field parsing — the one place both
+ * serving surfaces (the captive portal and the Maintenance `/config` editor) read a POST into a
+ * `ProvisioningRecord`, so the list cannot drift between them (ADR-0114, revising ADR-0043 decision 6).
+ * It zeroes @p submitted first, then: copies each string field rejecting an over-length value rather
+ * than truncating it (a truncated SSID could slip past `validateCredentials` as a shorter network),
+ * reads every checkbox (`"on"` = set, absent = clear — a rendered-stored-state form makes an unchecked
+ * box a deliberate disarm), and clamps each screen-dim delay to a u16 (`parseDelaySeconds`). It does
+ * **not** merge, validate, or persist — the caller still runs `resolveProvisioningUpdate` over the
+ * stored record, `validateCredentials`/`validateNetworkEntry`, and `persistProvisioning`.
+ *
+ * @return `FieldTooLong` (with @p submitted left partially written and unusable) if any string field
+ *         did not fit; otherwise `None` with @p submitted fully populated and @p openNetwork set.
+ */
+FormParseError parseSetupFormSubmission(const FormArgReader& args, ProvisioningRecord& submitted,
+                                        bool& openNetwork);
+
 }  // namespace sapper

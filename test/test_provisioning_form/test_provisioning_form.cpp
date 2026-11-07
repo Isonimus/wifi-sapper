@@ -13,9 +13,11 @@
 
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <string>
 
 #include "net/provisioning.h"       // validateCredentials, CredentialError
-#include "net/provisioning_form.h"  // SetupFormModel, buildSetupForm, resolveProvisioningUpdate
+#include "net/provisioning_form.h"  // SetupFormModel, buildSetupForm, resolveProvisioningUpdate, parse
 #include "net/portal_theme.h"       // slice-0098: the shared theme/wordmark the form carries
 
 using namespace sapper;
@@ -35,6 +37,22 @@ void setRecord(ProvisioningRecord& r, const char* ssid, const char* pass, const 
     std::snprintf(r.key, sizeof(r.key), "%s", key);
     std::snprintf(r.webhookUrl, sizeof(r.webhookUrl), "%s", webhook);
 }
+
+// A host fake of the device WebServer arg lookup (ADR-0114): a set field returns its value, an unset one
+// returns "" (never nullptr) — the WebServer::arg contract the FormArgReader seam mirrors. Values live in
+// the map, so the returned pointer stays valid for the whole test (the device adapter reuses one buffer,
+// but the parser never holds two values at once, so both satisfy the seam's lifetime contract).
+class FakeFormArgs : public FormArgReader {
+public:
+    void set(const char* name, const char* value) { m_args[name] = value; }
+    const char* value(const char* name) const override {
+        const auto it = m_args.find(name);
+        return it == m_args.end() ? "" : it->second.c_str();
+    }
+
+private:
+    std::map<std::string, std::string> m_args;
+};
 
 }  // namespace
 
@@ -514,6 +532,84 @@ void test_first_boot_takes_submission_verbatim_and_blank_key_fails(void) {
                           static_cast<int>(validateCredentials(out.ssid, out.pass, out.key)));
 }
 
+// --- parseSetupFormSubmission: the one shared submission parser (ADR-0114, revises ADR-0043 #6) ------
+
+void test_parse_setup_form_submission_reads_every_field(void) {
+    // Both portals parse a POST through this single seam, so the submitted-field list lives in one place
+    // and cannot drift between serving surfaces. Pin that every field is read: strings, every checkbox,
+    // the open flag, and — the regression this fixes — BOTH screen-dim delays.
+    FakeFormArgs args;
+    args.set("ssid", "new-net");
+    args.set("pass", "newpass12");
+    args.set("key", "wpaseckey");
+    args.set("webhook", "https://ntfy.sh/x");
+    args.set("maintpass", "maintpass1");
+    args.set("pwncrack", "pwncrack-key");
+    args.set("deauth", "on");
+    args.set("pmkid", "on");
+    args.set("nCaptured", "on");
+    args.set("nCracked", "on");
+    // nSyncErr deliberately absent -> must read as off (an unchecked box posts nothing).
+    args.set("open", "on");
+    args.set("dimAfter", "20");
+    args.set("offAfter", "60");
+
+    ProvisioningRecord submitted = {};
+    bool openNetwork = false;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(FormParseError::None),
+                          static_cast<int>(parseSetupFormSubmission(args, submitted, openNetwork)));
+    TEST_ASSERT_EQUAL_STRING("new-net", submitted.ssid);
+    TEST_ASSERT_EQUAL_STRING("newpass12", submitted.pass);
+    TEST_ASSERT_EQUAL_STRING("wpaseckey", submitted.key);
+    TEST_ASSERT_EQUAL_STRING("https://ntfy.sh/x", submitted.webhookUrl);
+    TEST_ASSERT_EQUAL_STRING("maintpass1", submitted.maintenancePass);
+    TEST_ASSERT_EQUAL_STRING("pwncrack-key", submitted.pwncrackKey);
+    TEST_ASSERT_TRUE(submitted.deauthEnabled);
+    TEST_ASSERT_TRUE(submitted.pmkidSolicit);
+    TEST_ASSERT_TRUE(submitted.notifyCaptured);
+    TEST_ASSERT_TRUE(submitted.notifyCracked);
+    TEST_ASSERT_FALSE(submitted.notifySyncError);  // absent checkbox -> off
+    TEST_ASSERT_TRUE(openNetwork);
+    // The core regression (ADR-0114): the Maintenance /config save dropped these two, silently zeroing
+    // dimming on a re-save. Routing both portals through this seam makes that impossible by construction.
+    TEST_ASSERT_EQUAL_UINT16(20, submitted.screenDimAfterSec);
+    TEST_ASSERT_EQUAL_UINT16(60, submitted.screenOffAfterSec);
+}
+
+void test_parse_setup_form_submission_defaults_absent_fields(void) {
+    // An empty POST (nothing set): every string blank, every toggle off, both delays 0, open cleared.
+    // openNetwork starts true to prove the parser writes it unconditionally, not only when "on".
+    FakeFormArgs args;
+    ProvisioningRecord submitted = {};
+    bool openNetwork = true;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(FormParseError::None),
+                          static_cast<int>(parseSetupFormSubmission(args, submitted, openNetwork)));
+    TEST_ASSERT_EQUAL_STRING("", submitted.ssid);
+    TEST_ASSERT_EQUAL_STRING("", submitted.pass);
+    TEST_ASSERT_EQUAL_STRING("", submitted.key);
+    TEST_ASSERT_FALSE(submitted.deauthEnabled);
+    TEST_ASSERT_FALSE(submitted.pmkidSolicit);
+    TEST_ASSERT_FALSE(submitted.notifyCaptured);
+    TEST_ASSERT_FALSE(submitted.notifyCracked);
+    TEST_ASSERT_FALSE(submitted.notifySyncError);
+    TEST_ASSERT_FALSE(openNetwork);
+    TEST_ASSERT_EQUAL_UINT16(0, submitted.screenDimAfterSec);
+    TEST_ASSERT_EQUAL_UINT16(0, submitted.screenOffAfterSec);
+}
+
+void test_parse_setup_form_submission_rejects_an_over_length_field(void) {
+    // A string one over its record bound is rejected, not truncated (a truncated SSID could slip past
+    // validateCredentials as a different, shorter network) — the copyBounded contract the device handlers
+    // carried inline, now host-tested in the shared seam.
+    FakeFormArgs args;
+    const std::string tooLong(kMaxSsidLen + 1, 'x');
+    args.set("ssid", tooLong.c_str());
+    ProvisioningRecord submitted = {};
+    bool openNetwork = false;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(FormParseError::FieldTooLong),
+                          static_cast<int>(parseSetupFormSubmission(args, submitted, openNetwork)));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_form_carries_the_theme_and_wordmark_in_the_head);
@@ -548,5 +644,8 @@ int main(int, char**) {
     RUN_TEST(test_new_ssid_takes_the_submitted_pair);
     RUN_TEST(test_validate_network_entry_guards_the_silent_open_footgun);
     RUN_TEST(test_first_boot_takes_submission_verbatim_and_blank_key_fails);
+    RUN_TEST(test_parse_setup_form_submission_reads_every_field);
+    RUN_TEST(test_parse_setup_form_submission_defaults_absent_fields);
+    RUN_TEST(test_parse_setup_form_submission_rejects_an_over_length_field);
     return UNITY_END();
 }

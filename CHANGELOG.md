@@ -12,6 +12,13 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+- **Fixed: re-saving the setup form from the Maintenance dashboard no longer wipes your screen-dim
+  delays.** The Maintenance `/config` editor never read the two inactivity-dim fields back on save (and
+  rendered them blank), so any re-save from Maintenance silently reset screen dimming to off, even if
+  you only meant to flip a toggle. Both serving surfaces (first-boot/STA-fail portal and Maintenance
+  `/config`) now parse the whole form through one shared routine, so the field list cannot drift between
+  them again. Latent since screen dimming shipped (v0.1.0); no effect on devices that never used
+  dimming. (ADR-0114; revises ADR-0043)
 - **The hunt can now recover handshakes from access points with no clients, via clientless PMKID
   solicitation.** Tick **Enable PMKID solicitation (arm)** in the setup form and, while hunting, the
   device solicits a PMKID from each PMK-caching AP it captures by injecting a blind open-auth then

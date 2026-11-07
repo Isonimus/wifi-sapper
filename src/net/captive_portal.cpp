@@ -9,9 +9,8 @@
 #include <WiFi.h>
 #include <esp_mac.h>
 
-#include <cstring>
-
-#include "net/provisioning_form.h"  // SetupFormModel, buildSetupForm, resolveProvisioningUpdate
+#include "net/provisioning_form.h"  // SetupFormModel, buildSetupForm, resolveProvisioningUpdate, parse
+#include "net/web_arg_reader.h"     // WebServerArgReader — the device FormArgReader adapter (ADR-0114)
 
 namespace sapper {
 namespace {
@@ -24,20 +23,6 @@ constexpr char kDnsWildcard[] = "*";
 constexpr char kSuccessHtml[] =
     "<!DOCTYPE html><html><body><h2>Saved.</h2>"
     "<p>The Sapper is rebooting to join your network.</p></body></html>";
-
-/**
- * @brief Copy a form field into a fixed buffer, rejecting an over-length value instead of
- *        truncating it. Truncation would let a too-long SSID slip past validateCredentials as a
- *        different, shorter network — so a value that does not fit is a hard failure here.
- * @return false if @p src is too long to fit @p dst with its terminator.
- */
-bool copyBounded(char* dst, size_t dstSize, const String& src) {
-    if (src.length() >= dstSize) {
-        return false;
-    }
-    std::memcpy(dst, src.c_str(), src.length() + 1);  // includes the NUL
-    return true;
-}
 
 }  // namespace
 
@@ -106,37 +91,16 @@ void CaptivePortal::handleRoot() {
 }
 
 void CaptivePortal::handleSave() {
+    // Parse the whole submission through the one pure seam both portals share (ADR-0114): it reads every
+    // field (strings length-rejected not truncated, checkboxes, the clamped dim delays) so neither
+    // serving surface can drift the field list. Over-length any field -> reject the submission.
+    WebServerArgReader args(m_http);
     ProvisioningRecord submitted = {};
-    // Over-length any field -> reject as a bad submission rather than store a truncated value.
-    if (!copyBounded(submitted.ssid, sizeof(submitted.ssid), m_http.arg("ssid")) ||
-        !copyBounded(submitted.pass, sizeof(submitted.pass), m_http.arg("pass")) ||
-        !copyBounded(submitted.key, sizeof(submitted.key), m_http.arg("key")) ||
-        !copyBounded(submitted.webhookUrl, sizeof(submitted.webhookUrl), m_http.arg("webhook")) ||
-        !copyBounded(submitted.maintenancePass, sizeof(submitted.maintenancePass),
-                     m_http.arg("maintpass")) ||
-        !copyBounded(submitted.pwncrackKey, sizeof(submitted.pwncrackKey), m_http.arg("pwncrack"))) {
+    bool openNetwork = false;
+    if (parseSetupFormSubmission(args, submitted, openNetwork) != FormParseError::None) {
         m_http.send(400, "text/html", "<h2>A field is too long.</h2><p><a href='/'>Back</a></p>");
         return;
     }
-    // Arm deauth only if the operator actively checked the box (ADR-0029): an HTML checkbox posts
-    // "on" when checked and is absent otherwise, so an unset field is the default-off disarmed state.
-    // The form now renders the stored state (ADR-0037), so an unchecked box is a deliberate disarm.
-    submitted.deauthEnabled = (m_http.arg("deauth") == "on");
-    // Arm PMKID solicitation only on an explicit check (ADR-0110 #5d), the same default-off checkbox
-    // shape as deauth: unchecked is the disarmed default now the form renders stored state (ADR-0037).
-    submitted.pmkidSolicit = (m_http.arg("pmkid") == "on");
-    // Per-type push selector (ADR-0035, §4 #19): each box posts "on" when checked, absent otherwise.
-    submitted.notifyCaptured = (m_http.arg("nCaptured") == "on");
-    submitted.notifyCracked = (m_http.arg("nCracked") == "on");
-    submitted.notifySyncError = (m_http.arg("nSyncErr") == "on");
-    // Explicit open-network intent (ADR-0106): a passphrase-less network must be ticked, never inferred
-    // from a blank passphrase (which now keeps the current network, or is a refused submission below).
-    const bool openNetwork = (m_http.arg("open") == "on");
-    // Screen-dim delays (ADR-0093): parsed and clamped to u16 server-side (the form's max is advisory and
-    // this is reachable by a raw POST), so an over-range value is capped not wrapped; blank/negative -> 0
-    // (off). resolveProvisioningUpdate then clamps the off delay >= the dim delay.
-    submitted.screenDimAfterSec = parseDelaySeconds(m_http.arg("dimAfter").c_str());
-    submitted.screenOffAfterSec = parseDelaySeconds(m_http.arg("offAfter").c_str());
 
     // Merge over the stored record (ADR-0037/ADR-0106/ADR-0109): a blank key/webhook/maintpass/pwncrack
     // keeps its stored value and a blank SSID keeps the whole Wi-Fi pair, so a re-save to change one field
