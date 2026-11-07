@@ -182,3 +182,16 @@ real PMKID success wording is confirmed on air (LEDGER).
   window cadence is deferred (LEDGER), like dwell / deauth-cadence / backoff.
 </content>
 </invoke>
+
+## Amendment — 2026-11-07: PMKID hashcat type tag corrected (the PMKID line is WPA*01, not WPA*02)
+
+Clause 6 and this ADR's body tagged the PMKID line **`WPA*02`** and the 4-way line `WPA*01`. Both are
+backwards: the hashcat 22000 spec numbers the type field **01 = PMKID, 02 = EAPOL** (confirmed against the
+[hashcat wiki](https://hashcat.net/wiki/cracking_wpawpa2) and an hcxtools sample PMKID line
+`WPA*01*<pmkid>*<ap>*<sta>*<essid>***`, 2026-11-07). So `buildPmkidHc22000Line` must emit **`WPA*01`** and
+the 4-way `buildHc22000Line` **`WPA*02`** (the latter corrected on ADR-0108). The shipped builders had them
+swapped, which made every pwncrack hashline mislabelled and so uncrackable (wpa-sec is unaffected, it takes
+the pcap). Corrected in both builders, with the tests asserting the spec tags (fail-before/pass-after) and
+§4 #45/#47 updated. The drain still tries the 4-way line first then the PMKID line by what the capture
+holds (now `WPA*02` then `WPA*01`); every other decision here, the solicitation injector, the two arms, the
+re-derive-from-pcap chain, the unified single drain, is unchanged.

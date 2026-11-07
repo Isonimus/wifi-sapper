@@ -101,3 +101,17 @@ minimum that holds the MIC and the length word (matching the parser's existing `
   native suite is the whole proof and no on-air re-verification of existing behaviour is needed.
 - Two deferrals land in the LEDGER: WPA\*02 PMKID extraction, and the pwncrack uploader/classifier/
   cracked-sync seams (gated on re-verifying pwncrack's current API, not the possibly-stale Adversary copy).
+
+## Amendment — 2026-11-07: hashcat type tag corrected (the 4-way line is WPA*02, not WPA*01)
+
+This ADR, its title, and the shipped `buildHc22000Line` tagged the 4-way EAPOL line **`WPA*01`**. That is
+wrong: the hashcat 22000 spec numbers the type field **01 = PMKID, 02 = EAPOL** (confirmed against the
+[hashcat wiki](https://hashcat.net/wiki/cracking_wpawpa2) and an hcxtools sample line, 2026-11-07), so a
+4-way/EAPOL line is **`WPA*02`** and `WPA*01` is reserved for a PMKID line. The builder emitted the EAPOL
+layout (MIC + ANonce + EAPOL blob + messagepair) under the `01` tag, so pwncrack read the M2 MIC as a PMKID
+and never cracked it: the whole pwncrack path was uncrackable since it shipped (wpa-sec is unaffected, it
+takes the pcap). Corrected to `WPA*02` in `buildHc22000Line`, with the tests asserting the spec tag
+(fail-before/pass-after) and §4 #45 updated. Mirrors the sibling `adversary:54b26d8`. The decision this ADR
+records (pure, host-tested, on-device synthesis from the whole frames, ANonce from M1) is unchanged; only
+the type-tag number was a transcription error. The PMKID line's own tag correction (it is `WPA*01`, not
+`WPA*02`) is recorded on ADR-0110.

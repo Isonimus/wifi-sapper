@@ -157,11 +157,11 @@ void test_hc22000_from_pcap_equals_hc22000_from_handshake(void) {
     TEST_ASSERT_EQUAL_STRING(direct, viaPcap);
 }
 
-// --- A clientless-PMKID capture round-trips, and its WPA*02 line from the pcap equals the direct one. ---
-void test_pmkid_round_trips_and_wpa02_from_pcap_equals_direct(void) {
+// --- A clientless-PMKID capture round-trips, and its WPA*01 PMKID line from the pcap equals the direct one. ---
+void test_pmkid_round_trips_and_wpa01_from_pcap_equals_direct(void) {
     // The §4 #46a round-trip extended to the PMKID path (ADR-0110 #5e): a {beacon + M1} PMKID capture
     // serialized and parsed back must reproduce the frames, stay isPmkidValid, and yield the identical
-    // WPA*02 line whether built from the original handshake or the pcap-parsed one (what the drain does).
+    // WPA*01 PMKID line whether built from the original handshake or the pcap-parsed one (what the drain does).
     CapturedHandshake original = makePmkidHandshake("TargetNet");
     TEST_ASSERT_TRUE(original.isPmkidValid());
     std::vector<uint8_t> bytes = serialize(original);
@@ -177,7 +177,7 @@ void test_pmkid_round_trips_and_wpa02_from_pcap_equals_direct(void) {
 
     char direct[kHc22000LineMax];
     char viaPcap[kHc22000LineMax];
-    TEST_ASSERT_FALSE(buildHc22000Line(parsed, viaPcap, sizeof(viaPcap)));  // no WPA*01 (no 4-way).
+    TEST_ASSERT_FALSE(buildHc22000Line(parsed, viaPcap, sizeof(viaPcap)));  // no WPA*02 (no 4-way).
     TEST_ASSERT_TRUE(buildPmkidHc22000Line(original, direct, sizeof(direct)));
     TEST_ASSERT_TRUE(buildPmkidHc22000Line(parsed, viaPcap, sizeof(viaPcap)));
     TEST_ASSERT_EQUAL_STRING(direct, viaPcap);
@@ -206,7 +206,7 @@ void test_hidden_ssid_round_trips_but_empty_essid(void) {
     TEST_ASSERT_TRUE(parsed.isWpaSecValid());
     TEST_ASSERT_EQUAL_STRING("", parsed.ssid);
     char out[kHc22000LineMax];
-    TEST_ASSERT_FALSE(buildHc22000Line(parsed, out, sizeof(out)));  // hidden => no WPA*01 line (ADR-0108).
+    TEST_ASSERT_FALSE(buildHc22000Line(parsed, out, sizeof(out)));  // hidden => no WPA*02 line (ADR-0108).
 }
 
 // --- Fail loud: nullptr / too short for the global header. ---
@@ -322,7 +322,7 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_round_trip_reproduces_frames_bssid_ssid);
     RUN_TEST(test_hc22000_from_pcap_equals_hc22000_from_handshake);
-    RUN_TEST(test_pmkid_round_trips_and_wpa02_from_pcap_equals_direct);
+    RUN_TEST(test_pmkid_round_trips_and_wpa01_from_pcap_equals_direct);
     RUN_TEST(test_full_set_round_trips_all_five_frames);
     RUN_TEST(test_hidden_ssid_round_trips_but_empty_essid);
     RUN_TEST(test_null_or_short_buffer_fails);

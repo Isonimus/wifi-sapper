@@ -247,7 +247,7 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome, uint32_t nowMs) {
         }
 
         // pwncrack leg (hc22000 re-derived from the same pcap). Skipped when pwncrack already holds this
-        // BSSID. uploadToPwncrack returns whether pwncrack is now terminal for it (Accepted, or no WPA*01
+        // BSSID. uploadToPwncrack returns whether pwncrack is now terminal for it (Accepted, or no hc22000
         // line to send); a rejection leaves it owing and keeps the capture for the next window.
         if (pwncrackOn && !pwncrackDone) {
             pwncrackDone = uploadToPwncrack(uploadBuffer_, len, bssid, outcome, nowMs, markedPwncrack);
@@ -281,10 +281,10 @@ bool UploadSupervisor::drainQueue(DrainOutcome& outcome, uint32_t nowMs) {
 bool UploadSupervisor::uploadToPwncrack(const uint8_t* pcap, size_t len, const uint8_t bssid[6],
                                         DrainOutcome& outcome, uint32_t nowMs, bool& flushNeeded) {
     // Re-derive the hashline from the persisted pcap (ADR-0109 #2): parse the pcap back to a
-    // CapturedHandshake, then build the hashcat line, both pure and round-trip-tested. Try the WPA*01
+    // CapturedHandshake, then build the hashcat line, both pure and round-trip-tested. Try the WPA*02
     // 4-way line first (ADR-0108) and, when the capture holds no 4-way to make one, fall back to the
-    // WPA*02 PMKID line (ADR-0110 #5e: the drain tries WPA*01 then WPA*02 by what the capture holds) — a
-    // clientless-PMKID capture (beacon+M1, no M2) has no WPA*01 but a valid WPA*02. A capture from which
+    // WPA*01 PMKID line (ADR-0110 #5e: the drain tries the 4-way then the PMKID line by what the capture
+    // holds) - a clientless-PMKID capture (beacon+M1, no M2) has no WPA*02 but a valid WPA*01. A capture from which
     // NEITHER line derives (a hidden SSID, or neither a full 4-way nor a PMKID M1) yields nothing pwncrack
     // can take, now or ever, so treat it as terminal for pwncrack: it must not block the capture's removal
     // once wpa-sec is done (wpa-sec still uploads the pcap, which its own ESSID discovery can crack).

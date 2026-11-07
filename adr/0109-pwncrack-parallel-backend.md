@@ -191,3 +191,12 @@ bot-challenge interstitial was served to the device TLS client. Both legs ran gr
 shared manifest. So the fail-closed handling (Transport/Rejected + `[ERROR]` on a chain mismatch or a
 chunked body) stays as a safety net but was not exercised; the LEDGER device-leg item is closed. This does
 not change any decision above; it records that the deferred firsthand device verification passed.
+
+## Amendment — 2026-11-07: hc22000 type tag corrected (the 4-way line is WPA*02, not WPA*01)
+
+This ADR describes the 4-way EAPOL `.hc22000` line from `buildHc22000Line` (ADR-0108) as `WPA*01`. That
+tag is wrong: the hashcat 22000 spec numbers the type field 01=PMKID, 02=EAPOL, so the 4-way line is
+`WPA*02` and `WPA*01` is the PMKID line. The shipped builders had the two swapped (uncrackable pwncrack
+path) and were corrected; see ADR-0108's amendment for the detail. No decision in this ADR depends on the
+tag number (the parallel-backend structure, the drain, the shared cracked manifest are all unchanged); this
+note only corrects the incidental tag label so a reader here is not misled.

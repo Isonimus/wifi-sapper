@@ -30,7 +30,7 @@ static UploadResult classify(int status, const char* body) {
 // The three success legs (leg 1 accept, leg 2 re-upload, leg 3 malformed content) all answer HTTP 200
 // {"success":true}: all Accepted, never Duplicate. pwncrack cannot distinguish a fresh submit from a
 // re-submit (no dup signal), and content is validated async server-side so a malformed line still gets a
-// success body here (harmless: the firmware only uploads well-formed WPA*01 lines, and pwncrack is the
+// success body here (harmless: the firmware only uploads well-formed hc22000 lines, and pwncrack is the
 // secondary backend under both-terminal removal, so a residual accept costs no handshake, ADR-0109 amendment).
 void test_the_success_body_is_accepted(void) {
     TEST_ASSERT_EQUAL(UploadResult::Accepted, classify(200, "{\"success\":true}"));

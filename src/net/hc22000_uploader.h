@@ -4,7 +4,8 @@
  *
  * The sibling of the pcap `Uploader` (net/uploader.h), not a shared polymorphic backend interface
  * (ADR-0109 decision #1: duplicate-don't-abstract at the second backend). Where wpa-sec takes a raw pcap,
- * pwncrack takes a hashcat WPA*01 `.hc22000` line (ADR-0108 buildHc22000Line). The device backs this with
+ * pwncrack takes a hashcat `.hc22000` line (WPA*02 4-way from ADR-0108 buildHc22000Line, or WPA*01 PMKID from
+ * ADR-0110). The device backs this with
  * uploader_pwncrack.h (a WiFiClientSecure multipart POST to pwncrack.org); a host test backs it with a fake
  * returning a scripted result. The seam is deliberately narrow (one hashline in, one classification out) so
  * the dual-backend drain above it is host-tested without a network (ADR-0004 lane 1).

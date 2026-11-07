@@ -44,7 +44,7 @@ struct CapturedHandshake {
     /// A clientless-PMKID capture: beacon + an M1 whose Key Data carries a PMKID KDE (ADR-0110 #1).
     /// The second terminal condition beside isWpaSecValid() (a PMKID M1 has no M2), read at build
     /// time through the pure extractor (net/pmkid) off the whole M1 the collector already keeps, so
-    /// ADR-0009 #3 / §4 #8 hold like the hc22000 WPA*01 path. A 4-way capture is isWpaSecValid; a
+    /// ADR-0009 #3 / §4 #8 hold like the hc22000 WPA*02 4-way path. A 4-way capture is isWpaSecValid; a
     /// solicited or deauth-forced PMKID M1 is isPmkidValid; the engine (slice 2) treats either as a win.
     bool isPmkidValid() const;
     /// All four messages captured. Reported, but not required for upload.

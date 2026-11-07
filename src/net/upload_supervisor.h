@@ -93,7 +93,7 @@ struct DrainOutcome {
                                  ///< ADR-0109 #3), resolved like a purge, not counted as an upload error.
     size_t pwncrackAccepted = 0; ///< pwncrack uploads taken (ADR-0109). pwncrack never answers Duplicate.
     size_t pwncrackRejected = 0; ///< pwncrack uploads kept for retry (non-success/unrecognised).
-    size_t pwncrackUnderivable = 0; ///< Captures with no WPA*01 line for pwncrack (e.g. hidden SSID): pwncrack
+    size_t pwncrackUnderivable = 0; ///< Captures with no hc22000 line for pwncrack (e.g. hidden SSID): pwncrack
                                     ///< is terminal for them (never blocks removal; wpa-sec still has the pcap).
     size_t storeErrors = 0;    ///< Removes that could not complete — a purge or post-upload delete that
                                ///< failed, leaving the entry stuck (fail loud — §3; keeps the cycle dirty).
@@ -145,7 +145,7 @@ public:
 
     /// Wire the optional pwncrack second backend (ADR-0109): its upload seam, its API key, and its OWN
     /// submitted set (a second SubmittedManifest instance, decision #4 / §4 #46c). When set, each drained
-    /// capture is uploaded to pwncrack (a WPA*01 hc22000 line re-derived from the persisted pcap) as well
+    /// capture is uploaded to pwncrack (an hc22000 line re-derived from the persisted pcap) as well
     /// as to wpa-sec, in the same STA window, and is removed only once BOTH provisioned backends are
     /// terminal for it (decision #3 / §4 #46b). Set post-construction, mirroring the other seam wiring, so
     /// the constructor stays unchanged for a wpa-sec-only device. Unset, or an empty @p key, leaves the
@@ -192,7 +192,7 @@ private:
     }
     /// Upload one capture's re-derived hc22000 line to pwncrack (ADR-0109). @p pcap/@p len are the
     /// capture's persisted pcap bytes already read for the wpa-sec leg. Returns whether pwncrack is now
-    /// terminal for this @p bssid: Accepted, or no WPA*01 line to send (hidden SSID); false if pwncrack
+    /// terminal for this @p bssid: Accepted, or no hc22000 line to send (hidden SSID); false if pwncrack
     /// rejected it (keep and retry). On a terminal accept it marks the pwncrack submitted set and sets
     /// @p flushNeeded. Uses the member scratch buffers so nothing large sits on the drain stack.
     bool uploadToPwncrack(const uint8_t* pcap, size_t len, const uint8_t bssid[6], DrainOutcome& outcome,
@@ -233,7 +233,7 @@ private:
     // (the same reason uploadBuffer_ is a member). Only touched when pwncrack is provisioned; a wpa-sec-only
     // device never reads them, it just carries the unused space (the runtime-optional backend's RAM cost).
     CapturedHandshake pwncrackHandshake_;      ///< the persisted pcap re-parsed back to a handshake.
-    char pwncrackLine_[kHc22000LineMax] = {};  ///< the WPA*01 hc22000 line derived from it.
+    char pwncrackLine_[kHc22000LineMax] = {};  ///< the hc22000 line derived from it (WPA*02 4-way, or WPA*01 PMKID).
 };
 
 }  // namespace sapper

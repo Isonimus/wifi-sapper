@@ -125,7 +125,7 @@ void HuntEngine::doStartCapturing(uint32_t nowMs) {
                 // The solicit assoc needs the target SSID; the collector carries it only once a beacon is
                 // heard, so copy it from the discovered AP now (app task, under the §4 #11 settle). A
                 // hidden network (empty SSID) solicits with an empty SSID element and the AP will not
-                // answer — fail-toward-nothing, and a hidden PMKID has no ESSID for the WPA*02 line anyway.
+                // answer: fail-toward-nothing, and a hidden PMKID has no ESSID for the WPA*01 line anyway.
                 std::strncpy(capturingSsid_, target.ssid, sizeof(capturingSsid_) - 1);
                 capturingSsid_[sizeof(capturingSsid_) - 1] = '\0';
                 activeSink_.store(&handshakeConsumer_, std::memory_order_release);

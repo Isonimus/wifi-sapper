@@ -827,7 +827,7 @@ public:
 static const char* kPwncrackKey = "test-pwncrack-key";
 
 /// A beacon+M1+M2 handshake for a hidden network (empty SSID): wpa-sec-valid (uploads as a pcap), but it
-/// has no crackable WPA*01 line, so pwncrack's buildHc22000Line yields nothing (ADR-0108 decision #4).
+/// has no crackable WPA*02 line, so pwncrack's buildHc22000Line yields nothing (ADR-0108 decision #4).
 static CapturedHandshake makeHiddenHandshake(const uint8_t bssid[6]) {
     HandshakeCollector collector(bssid, 6);
     const std::vector<uint8_t> beacon = buildBeacon(bssid, "", 6);  // hidden: empty SSID element.
@@ -840,7 +840,7 @@ static CapturedHandshake makeHiddenHandshake(const uint8_t bssid[6]) {
 }
 
 /// A clientless-PMKID capture (beacon + an M1 carrying a PMKID KDE, no M2): uploadable as a {beacon+M1}
-/// pcap, and pwncrack's hashline is the WPA*02 PMKID line (no WPA*01, since there is no 4-way) (ADR-0110).
+/// pcap, and pwncrack's hashline is the WPA*01 PMKID line (no WPA*02, since there is no 4-way) (ADR-0110).
 static CapturedHandshake makePmkidHandshake(const uint8_t bssid[6]) {
     HandshakeCollector collector(bssid, 6);
     const std::vector<uint8_t> beacon = buildBeacon(bssid, "Net", 6);
@@ -880,7 +880,7 @@ void test_pwncrack_capture_removed_only_when_both_backends_terminal(void) {
     TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());       // wpa-sec uploaded once (the pcap),
     TEST_ASSERT_EQUAL_UINT32(1, pwnUploader.calls.size());        // pwncrack uploaded once in the same window,
     TEST_ASSERT_EQUAL_STRING(kPwncrackKey, pwnUploader.calls[0].key.c_str());
-    TEST_ASSERT_EQUAL_size_t(0, pwnUploader.calls[0].line.rfind("WPA*01*", 0));  // a real hc22000 line,
+    TEST_ASSERT_EQUAL_size_t(0, pwnUploader.calls[0].line.rfind("WPA*02*", 0));  // a real 4-way EAPOL hc22000 line,
     TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().accepted);
     TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().pwncrackAccepted);
     TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());                // removed only after BOTH accepted,
@@ -890,10 +890,10 @@ void test_pwncrack_capture_removed_only_when_both_backends_terminal(void) {
     TEST_ASSERT_EQUAL_INT(1, pwnStore.saveCount);
 }
 
-void test_pwncrack_pmkid_capture_uploads_as_wpa02_line(void) {
-    // A clientless-PMKID capture drains to pwncrack as a WPA*02 line (ADR-0110 #5e): the drain finds no
-    // WPA*01 (no 4-way) and falls back to buildPmkidHc22000Line. wpa-sec takes the {beacon+M1} pcap
-    // unchanged. Fail-before: with only the WPA*01 derivation the capture was counted underivable and
+void test_pwncrack_pmkid_capture_uploads_as_wpa01_line(void) {
+    // A clientless-PMKID capture drains to pwncrack as a WPA*01 line (ADR-0110 #5e): the drain finds no
+    // WPA*02 (no 4-way) and falls back to buildPmkidHc22000Line. wpa-sec takes the {beacon+M1} pcap
+    // unchanged. Fail-before: with only the WPA*02 derivation the capture was counted underivable and
     // pwncrack got nothing, so a solicited/deauth-forced PMKID never reached pwncrack.
     UploadSupervisorConfig config;
     config.drainThreshold = 1;
@@ -921,7 +921,7 @@ void test_pwncrack_pmkid_capture_uploads_as_wpa02_line(void) {
 
     TEST_ASSERT_EQUAL_UINT32(1, rig.uploader.calls.size());       // wpa-sec uploaded the pcap,
     TEST_ASSERT_EQUAL_UINT32(1, pwnUploader.calls.size());        // pwncrack uploaded one hashline,
-    TEST_ASSERT_EQUAL_size_t(0, pwnUploader.calls[0].line.rfind("WPA*02*", 0));  // and it is the WPA*02 line.
+    TEST_ASSERT_EQUAL_size_t(0, pwnUploader.calls[0].line.rfind("WPA*01*", 0));  // and it is the WPA*01 PMKID line.
     TEST_ASSERT_EQUAL_UINT32(1, rig.supervisor.lastDrain().pwncrackAccepted);
     TEST_ASSERT_EQUAL_UINT32(0, rig.supervisor.lastDrain().pwncrackUnderivable);  // derivable, not skipped.
     TEST_ASSERT_EQUAL_UINT32(0, rig.store.size());                // removed after both backends accepted.
@@ -1007,7 +1007,7 @@ void test_pwncrack_already_submitted_skips_only_pwncrack(void) {
 }
 
 void test_pwncrack_underivable_capture_does_not_block_removal(void) {
-    // A hidden-SSID capture has no WPA*01 line, so pwncrack can never take it. It must not block removal:
+    // A hidden-SSID capture has no hc22000 line, so pwncrack can never take it. It must not block removal:
     // pwncrack is treated terminal (counted underivable, not uploaded, not recorded submitted) while
     // wpa-sec still uploads the pcap and the capture is removed once wpa-sec is done (ADR-0109 #2/#3).
     UploadSupervisorConfig config;
@@ -1067,7 +1067,7 @@ int main(int, char**) {
     RUN_TEST(test_d_only_a_terminal_success_records_submitted);
     RUN_TEST(test_d_flush_failure_is_loud_but_not_a_cycle_failure);
     RUN_TEST(test_pwncrack_capture_removed_only_when_both_backends_terminal);
-    RUN_TEST(test_pwncrack_pmkid_capture_uploads_as_wpa02_line);
+    RUN_TEST(test_pwncrack_pmkid_capture_uploads_as_wpa01_line);
     RUN_TEST(test_pwncrack_rejection_keeps_capture_without_reuploading_wpasec);
     RUN_TEST(test_pwncrack_already_submitted_skips_only_pwncrack);
     RUN_TEST(test_pwncrack_underivable_capture_does_not_block_removal);

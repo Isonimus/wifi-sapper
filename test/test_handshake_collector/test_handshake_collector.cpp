@@ -133,7 +133,7 @@ void test_beacon_plus_plain_m1_is_not_pmkid_valid(void) {
     TEST_ASSERT_FALSE(c.isPmkidValid());
 }
 
-// A PMKID M1 with no beacon yet is not isPmkidValid (the ESSID is needed for the WPA*02 line).
+// A PMKID M1 with no beacon yet is not isPmkidValid (the ESSID is needed for the WPA*01 PMKID line).
 void test_pmkid_m1_without_beacon_is_not_pmkid_valid(void) {
     HandshakeCollector c(kBssid);
     ingestVec(c, buildPmkidM1(kBssid, kClient, kPmkid));

@@ -1,6 +1,7 @@
 /**
  * @file test_hc22000.cpp
- * @brief Native unit tests for pure WPA*01 hc22000 line synthesis (ADR-0108, §4 #45).
+ * @brief Native unit tests for pure hc22000 line synthesis: the 4-way EAPOL line (WPA*02) and the
+ *        PMKID line (WPA*01), per the hashcat 22000 spec where 01=PMKID, 02=EAPOL (ADR-0108, ADR-0110, §4 #45).
  *
  * Proves the hashline is built correctly from the whole captured frames: the exact field order and
  * lowercase-hex format against a known vector, that the ANonce is sourced from M1 (not M2) so the pair
@@ -96,12 +97,13 @@ static const uint8_t kPmkid16[16] = {
     0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81,
     0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09};
 
-// The exact WPA*02 line against a known PMKID M1: WPA*02*PMKID*AP*STA*ESSID*** with the STA taken
-// from M1's Addr1 (the addressed client, here kClient) and the three trailing fields empty.
-void test_builds_wpa02_line_known_vector(void) {
+// The exact WPA*01 PMKID line against a known PMKID M1: WPA*01*PMKID*AP*STA*ESSID*** with the STA taken
+// from M1's Addr1 (the addressed client, here kClient) and the three trailing fields empty. The hashcat
+// 22000 spec tags a PMKID line WPA*01 (01=PMKID, 02=EAPOL), confirmed against the hashcat wiki.
+void test_builds_pmkid_wpa01_line_known_vector(void) {
     CapturedHandshake hs = makePmkidHandshake("TestNet", kPmkid16);
 
-    std::string expected = "WPA*02*";
+    std::string expected = "WPA*01*";
     expected += toHex(kPmkid16, 16);                                  expected += "*";
     expected += toHex(kBssid, 6);                                     expected += "*";
     expected += toHex(kClient, 6);                                    expected += "*";
@@ -113,7 +115,7 @@ void test_builds_wpa02_line_known_vector(void) {
 }
 
 // The STA is M1's Addr1 (our spoofed solicit MAC / a real client), never the BSSID (ADR-0110 #6).
-void test_wpa02_sta_is_m1_addr1_not_bssid(void) {
+void test_pmkid_sta_is_m1_addr1_not_bssid(void) {
     CapturedHandshake hs = makePmkidHandshake("TestNet", kPmkid16);
     char out[kHc22000LineMax];
     TEST_ASSERT_TRUE(buildPmkidHc22000Line(hs, out, sizeof(out)));
@@ -122,11 +124,11 @@ void test_wpa02_sta_is_m1_addr1_not_bssid(void) {
     // The STA field (the addressed client) is present; the BSSID is not where the STA goes.
     TEST_ASSERT_TRUE(line.find("*" + toHex(kClient, 6) + "*") != std::string::npos);
     // The AP field is the BSSID, right after the 32-hex PMKID.
-    const std::string head = "WPA*02*" + toHex(kPmkid16, 16) + "*" + toHex(kBssid, 6) + "*";
+    const std::string head = "WPA*01*" + toHex(kPmkid16, 16) + "*" + toHex(kBssid, 6) + "*";
     TEST_ASSERT_EQUAL_size_t(0, line.rfind(head, 0));
 }
 
-void test_wpa02_missing_m1_returns_false(void) {
+void test_pmkid_missing_m1_returns_false(void) {
     CapturedHandshake hs = makePmkidHandshake("TestNet", kPmkid16);
     hs.msg[0].len = 0;  // drop M1.
     char out[kHc22000LineMax];
@@ -134,8 +136,8 @@ void test_wpa02_missing_m1_returns_false(void) {
     TEST_ASSERT_EQUAL_STRING("", out);
 }
 
-// A plain M1 with no PMKID KDE (the common 4-way M1) yields no WPA*02 line.
-void test_wpa02_m1_without_pmkid_returns_false(void) {
+// A plain M1 with no PMKID KDE (the common 4-way M1) yields no WPA*01 PMKID line.
+void test_pmkid_m1_without_pmkid_returns_false(void) {
     CapturedHandshake hs;
     std::memcpy(hs.bssid, kBssid, 6);
     std::strncpy(hs.ssid, "TestNet", sizeof(hs.ssid) - 1);
@@ -145,21 +147,22 @@ void test_wpa02_m1_without_pmkid_returns_false(void) {
     TEST_ASSERT_EQUAL_STRING("", out);
 }
 
-void test_wpa02_hidden_ssid_returns_false(void) {
+void test_pmkid_hidden_ssid_returns_false(void) {
     CapturedHandshake hs = makePmkidHandshake("", kPmkid16);  // hidden: empty ESSID.
     char out[kHc22000LineMax];
     TEST_ASSERT_FALSE(buildPmkidHc22000Line(hs, out, sizeof(out)));
 }
 
-void test_wpa02_undersized_buffer_returns_false_no_partial(void) {
+void test_pmkid_undersized_buffer_returns_false_no_partial(void) {
     CapturedHandshake hs = makePmkidHandshake("TestNet", kPmkid16);
     char out[10];  // far too small for a full line.
     TEST_ASSERT_FALSE(buildPmkidHc22000Line(hs, out, sizeof(out)));
     TEST_ASSERT_EQUAL_STRING("", out);  // no partial line left behind (quality bar §3).
 }
 
-// The exact WPA*01 line against a fully known capture.
-void test_builds_wpa01_line_known_vector(void) {
+// The exact WPA*02 4-way EAPOL line against a fully known capture. The hashcat 22000 spec tags a
+// 4-way/EAPOL line WPA*02 (01=PMKID, 02=EAPOL), confirmed against the hashcat wiki.
+void test_builds_fourway_wpa02_line_known_vector(void) {
     uint8_t anonce[32], snonce[32], mic[16];
     for (int i = 0; i < 32; ++i) anonce[i] = static_cast<uint8_t>(0x01 + i);
     for (int i = 0; i < 32; ++i) snonce[i] = static_cast<uint8_t>(0x41 + i);
@@ -174,7 +177,7 @@ void test_builds_wpa01_line_known_vector(void) {
     std::vector<uint8_t> eapolBlob(m2Eapol, m2Eapol + m2EapolLen);
     std::memset(eapolBlob.data() + kMicOffset, 0, kMicLen);
 
-    std::string expected = "WPA*01*";
+    std::string expected = "WPA*02*";
     expected += toHex(mic, 16);                                    expected += "*";
     expected += toHex(kBssid, 6);                                  expected += "*";
     expected += toHex(kClient, 6);                                 expected += "*";
@@ -220,8 +223,8 @@ void test_mic_zeroed_in_blob_but_emitted_as_field(void) {
 
     const std::string line(out);
     const std::string micHex(32, 'c');  // 16 bytes of 0xCC -> "cc"*16.
-    // Present exactly once, as the field right after "WPA*01*".
-    TEST_ASSERT_EQUAL_STRING("WPA*01*cccccccccccccccccccccccccccccccc*", line.substr(0, 40).c_str());
+    // Present exactly once, as the field right after "WPA*02*".
+    TEST_ASSERT_EQUAL_STRING("WPA*02*cccccccccccccccccccccccccccccccc*", line.substr(0, 40).c_str());
     // The EAPOL blob (last field before "*00") has the MIC region zeroed, so the 0xCC run appears once only.
     size_t first = line.find(micHex);
     TEST_ASSERT_TRUE(first != std::string::npos);
@@ -265,7 +268,7 @@ void test_large_in_band_eapol_still_builds(void) {
     TEST_ASSERT_TRUE(buildHc22000Line(hs, out, sizeof(out)));
 
     const std::string line(out);
-    TEST_ASSERT_EQUAL_size_t(0, line.rfind("WPA*01*", 0));   // starts with the WPA*01 tag.
+    TEST_ASSERT_EQUAL_size_t(0, line.rfind("WPA*02*", 0));   // starts with the WPA*02 (EAPOL) tag.
     TEST_ASSERT_TRUE(line.size() > 1024);                    // the valid line the old 1024 cap would have dropped.
     TEST_ASSERT_EQUAL_STRING("*00", line.substr(line.size() - 3).c_str());
 }
@@ -287,7 +290,7 @@ void test_implausible_declared_length_falls_back(void) {
 
     char out[kHc22000LineMax];
     TEST_ASSERT_TRUE(buildHc22000Line(hs, out, sizeof(out)));
-    TEST_ASSERT_EQUAL_size_t(0, std::string(out).rfind("WPA*01*", 0));
+    TEST_ASSERT_EQUAL_size_t(0, std::string(out).rfind("WPA*02*", 0));
 }
 
 void test_undersized_buffer_returns_false_no_partial(void) {
@@ -300,13 +303,13 @@ void test_undersized_buffer_returns_false_no_partial(void) {
 
 int main(int, char**) {
     UNITY_BEGIN();
-    RUN_TEST(test_builds_wpa02_line_known_vector);
-    RUN_TEST(test_wpa02_sta_is_m1_addr1_not_bssid);
-    RUN_TEST(test_wpa02_missing_m1_returns_false);
-    RUN_TEST(test_wpa02_m1_without_pmkid_returns_false);
-    RUN_TEST(test_wpa02_hidden_ssid_returns_false);
-    RUN_TEST(test_wpa02_undersized_buffer_returns_false_no_partial);
-    RUN_TEST(test_builds_wpa01_line_known_vector);
+    RUN_TEST(test_builds_pmkid_wpa01_line_known_vector);
+    RUN_TEST(test_pmkid_sta_is_m1_addr1_not_bssid);
+    RUN_TEST(test_pmkid_missing_m1_returns_false);
+    RUN_TEST(test_pmkid_m1_without_pmkid_returns_false);
+    RUN_TEST(test_pmkid_hidden_ssid_returns_false);
+    RUN_TEST(test_pmkid_undersized_buffer_returns_false_no_partial);
+    RUN_TEST(test_builds_fourway_wpa02_line_known_vector);
     RUN_TEST(test_anonce_comes_from_m1_not_m2);
     RUN_TEST(test_mic_zeroed_in_blob_but_emitted_as_field);
     RUN_TEST(test_large_in_band_eapol_still_builds);

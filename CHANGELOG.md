@@ -26,7 +26,7 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
   is connected to the target. It is a second, independent arm beside deauth (the four on/off
   combinations give passive / deauth / PMKID / both), **off by default**, and because it impersonates a
   station the same authorized-use rule applies as for deauth. A solicited PMKID is one more capture on
-  the single upload path: it goes to wpa-sec as a pcap and to pwncrack as a `WPA*02` line, with no
+  the single upload path: it goes to wpa-sec as a pcap and to pwncrack as a `WPA*01` line, with no
   second queue or drain. The on-air armed-solicitation proof (`npm run verify:solicit`) is the
   operator's to run on attached hardware. (ADR-0110; slices 1-3)
 - **pwncrack.org is now an optional second cracking backend, alongside wpa-sec.** Enter a

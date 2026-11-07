@@ -1,6 +1,7 @@
 /**
  * @file hc22000.cpp
- * @brief Pure hashcat WPA*01 (.hc22000) line synthesis (ADR-0108). See hc22000.h.
+ * @brief Pure hashcat .hc22000 line synthesis: the 4-way EAPOL line (WPA*02) and the PMKID line
+ *        (WPA*01), per the hashcat 22000 spec where 01=PMKID and 02=EAPOL (ADR-0108, ADR-0110). See hc22000.h.
  */
 #include "net/hc22000.h"
 
@@ -47,7 +48,7 @@ bool buildHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen) {
     // for any capture worth sending, so a capture lacking either yields no line rather than a rejectable one.
     if (!hs.has(HandshakeMessage::M1) || !hs.has(HandshakeMessage::M2)) return false;
 
-    // A hidden network has no crackable WPA*01 line (the ESSID is part of PMK derivation). Skip it loudly
+    // A hidden network has no crackable WPA*02 line (the ESSID is part of PMK derivation). Skip it loudly
     // for pwncrack; wpa-sec can still crack its pcap via its own ESSID discovery (ADR-0108 decision #4).
     // ESSID length is strlen because CapturedHandshake stores the SSID as a C string with no length field
     // (ADR-0009): an SSID with an embedded/leading NUL reads short and is treated as hidden here. A rare,
@@ -103,7 +104,7 @@ bool buildHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen) {
     };
 
     const bool ok =
-        appendStr("WPA*01*") &&
+        appendStr("WPA*02*") &&
         appendHex(realMic, kMicLen) && appendStr("*") &&
         appendHex(hs.bssid, kMacLen) && appendStr("*") &&
         appendHex(m2.data + kStaAddrOffset, kMacLen) && appendStr("*") &&
@@ -126,7 +127,7 @@ bool buildPmkidHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen
 
     if (!hs.has(HandshakeMessage::M1)) return false;
 
-    // A hidden network has no crackable line (the ESSID is part of PMK derivation), like WPA*01;
+    // A hidden network has no crackable line (the ESSID is part of PMK derivation), like the WPA*02 4-way;
     // an embedded/leading-NUL SSID reads short here and is treated as hidden (same LEDGER limitation).
     const size_t ssidLen = std::strlen(hs.ssid);
     if (ssidLen == 0) return false;
@@ -141,7 +142,7 @@ bool buildPmkidHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen
     uint8_t pmkid[kPmkidLen];
     if (!extractPmkidFromEapol(m1Eapol, m1EapolLen, pmkid)) return false;  // no PMKID KDE: no line.
 
-    // Bounded appenders: the second use of the WPA*01 pattern above, duplicated at two per the rule
+    // Bounded appenders: the second use of the bounded-appender pattern above, duplicated at two per the rule
     // of three (a third hashline type would extract a shared file-local helper, LEDGER). Each returns
     // false on any overflow so a partial line is never emitted.
     size_t pos = 0;
@@ -163,7 +164,7 @@ bool buildPmkidHc22000Line(const CapturedHandshake& hs, char* out, size_t outLen
     };
 
     const bool ok =
-        appendStr("WPA*02*") &&
+        appendStr("WPA*01*") &&
         appendHex(pmkid, kPmkidLen) && appendStr("*") &&
         appendHex(hs.bssid, kMacLen) && appendStr("*") &&
         appendHex(m1.data + kDestAddrOffset, kMacLen) && appendStr("*") &&

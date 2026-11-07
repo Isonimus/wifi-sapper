@@ -90,7 +90,7 @@ portal** instead of trying to hunt (ADR-0006):
    PMKID / both), and like deauth it is **off by default** and impersonates a station, so the same rule
    applies: **arm it only where every network in radio range is one you own or are explicitly authorized
    to test.** A solicited PMKID uploads over the same path as a 4-way handshake (wpa-sec as a pcap,
-   pwncrack as a `WPA*02` line).
+   pwncrack as a `WPA*01` line).
 9. Optionally, **screen dimming** (ADR-0093), two idle delays in seconds on a board with a panel:
    **Screen dim after** (the backlight drops to a readable ~15% after this long idle; 0 = never dim) and
    **Screen off after** (fully dark after this long; 0 = dim only, never off). Both **off by default**.

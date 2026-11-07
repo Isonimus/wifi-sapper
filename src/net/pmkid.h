@@ -3,8 +3,8 @@
  * @brief Pure PMKID extraction from an EAPOL-Key message-1 payload (ADR-0110).
  *
  * A clientless-PMKID capture is an M1 carrying a PMKID KDE in its Key Data; the PMKID is
- * `HMAC-SHA1(PMK, "PMK Name" | AP | STA)`, a crackable `WPA*02` artifact on its own. This reads it
- * out of the whole M1 the collector already keeps, at build time, like ADR-0108's `WPA*01`
+ * `HMAC-SHA1(PMK, "PMK Name" | AP | STA)`, a crackable `WPA*01` (PMKID) artifact on its own. This reads it
+ * out of the whole M1 the collector already keeps, at build time, like ADR-0108's `WPA*02` 4-way
  * extraction: ADR-0009 decision #3 keeps the collector parsing nothing on-device, and this read
  * happens in the pure, host-tested core (§4 #8), never in the driver callback.
  *
@@ -20,7 +20,7 @@
 
 namespace sapper {
 
-/// The PMKID length in bytes: the HMAC-SHA1 truncation a hashcat `WPA*02` line carries.
+/// The PMKID length in bytes: the HMAC-SHA1 truncation a hashcat `WPA*01` (PMKID) line carries.
 constexpr uint16_t kPmkidLen = 16;
 
 /**

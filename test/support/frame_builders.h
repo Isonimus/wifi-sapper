@@ -93,7 +93,7 @@ inline std::vector<uint8_t> buildEapol(const uint8_t bssid[6], const uint8_t cli
 
 /// Build an EAPOL-Key M1 (AP->client) whose Key Data carries a single PMKID KDE
 /// (`DD 14 00-0F-AC 04 <16-byte pmkid>`), the clientless-PMKID M1 (ADR-0110). Addr1 is @p client,
-/// the station the AP addressed M1 to (the hashcat WPA*02 STA). Built on buildEapol so the
+/// the station the AP addressed M1 to (the hashcat WPA*01 PMKID STA). Built on buildEapol so the
 /// 802.11/EAPOL framing stays single-sourced; only the Key Data Length field and the KDE are poked
 /// in. Shared by test_hc22000 and test_handshake_collector (the support header's rule-of-three role).
 inline std::vector<uint8_t> buildPmkidM1(const uint8_t bssid[6], const uint8_t client[6],
