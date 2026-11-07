@@ -1,0 +1,2 @@
+[SOLICIT] txOk=150 txFail=0 capturing=1
+[SOLICIT] txOk=264 txFail=0 capturing=1
