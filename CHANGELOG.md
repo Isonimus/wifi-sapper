@@ -10,7 +10,7 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ---
 
-## Unreleased
+## 2026-11-07 (v0.3.0)
 
 - **Fixed: a handshake is now treated as valid only when its two halves came from the same
   connection, so the device stops uploading captures wpa-sec rejects.** The capture only checked that
