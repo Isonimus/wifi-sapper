@@ -11,6 +11,6 @@
 namespace sapper {
 
 /// Semantic version of the running firmware (SemVer, pre-1.0 appliance).
-constexpr char kFirmwareVersion[] = "0.3.0";
+constexpr char kFirmwareVersion[] = "0.4.0";
 
 }  // namespace sapper

@@ -12,6 +12,8 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+## 2026-11-12 (v0.4.0)
+
 - **Fixed: a freshly flashed unit no longer reboots when you connect to its setup Wi-Fi.** On an
   unprovisioned device, joining the `Sapper-XXXX` setup access point crashed the unit the instant your
   phone connected (a Core-1 Double exception), so first-boot provisioning was impossible on the affected
