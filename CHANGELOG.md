@@ -10,6 +10,17 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ---
 
+## Unreleased
+
+- **Fixed: the hunt HUD no longer mangles the capturing line on the small panels (Cardputer,
+  M5StickC Plus2).** The target name (or BSSID when the network is hidden) and the handshake-progress
+  indicators shared a single row, so a 17-char BSSID painted straight over the indicator markers. The
+  target now has its own full-width row and the indicators their own row below it, so the overlap is
+  impossible by construction, not by tuning. The indicators are relabelled from `B 1 2 3 4` to
+  `B M1 M2 M3 M4` (the EAPOL message names) on every board, and a long name is clamped to the row
+  width instead of overrunning the panel. First step of the HUD glanceable redesign. (slice-0117;
+  ADR-0116)
+
 ## 2026-11-07 (v0.3.0)
 
 - **Fixed: a handshake is now treated as valid only when its two halves came from the same

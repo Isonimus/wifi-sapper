@@ -204,13 +204,16 @@ void DirectPanelScreenRenderer::drawHuntLine(const ScreenView& view) {
     // Capturing: the target (SSID, or BSSID when hidden), a Beacon/M1-M4 indicator row lit per present frame,
     // and a progress bar filled by how many of the five have arrived.
     const char* name = view.huntSsid[0] != '\0' ? view.huntSsid : view.huntBssid;
-    char label[20];
-    std::snprintf(label, sizeof(label), "%.*s", static_cast<int>(sizeof(label) - 1), name);
+    // Clamp to the characters that fit the row at this panel's font size, so a long name never overflows
+    // (slice-0117); the 480px row holds a full 32-char SSID. snprintf's sizeof bound keeps the buffer safe.
+    char label[40];
+    const int32_t fit = (static_cast<int32_t>(display_.width()) - 2 * kMargin) / (kGlyphW * kLineSize);
+    std::snprintf(label, sizeof(label), "%.*s", static_cast<int>(fit), name);
     display_.drawText(kMargin, kHuntY, label, kWhite, kLineSize);
 
     struct Indicator { const char* label; bool present; };
-    const Indicator row[] = {{"B", view.huntHasBeacon}, {"1", view.huntHasM1}, {"2", view.huntHasM2},
-                             {"3", view.huntHasM3}, {"4", view.huntHasM4}};
+    const Indicator row[] = {{"B", view.huntHasBeacon}, {"M1", view.huntHasM1}, {"M2", view.huntHasM2},
+                             {"M3", view.huntHasM3}, {"M4", view.huntHasM4}};
     int32_t x = kMargin;
     for (const Indicator& ind : row) {
         display_.drawText(x, kHuntIndY, ind.label, ind.present ? kGreen : kDim, kLineSize);

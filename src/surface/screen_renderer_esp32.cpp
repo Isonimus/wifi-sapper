@@ -66,17 +66,19 @@ struct Layout {
     int32_t bannerBssidY;
 };
 
-// Compact tier: 240x135 (Cardputer, M5StickC Plus2). The pre-slice-0088 layout, preserved so those
-// already-tuned panels do not regress; the only visible gain is the version string in the title. The
-// indicator row shares the label line (huntIndY == huntY) because 240x135 has no room for its own row
-// before the banner.
+// Compact tier: 240x135 (Cardputer, M5StickC Plus2). The slice-0088 layout, with the slice-0117
+// collision fix: the capture target label (huntY) and the B/M1-M4 indicator row (huntIndY) are on
+// their own rows (ADR-0116 decision 3), so a 17-char BSSID can no longer paint under the indicators.
+// The indicator row and bar at y>=86 share the region the CAPTURED/CRACKED banner overpaints when it
+// fires (bannerY=86), so no extra vertical budget is spent; when the banner is idle (the common case)
+// both rows are visible with y98..135 free below.
 constexpr Layout kCompact{
     /*margin*/ 4,
     /*titleY*/ 2, /*titleSize*/ 2, /*versionSize*/ 1,
     /*statusY*/ 26, /*statusSize*/ 2, /*dotSize*/ 10,
     /*countersY*/ 52, /*lineSize*/ 1,
     /*syncY*/ 68,
-    /*huntY*/ 76, /*huntIndY*/ 76, /*huntBarY*/ 84, /*huntBarH*/ 2, /*indStep*/ 2 * kGlyphW,
+    /*huntY*/ 76, /*huntIndY*/ 86, /*huntBarY*/ 96, /*huntBarH*/ 2, /*indStep*/ 3 * kGlyphW,
     /*bannerY*/ 86, /*bannerTitleSize*/ 2, /*bannerTitleY*/ 90, /*bannerEssidY*/ 110, /*bannerBssidY*/ 122,
 };
 
@@ -209,26 +211,28 @@ void Esp32ScreenRenderer::drawHuntLine(const ScreenView& view) {
         return;
     }
 
-    // Capturing: the target (SSID, or BSSID when hidden), then a Beacon/M1–M4 indicator row lit per
-    // present frame, then a progress bar filled by how many of the five have arrived.
-    char label[20];
+    // Capturing: the target (SSID, or BSSID when hidden) on its own full-width row, then a
+    // Beacon/M1-M4 indicator row (its own row, slice-0117 / ADR-0116 #3) lit per present frame, then a
+    // progress bar filled by how many of the five have arrived.
+    char label[40];
     const char* name = view.huntSsid[0] != '\0' ? view.huntSsid : view.huntBssid;
-    // Deliberately truncate to the field width so it fits beside the indicator row; the precision bound
-    // (not a bare %s) is what tells the compiler the output is capped — no -Wformat-truncation.
-    std::snprintf(label, sizeof(label), "%.*s", static_cast<int>(sizeof(label) - 1), name);
+    // Clamp to the characters that fit the dedicated row at this tier's font size, so a long name never
+    // overflows the panel; the %.*s precision (not a bare %s) also caps the output for the compiler (no
+    // -Wformat-truncation). A 32-char SSID shows in full on the 240px compact row; snprintf's sizeof
+    // bound keeps the buffer safe regardless of the computed fit.
+    const int32_t fit = (w - 2 * L.margin) / (kGlyphW * L.lineSize);
+    std::snprintf(label, sizeof(label), "%.*s", static_cast<int>(fit), name);
     display_.drawText(L.margin, L.huntY, label, kWhite, L.lineSize);
 
     struct Indicator { const char* label; bool present; };
-    const Indicator row[] = {{"B", view.huntHasBeacon}, {"1", view.huntHasM1}, {"2", view.huntHasM2},
-                             {"3", view.huntHasM3}, {"4", view.huntHasM4}};
-    // Compact shares the label line (indicators start after a ≤13-char size-1 label); roomy gives the
-    // row its own line from the margin. Selected by whether the tier put huntIndY on the label line.
-    const bool ownLine = L.huntIndY != L.huntY;
-    int32_t x = ownLine ? L.margin : L.margin + 14 * kGlyphW;
-    const int32_t step = ownLine ? L.indStep : 2 * kGlyphW;
+    const Indicator row[] = {{"B", view.huntHasBeacon}, {"M1", view.huntHasM1}, {"M2", view.huntHasM2},
+                             {"M3", view.huntHasM3}, {"M4", view.huntHasM4}};
+    // Every tier now gives the indicator row its own line (slice-0117 moved the compact tier's huntIndY
+    // off the label line), so the indicators always start at the margin and advance by the tier's step.
+    int32_t x = L.margin;
     for (const Indicator& ind : row) {
         display_.drawText(x, L.huntIndY, ind.label, ind.present ? kGreen : kDim, L.lineSize);
-        x += step;
+        x += L.indStep;
     }
 
     const int32_t barW = w - 2 * L.margin;
