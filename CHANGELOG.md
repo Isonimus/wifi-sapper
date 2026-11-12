@@ -12,6 +12,13 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+- **Fixed: a freshly flashed unit no longer reboots when you connect to its setup Wi-Fi.** On an
+  unprovisioned device, joining the `Sapper-XXXX` setup access point crashed the unit the instant your
+  phone connected (a Core-1 Double exception), so first-boot provisioning was impossible on the affected
+  boards. The cause was the setup-page buffer being built on the small main-loop stack, which overflowed
+  under the web server when the phone's captive-portal check hit the page on connect; the buffer now lives
+  on the heap, matching the Maintenance portal. Pre-existing (reproduced on v0.3.0), not caused by the HUD
+  redesign. (slice-0120; ADR-0006)
 - **The hunt HUD is redesigned for a one-second glance.** The screen is now a fixed stack of four bands
   (header / status / live body / footer) where only the body changes with what the unit is doing, so the
   eye learns where to look. New at-a-glance data: the capturing target's **signal strength** as a small

@@ -9,6 +9,8 @@
 #include <WiFi.h>
 #include <esp_mac.h>
 
+#include <cstdlib>  // malloc/free: the form buffer lives on the heap, not the 8 KB loopTask stack
+
 #include "net/provisioning_form.h"  // SetupFormModel, buildSetupForm, resolveProvisioningUpdate, parse
 #include "net/web_arg_reader.h"     // WebServerArgReader — the device FormArgReader adapter (ADR-0114)
 
@@ -81,13 +83,25 @@ void CaptivePortal::handleRoot() {
         model.notifyCracked = true;
     }
 
-    char html[kSetupFormBufSize];
-    if (buildSetupForm(model, html, sizeof(html)) == 0) {
+    // Heap, not the 8 KB loopTask stack: this 5.5 KB buffer on the stack under the WebServer frames
+    // overflows the loopTask the moment the OS captive-probe hits handleRoot on connect, corrupting
+    // adjacent memory so the fault surfaces later in the Wi-Fi driver's esf_buf allocator (the crash
+    // this path shipped with). The Maintenance portal's handleRoot already allocates it on the heap for
+    // this exact reason; this mirrors it. Single-threaded serve, so malloc/free per request is fine;
+    // fail loud on a null alloc (§3).
+    char* html = static_cast<char*>(malloc(kSetupFormBufSize));
+    if (html == nullptr) {
+        m_http.send(500, "text/html", "<h2>Out of memory rendering the setup form.</h2>");
+        return;
+    }
+    if (buildSetupForm(model, html, kSetupFormBufSize) == 0) {
         // The form outgrew its buffer: serve an error, never a truncated half-form (§3, fail loud).
+        free(html);
         m_http.send(500, "text/html", "<h2>Could not render the setup form.</h2>");
         return;
     }
     m_http.send(200, "text/html", html);
+    free(html);
 }
 
 void CaptivePortal::handleSave() {
