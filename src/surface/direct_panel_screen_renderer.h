@@ -41,6 +41,11 @@ public:
 private:
     void drawChromeOnce();
     void drawStatus(const ScreenView& view);
+    /// The armed-TX header chips (ADR-0116 #6): a red `D`/amber `P` top-right when deauth/solicit are armed.
+    /// Static arm state, so it repaints only on the first render (or if it ever changed).
+    void drawArmedTx(const ScreenView& view);
+    /// The target signal bar glyph (ADR-0116 #5): right of the status band; repaints when the bucket changes.
+    void drawRssi(const ScreenView& view);
     void drawCounters(const ScreenView& view);
     void drawSync(const ScreenView& view);
     void drawHuntLine(const ScreenView& view);

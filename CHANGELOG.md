@@ -12,6 +12,16 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+- **The hunt HUD is redesigned for a one-second glance.** The screen is now a fixed stack of four bands
+  (header / status / live body / footer) where only the body changes with what the unit is doing, so the
+  eye learns where to look. New at-a-glance data: the capturing target's **signal strength** as a small
+  bar glyph, a **PMKID badge** that lights on the clientless-capture path (set apart from the B/M1-M4 row,
+  which it is not part of), and a persistent **armed-TX indicator** in the header, a red `D` when deauth is
+  armed and an amber `P` when PMKID solicitation is armed, so you can always see at a glance whether the
+  unit is transmitting. The CAPTURED/CRACKED banner is now constrained to the body area so it can never
+  cover that safety indicator. The **cracked counter is now the lifetime total** from the on-device
+  manifest, so it no longer resets to zero on reboot (the upload counter stays per-run). (slice-0119;
+  ADR-0116, ADR-0118)
 - **Fixed: the hunt HUD no longer mangles the capturing line on the small panels (Cardputer,
   M5StickC Plus2).** The target name (or BSSID when the network is hidden) and the handshake-progress
   indicators shared a single row, so a 17-char BSSID painted straight over the indicator markers. The

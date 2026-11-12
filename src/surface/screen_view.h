@@ -50,8 +50,8 @@ enum class ToastKind : uint8_t {
  */
 struct ScreenView {
     ScreenStatus status = ScreenStatus::Booting;
-    uint32_t uploaded = 0;      ///< Cumulative accepted + duplicate uploads (terminal successes).
-    uint32_t cracks = 0;        ///< Cumulative NewPassword facts seen.
+    uint32_t uploaded = 0;      ///< This run's accepted + duplicate uploads (terminal successes).
+    uint32_t crackedTotal = 0;  ///< Lifetime cracked networks, from the persisted manifest (ADR-0118).
     bool haveSynced = false;    ///< At least one SyncCompleted fact has arrived.
     bool lastSyncOk = false;    ///< The last sync succeeded.
     uint32_t lastSyncNew = 0;   ///< New passwords the last sync announced.
@@ -73,6 +73,14 @@ struct ScreenView {
     bool huntHasM2 = false;
     bool huntHasM3 = false;
     bool huntHasM4 = false;
+    RssiLevel huntRssi = RssiLevel::Unknown;  ///< Target signal, coarse bucket (ADR-0116 #5); Unknown hides it.
+    bool huntHasPmkid = false;                ///< The clientless PMKID badge lights (ADR-0110 / ADR-0116 #4).
+
+    // --- Armed-TX indicator (ADR-0116 decision 6): whether the unit is actively transmitting, a persistent
+    // header indicator the CAPTURED/CRACKED banner must never occlude. Static from the provisioning record,
+    // set at huntLoopBegin (not pulled), so they ride the view every render.
+    bool armedDeauth = false;                 ///< Deauth is armed (ADR-0029): the red `D` header chip.
+    bool armedSolicit = false;                ///< PMKID solicitation is armed (ADR-0110): the amber `P` chip.
 
     // --- Battery indicator (ADR-0091): a coarse charge icon on a board with a measured gauge. Only the
     // bucket is compared (below), so raw-millivolt dither between samples never forces a re-render.
@@ -82,7 +90,7 @@ struct ScreenView {
     /// Field-by-field equality: the surface renders only when the displayed state actually changes, so
     /// the panel sees discrete updates rather than a per-tick redraw (ADR-0025 decision 2).
     bool operator==(const ScreenView& o) const {
-        return status == o.status && uploaded == o.uploaded && cracks == o.cracks &&
+        return status == o.status && uploaded == o.uploaded && crackedTotal == o.crackedTotal &&
                haveSynced == o.haveSynced && lastSyncOk == o.lastSyncOk &&
                lastSyncNew == o.lastSyncNew && heartbeat == o.heartbeat &&
                toastActive == o.toastActive && toastKind == o.toastKind &&
@@ -91,8 +99,10 @@ struct ScreenView {
                huntShown == o.huntShown && huntPhase == o.huntPhase && huntChannel == o.huntChannel &&
                huntDiscovered == o.huntDiscovered && huntHasBeacon == o.huntHasBeacon &&
                huntHasM1 == o.huntHasM1 && huntHasM2 == o.huntHasM2 && huntHasM3 == o.huntHasM3 &&
-               huntHasM4 == o.huntHasM4 && std::strcmp(huntSsid, o.huntSsid) == 0 &&
+               huntHasM4 == o.huntHasM4 && huntRssi == o.huntRssi && huntHasPmkid == o.huntHasPmkid &&
+               std::strcmp(huntSsid, o.huntSsid) == 0 &&
                std::strcmp(huntBssid, o.huntBssid) == 0 &&
+               armedDeauth == o.armedDeauth && armedSolicit == o.armedSolicit &&
                batteryShown == o.batteryShown && batteryLevel == o.batteryLevel;
     }
     bool operator!=(const ScreenView& o) const { return !(*this == o); }

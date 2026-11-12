@@ -20,12 +20,14 @@
 #include "net/hunt_snapshot.h"       // HuntSnapshot / HuntPhase — the live-hunt pull (ADR-0033)
 #include "net/upload_supervisor.h"   // DrainOutcome
 #include "support/fake_battery_gauge.h"
+#include "support/fake_cracked_count_source.h"
 #include "support/fake_hunt_snapshot_source.h"
 #include "support/fake_screen_renderer.h"
 #include "surface/screen_toast_surface.h"
 
 using namespace sapper;
 using sapper_test::FakeBatteryGauge;
+using sapper_test::FakeCrackedCountSource;
 using sapper_test::FakeHuntSnapshotSource;
 using sapper_test::FakeScreenRenderer;
 
@@ -117,11 +119,83 @@ void test_counters_accumulate_from_bus_facts(void) {
 
     step(s, AppEvent::drainCompleted(drain(true, false, /*accepted=*/1, /*duplicate=*/0)), 200);
     TEST_ASSERT_EQUAL_UINT32(4, r.last().uploaded);  // cumulative, not per-cycle.
+}
 
-    CrackedResult a, b;
-    step(s, newPassword(a, "NetA", "pa"), 300);
-    step(s, newPassword(b, "NetB", "pb"), 400);
-    TEST_ASSERT_EQUAL_UINT32(2, r.last().cracks);
+void test_cracked_total_is_the_manifest_count_not_a_bus_tally(void) {
+    // ADR-0118: the cracked counter is the LIFETIME manifest total pulled each render, not a run-scoped
+    // tally of NewPassword facts. Fail-before (the old code): two NewPassword facts would make it read 2,
+    // and it would reset to 0 on reboot. Now a NewPassword only arms the banner; the count comes from the
+    // source, so a Changed re-crack (which fires NewPassword but does not grow the manifest) cannot drift it.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeCrackedCountSource counts;
+    counts.count = 142;  // the device has cracked 142 networks over its life.
+    s.setCrackedCountSource(counts);
+    s.begin(0);
+    TEST_ASSERT_EQUAL_UINT32(142, r.last().crackedTotal);  // shown from boot, not accumulated from facts.
+
+    CrackedResult a;
+    step(s, newPassword(a, "NetA", "pa"), 100);  // arms the banner; the manifest count is unchanged here.
+    TEST_ASSERT_EQUAL_UINT32(142, r.last().crackedTotal);  // no drift from the bus fact.
+
+    counts.count = 143;  // a real new crack grew the manifest.
+    s.tick(2000);
+    TEST_ASSERT_EQUAL_UINT32(143, r.last().crackedTotal);
+}
+
+void test_no_cracked_count_source_shows_zero(void) {
+    // A board that never wires the source (a headless board) resolves the count to 0, never a stale value.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    s.begin(0);
+    TEST_ASSERT_EQUAL_UINT32(0, r.last().crackedTotal);
+}
+
+void test_armed_tx_flags_ride_the_view(void) {
+    // ADR-0116 #6: the static armed-TX state is set once at huntLoopBegin and rides every render as the
+    // header chips. deauth-only here: the red `D` chip shows, no `P`.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    s.setArmedTx(/*deauth=*/true, /*solicit=*/false);
+    s.begin(0);
+    TEST_ASSERT_TRUE(r.last().armedDeauth);
+    TEST_ASSERT_FALSE(r.last().armedSolicit);
+}
+
+void test_capturing_rssi_bucket_and_pmkid_fold_into_the_view(void) {
+    // ADR-0116 #4/#5: the snapshot's coarse RSSI bucket and the live hasPmkid fold into the view so the
+    // renderer can draw the signal bars and the PMKID badge.
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeHuntSnapshotSource src;
+    src.snapshot.phase = HuntPhase::Capturing;
+    src.snapshot.rssi = RssiLevel::Good;
+    src.snapshot.hasPmkid = true;
+    s.setHuntSource(src);
+    s.begin(0);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(RssiLevel::Good), static_cast<int>(r.last().huntRssi));
+    TEST_ASSERT_TRUE(r.last().huntHasPmkid);
+}
+
+void test_rssi_bucket_is_edge_compared_so_dither_forces_no_redraw(void) {
+    // Only the bucket is in ScreenView::operator== (ADR-0116 #5): a snapshot whose raw dBm dithered but
+    // whose bucket is unchanged forces no redraw; a bucket change forces exactly one. (The fake carries the
+    // bucket directly; raw-dBm->bucket mapping is the engine's job, tested in test_hunt_engine.)
+    FakeScreenRenderer r;
+    ScreenToastSurface s(r);
+    FakeHuntSnapshotSource src;
+    src.snapshot.phase = HuntPhase::Capturing;
+    src.snapshot.rssi = RssiLevel::Fair;
+    s.setHuntSource(src);
+    s.begin(0);
+    const size_t afterBegin = r.renderCount();
+
+    s.tick(100);  // same bucket, nothing else changed.
+    TEST_ASSERT_EQUAL_size_t(afterBegin, r.renderCount());  // no redraw on a steady bucket.
+
+    src.snapshot.rssi = RssiLevel::Strong;  // the bucket moved.
+    s.tick(200);
+    TEST_ASSERT_EQUAL_size_t(afterBegin + 1, r.renderCount());  // exactly one redraw.
 }
 
 void test_sync_line_reflects_the_last_sync(void) {
@@ -444,6 +518,11 @@ int main(int, char**) {
     RUN_TEST(test_begin_renders_the_initial_hunting_hud);
     RUN_TEST(test_status_follows_the_drain);
     RUN_TEST(test_counters_accumulate_from_bus_facts);
+    RUN_TEST(test_cracked_total_is_the_manifest_count_not_a_bus_tally);
+    RUN_TEST(test_no_cracked_count_source_shows_zero);
+    RUN_TEST(test_armed_tx_flags_ride_the_view);
+    RUN_TEST(test_capturing_rssi_bucket_and_pmkid_fold_into_the_view);
+    RUN_TEST(test_rssi_bucket_is_edge_compared_so_dither_forces_no_redraw);
     RUN_TEST(test_sync_line_reflects_the_last_sync);
     RUN_TEST(test_new_password_arms_toast_without_psk);
     RUN_TEST(test_toast_clears_after_hold_and_a_repeat_extends_it);

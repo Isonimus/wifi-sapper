@@ -50,6 +50,29 @@ void test_apply_new_bssid_is_new_and_stored(void) {
     TEST_ASSERT_EQUAL_UINT32(1000, e->firstSeenCrackedMs);
 }
 
+void test_cracked_total_equals_size(void) {
+    // The HUD's lifetime cracked counter (ADR-0118 / §4 #51) reads crackedTotal(), which is the same count
+    // as size() — so the HUD figure equals the Maintenance dashboard's. It tracks inserts and holds at the
+    // bound (an eviction keeps the count flat), never diverging from size().
+    FakeCrackedStore store;
+    CrackedManifest manifest(store);
+    TEST_ASSERT_TRUE(manifest.begin());
+    TEST_ASSERT_EQUAL_size_t(0, manifest.crackedTotal());
+
+    manifest.apply(makeResult(1, "Net1", "pw1"), 1000);
+    manifest.apply(makeResult(2, "Net2", "pw2"), 2000);
+    TEST_ASSERT_EQUAL_size_t(2, manifest.crackedTotal());
+    TEST_ASSERT_EQUAL_size_t(manifest.size(), manifest.crackedTotal());
+
+    for (size_t i = 0; i < kMaxCrackedEntries + 5; ++i) {
+        char pw[16];
+        std::snprintf(pw, sizeof(pw), "p%zu", i);
+        manifest.apply(makeResult(static_cast<uint16_t>(100 + i), "Net", pw), static_cast<uint32_t>(i + 1));
+    }
+    TEST_ASSERT_EQUAL_size_t(kMaxCrackedEntries, manifest.crackedTotal());  // holds at the cap, == size().
+    TEST_ASSERT_EQUAL_size_t(manifest.size(), manifest.crackedTotal());
+}
+
 void test_reapplying_same_result_is_unchanged_noop(void) {
     FakeCrackedStore store;
     CrackedManifest manifest(store);
@@ -257,6 +280,7 @@ void test_cracked_cadence_is_inert_without_a_real_clock(void) {
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_apply_new_bssid_is_new_and_stored);
+    RUN_TEST(test_cracked_total_equals_size);
     RUN_TEST(test_entry_at_enumerates_and_bounds);
     RUN_TEST(test_is_cracked_is_manifest_membership);
     RUN_TEST(test_reapplying_same_result_is_unchanged_noop);

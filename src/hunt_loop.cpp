@@ -491,6 +491,8 @@ bool huntLoopBegin(const ProvisioningRecord& creds, const UploadSupervisorConfig
             return false;
         }
         g_screen->setHuntSource(*g_engine);  // live-hunt HUD pulls the snapshot each tick (ADR-0033, §4 #18).
+        g_screen->setCrackedCountSource(*g_manifest);  // footer shows the lifetime manifest count (ADR-0118, §4 #51).
+        g_screen->setArmedTx(g_deauthArmed, g_solicitArmed);  // persistent armed-TX header chips (ADR-0116 #6).
         // Battery icon (ADR-0091, §4 #40): deliberately scoped to the HUD, so the gauge + the `[BATT]`
         // diagnostic live inside this display-wired block (the slice is "battery on the HUD, for devices
         // with a screen"). A headless board with a battery pin therefore reports no battery today; surfacing

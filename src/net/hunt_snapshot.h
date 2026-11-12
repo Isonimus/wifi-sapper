@@ -27,6 +27,22 @@ namespace sapper {
 /// engine; HuntEngine aliases it as `HuntEngine::Phase`, so existing `HuntEngine::Phase::X` still names it.
 enum class HuntPhase : uint8_t { Idle, Discovering, Capturing, Quiescing };
 
+/// A coarse signal-strength bucket for the capturing target (ADR-0116 decision 5). The HUD draws it as a
+/// multi-bar glyph; only the bucket reaches ScreenView (compared in operator==), so raw-dBm dither never
+/// forces a redraw — the same discipline the battery gauge uses for charge (ADR-0091, §4 #40). Unknown is
+/// "no beacon RSSI recorded for this target" (the registry's kRssiUnset sentinel), which hides the glyph.
+enum class RssiLevel : uint8_t { Unknown, Weak, Fair, Good, Strong };
+
+/// Bucket a real discovery-time RSSI (dBm) into the coarse HUD level. Candidate thresholds (ADR-0002 §5),
+/// tunable on the panel: -55/-67/-78 dBm split four bars. Never returns Unknown — the engine assigns that
+/// for the kRssiUnset sentinel before calling, so this pure header stays free of the ap_registry include.
+inline RssiLevel rssiBucket(int8_t dBm) {
+    if (dBm >= -55) return RssiLevel::Strong;
+    if (dBm >= -67) return RssiLevel::Good;
+    if (dBm >= -78) return RssiLevel::Fair;
+    return RssiLevel::Weak;
+}
+
 /// A snapshot of what the appliance is doing right now. Identity + progress only — no pcap frame bytes
 /// (those stay quarantined to the CaptureSink seam, §4 #9); a surface renders it and nothing more.
 struct HuntSnapshot {
@@ -40,6 +56,8 @@ struct HuntSnapshot {
     bool hasM2 = false;
     bool hasM3 = false;
     bool hasM4 = false;
+    RssiLevel rssi = RssiLevel::Unknown;  ///< Coarse signal of the capturing target (ADR-0116 #5); bucketed.
+    bool hasPmkid = false;                ///< The held M1 carries a PMKID KDE — the clientless terminal (ADR-0110).
 
     /// How many of the five handshake pieces (Beacon + M1..M4) are present — the progress-bar numerator.
     uint8_t collectedCount() const {

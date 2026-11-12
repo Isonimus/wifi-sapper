@@ -20,6 +20,7 @@
 #include <cstdint>
 
 #include "core/event_bus.h"
+#include "net/cracked_count_source.h"  // CrackedCountSource — the lifetime-cracked pull seam (ADR-0118).
 #include "net/hunt_snapshot.h"       // HuntSnapshotSource — the live-hunt pull seam (ADR-0033).
 #include "surface/battery_gauge.h"   // BatteryGauge — the raw-millivolt pull seam (ADR-0091).
 #include "surface/battery_model.h"   // BatteryLevel + the pure interpretation.
@@ -35,6 +36,19 @@ public:
     /// Wire the live-hunt pull source (ADR-0033, §4 #18). Set post-construction, like the webhook's
     /// notifier, so the constructor does not grow an argument. Unset → the pre-0033 HUD (no live line).
     void setHuntSource(HuntSnapshotSource& source) { huntSource_ = &source; }
+
+    /// Wire the lifetime-cracked-count pull source (ADR-0118, §4 #51). A post-construction injection like
+    /// setHuntSource: the HUD reads the persisted manifest count each render through this seam, never a
+    /// bus tally. Unset → the footer shows 0 (a screenless board never wires it).
+    void setCrackedCountSource(CrackedCountSource& source) { crackedCountSource_ = &source; }
+
+    /// Wire the static armed-TX state (ADR-0116 decision 6). Known at huntLoopBegin from the provisioning
+    /// record (deauth ADR-0029, solicit ADR-0110); not pulled, so it is set once and rides every render as
+    /// the persistent header chips. Unset → disarmed (no chips), matching the default-off provisioning.
+    void setArmedTx(bool deauthArmed, bool solicitArmed) {
+        armedDeauth_ = deauthArmed;
+        armedSolicit_ = solicitArmed;
+    }
 
     /// Wire the battery gauge and the board's divider ratio (ADR-0091, §4 #40). Like setHuntSource, a
     /// post-construction injection: the surface pulls the gauge on a throttle and interprets it with the
@@ -96,14 +110,16 @@ private:
 
     ScreenRenderer& renderer_;
     HuntSnapshotSource* huntSource_ = nullptr;     ///< Optional live-hunt pull source (ADR-0033); null = hide.
+    CrackedCountSource* crackedCountSource_ = nullptr;  ///< Optional lifetime-cracked pull (ADR-0118); null = 0.
     BatteryGauge* batterySource_ = nullptr;        ///< Optional battery gauge (ADR-0091); null = no icon.
     uint16_t batteryDividerPermille_ = 0;          ///< The active board's divider ratio (0 = uncalibrated).
     BatteryLevel batteryLevel_ = BatteryLevel::Unknown;  ///< Last sampled bucket (also the hysteresis anchor).
     uint32_t batteryCellMv_ = 0;                   ///< Last sampled cell millivolts, for the `[BATT]` line.
     uint32_t nextBatterySampleMs_ = 0;             ///< When the next gauge sample is due (the throttle).
     ScreenStatus status_ = ScreenStatus::Booting;  ///< The base HUD status the drain facts set.
-    uint32_t uploaded_ = 0;                        ///< Cumulative accepted + duplicate uploads.
-    uint32_t cracks_ = 0;                          ///< Cumulative NewPassword facts.
+    uint32_t uploaded_ = 0;                        ///< This run's accepted + duplicate uploads.
+    bool armedDeauth_ = false;                     ///< Deauth armed (ADR-0029): the red `D` header chip (ADR-0116 #6).
+    bool armedSolicit_ = false;                    ///< PMKID solicit armed (ADR-0110): the amber `P` header chip.
     bool haveSynced_ = false;
     bool lastSyncOk_ = false;
     uint32_t lastSyncNew_ = 0;

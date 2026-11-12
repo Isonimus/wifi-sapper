@@ -128,6 +128,7 @@ void HuntEngine::doStartCapturing(uint32_t nowMs) {
                 // answer: fail-toward-nothing, and a hidden PMKID has no ESSID for the WPA*01 line anyway.
                 std::strncpy(capturingSsid_, target.ssid, sizeof(capturingSsid_) - 1);
                 capturingSsid_[sizeof(capturingSsid_) - 1] = '\0';
+                capturingRssi_ = target.rssi;  // discovery RSSI for the HUD signal bucket (ADR-0116 #5); app task.
                 activeSink_.store(&handshakeConsumer_, std::memory_order_release);
                 phase_ = Phase::Capturing;
                 phaseDeadlineMs_ = nowMs + config_.captureWindowMs;
@@ -313,6 +314,13 @@ HuntSnapshot HuntEngine::huntSnapshot() const {
         snap.hasM2 = hs.has(HandshakeMessage::M2);
         snap.hasM3 = hs.has(HandshakeMessage::M3);
         snap.hasM4 = hs.has(HandshakeMessage::M4);
+        // Coarse target signal (ADR-0116 #5): bucket the discovery RSSI copied at retarget. Unknown for an
+        // unset sentinel (no beacon RSSI recorded) so the HUD hides the glyph rather than drawing a guess.
+        snap.rssi = capturingRssi_ == kRssiUnset ? RssiLevel::Unknown : rssiBucket(capturingRssi_);
+        // Live clientless terminal (ADR-0110 / ADR-0116 #4): whether the held M1 carries a PMKID KDE. The
+        // predicate reads the whole M1 through the pure extractPmkidFromEapol, so §4 #8/#47 hold (no new
+        // extraction site); best-effort/cosmetic like the rest of the snapshot.
+        snap.hasPmkid = collector_.isPmkidValid();
     }
     return snap;
 }

@@ -258,6 +258,7 @@ private:
     uint32_t deauthTxOk_ = 0;       // deauth/disassoc frames the seam accepted.
     uint32_t deauthTxFail_ = 0;     // deauth/disassoc frames the seam rejected.
     char capturingSsid_[33] = {0};  // the current target's SSID, copied at retarget for the solicit assoc.
+    int8_t capturingRssi_ = kRssiUnset;  // the target's discovery RSSI, copied at retarget for the HUD bucket (ADR-0116 #5).
     uint32_t solicitDueMs_ = 0;        // next solicit-burst (auth) deadline while Capturing; wrap-safe.
     uint32_t solicitAssocDueMs_ = 0;   // when the assoc of the in-flight burst may go out (auth time + gap).
     bool solicitAssocPending_ = false; // true between a sent auth and its assoc (the two-phase gap).

@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "net/cracked_count_source.h"  // CrackedCountSource: the lifetime-cracked-count HUD seam (ADR-0118).
 #include "net/cracked_lookup.h"
 #include "net/cracked_store.h"
 #include "net/reverification.h"  // reverifyDue(): the rotated-PSK staleness test (ADR-0072).
@@ -49,7 +50,7 @@ enum class ApplyOutcome { New, Changed, Unchanged };
  * clearFresh() mutate only RAM so a whole sync is one store write, and a failed sync that never
  * flushes leaves the persisted manifest exactly as it was (ADR-0019 decision #7; Scenario I).
  */
-class CrackedManifest : public CrackedLookup {
+class CrackedManifest : public CrackedLookup, public CrackedCountSource {
 public:
     explicit CrackedManifest(CrackedStore& store) : store_(store) {}
 
@@ -74,6 +75,10 @@ public:
     bool flush();
 
     size_t size() const { return count_; }
+
+    /// CrackedCountSource (ADR-0118): the lifetime cracked total the live HUD shows, over the same count
+    /// as size() so the HUD figure equals the Maintenance dashboard's by construction (§4 #12, #21).
+    size_t crackedTotal() const override { return count_; }
 
     /// The entry for @p bssid, or nullptr if not held. Read-only view for the sync/verify; the manifest
     /// stays the store's single writer (§4 invariant #12).

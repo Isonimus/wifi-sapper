@@ -60,7 +60,9 @@ void ScreenToastSurface::onAppEvent(const AppEvent& event) {
         }
         case AppEventType::NewPassword: {
             const CrackedResult& r = *event.password;
-            ++cracks_;
+            // The cracked COUNTER is the persisted manifest total, pulled in render() (ADR-0118); this fact
+            // only arms the CRACKED banner (the event). No run-scoped tally here — it would reset on reboot
+            // and drift on a Changed re-crack (ADR-0118 rejects seed-then-increment).
             // Copy the ESSID + BSSID only — never r.password (there is no field on the view for it), so
             // the recovered PSK cannot reach the panel. The ESSID is printable-filtered so a control
             // byte in an arbitrary SSID cannot corrupt the drawn line.
@@ -141,7 +143,15 @@ void ScreenToastSurface::render(uint32_t nowMs) {
     ScreenView view;
     view.status = status_;
     view.uploaded = uploaded_;
-    view.cracks = cracks_;
+    // Lifetime cracked total (ADR-0118): the persisted manifest count, read through the pull seam each
+    // render (app task, the same task that applies sync results — no torn-read concern). Unwired → 0.
+    view.crackedTotal = crackedCountSource_ != nullptr
+                            ? static_cast<uint32_t>(crackedCountSource_->crackedTotal())
+                            : 0;
+    // Armed-TX header chips (ADR-0116 #6): static arm state set at huntLoopBegin, rides every render so the
+    // banner (constrained off the header) can never hide whether the unit is transmitting.
+    view.armedDeauth = armedDeauth_;
+    view.armedSolicit = armedSolicit_;
     view.haveSynced = haveSynced_;
     view.lastSyncOk = lastSyncOk_;
     view.lastSyncNew = lastSyncNew_;
@@ -167,6 +177,8 @@ void ScreenToastSurface::render(uint32_t nowMs) {
         view.huntHasM2 = snap.hasM2;
         view.huntHasM3 = snap.hasM3;
         view.huntHasM4 = snap.hasM4;
+        view.huntRssi = snap.rssi;       // coarse bucket (ADR-0116 #5); dither within a bucket forces no redraw.
+        view.huntHasPmkid = snap.hasPmkid;  // the clientless PMKID badge (ADR-0110 / ADR-0116 #4).
     }
     // Battery icon (ADR-0091): shown only when a gauge is wired and the reading is a real bucket; an
     // uncalibrated/absent gauge stays Unknown and hidden, never a guessed level. Only the bucket is in the

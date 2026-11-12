@@ -504,6 +504,62 @@ void test_snapshot_reflects_populated_capturing(void) {
     TEST_ASSERT_TRUE(snap.hasBeacon && snap.hasM1 && snap.hasM2);
     TEST_ASSERT_FALSE(snap.hasM3 || snap.hasM4);
     TEST_ASSERT_EQUAL_UINT8(3, snap.collectedCount());
+    // The target's discovery RSSI, bucketed for the HUD glyph (ADR-0116 #5): the beacon was delivered at
+    // kDefaultDeliverRssi (-40 dBm) -> the Strong bucket. An ordinary 4-way M1 carries no PMKID KDE.
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Strong), static_cast<int>(snap.rssi));
+    TEST_ASSERT_FALSE(snap.hasPmkid);
+}
+
+void test_snapshot_rssi_bucket_reflects_the_target_discovery_signal(void) {
+    // A weak target (below the ADR-0068 floor) buckets to Weak; a captured-but-weak AP is still captured
+    // (deprioritise, never skip), so the snapshot reports its signal while Capturing it.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1), kWeakRssi);  // -85 dBm -> the Weak bucket.
+    engine.tick(30);  // discovery ends -> quiesce.
+    engine.tick(35);  // the lone (weak) AP is still captured once the strong partition is empty.
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntEngine::Phase::Capturing), static_cast<int>(engine.phase()));
+
+    const HuntSnapshot snap = engine.huntSnapshot();
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Weak), static_cast<int>(snap.rssi));
+}
+
+void test_snapshot_reports_pmkid_on_a_clientless_m1(void) {
+    // ADR-0116 #4 / ADR-0110: a held M1 carrying a PMKID KDE lights the HUD's clientless badge. Read before
+    // the next tick, which would detect isPmkidValid() and leave Capturing. Fail-before: without
+    // snap.hasPmkid = collector_.isPmkidValid() the badge never lights.
+    FakeRadioSniffer sniffer;
+    RecordingObserver observer;
+    ApRegistry registry;
+    HuntEngine engine(sniffer, registry, observer, kHopChannels, 3, testConfig());
+    TEST_ASSERT_TRUE(engine.begin(0));
+
+    sniffer.deliver(buildBeacon(kApA, "Alpha", 1));
+    engine.tick(30);
+    engine.tick(35);  // Capturing kApA.
+    sniffer.deliver(buildBeacon(kApA, "Net", 1));         // a beacon during Capturing (isPmkidValid needs it).
+    sniffer.deliver(buildPmkidM1(kApA, kClient, kPmkid));  // a clientless PMKID M1 for the target.
+
+    const HuntSnapshot snap = engine.huntSnapshot();
+    TEST_ASSERT_EQUAL(static_cast<int>(HuntPhase::Capturing), static_cast<int>(snap.phase));
+    TEST_ASSERT_TRUE(snap.hasBeacon && snap.hasM1);
+    TEST_ASSERT_TRUE(snap.hasPmkid);
+}
+
+void test_rssi_bucket_maps_dbm_to_coarse_levels(void) {
+    // The pure bucketing the engine applies to discovery RSSI (ADR-0116 #5). Boundaries at -55/-67/-78 dBm.
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Strong), static_cast<int>(rssiBucket(-30)));
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Strong), static_cast<int>(rssiBucket(-55)));  // inclusive edge.
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Good), static_cast<int>(rssiBucket(-56)));
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Good), static_cast<int>(rssiBucket(-67)));
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Fair), static_cast<int>(rssiBucket(-68)));
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Fair), static_cast<int>(rssiBucket(-78)));
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Weak), static_cast<int>(rssiBucket(-79)));
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Weak), static_cast<int>(rssiBucket(-100)));
 }
 
 void test_snapshot_hides_target_when_not_capturing(void) {
@@ -529,6 +585,8 @@ void test_snapshot_hides_target_when_not_capturing(void) {
     TEST_ASSERT_EQUAL_STRING("", snap.ssid);                    // no stale name,
     TEST_ASSERT_FALSE(snap.hasBeacon || snap.hasM1 || snap.hasM2 || snap.hasM3 || snap.hasM4);  // no stale flags.
     TEST_ASSERT_EQUAL_UINT8(0, snap.collectedCount());
+    TEST_ASSERT_EQUAL(static_cast<int>(RssiLevel::Unknown), static_cast<int>(snap.rssi));  // no stale signal,
+    TEST_ASSERT_FALSE(snap.hasPmkid);                                                       // no stale PMKID badge.
 }
 
 // --- Gate B: skip targeting an already-cracked AP (slice-0062 Scenarios A, B, C; ADR-0061 #28) ------
@@ -1220,6 +1278,9 @@ int main(int, char**) {
     RUN_TEST(test_snapshot_reflects_discovering);
     RUN_TEST(test_snapshot_reflects_populated_capturing);
     RUN_TEST(test_snapshot_hides_target_when_not_capturing);
+    RUN_TEST(test_snapshot_rssi_bucket_reflects_the_target_discovery_signal);
+    RUN_TEST(test_snapshot_reports_pmkid_on_a_clientless_m1);
+    RUN_TEST(test_rssi_bucket_maps_dbm_to_coarse_levels);
     RUN_TEST(test_cracked_ap_is_never_targeted_but_uncracked_one_is);
     RUN_TEST(test_with_no_lookup_every_ap_is_targeted);
     RUN_TEST(test_all_cracked_degrades_to_rediscovery_not_a_spin);
