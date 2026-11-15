@@ -8,13 +8,14 @@
 
 #include <esp_wifi.h>
 
-// The ESP-IDF SDK blocks raw management-frame TX (deauth 0xC0 / disassoc 0xA0). The pioarduino
-// platform (Bruce's patched libs) exposes ieee80211_raw_frame_sanity_check as a weak symbol; this
-// strong override returns 1 for the magic argument to allow the frame, matching the Marauder/Bruce
-// convention (ADR-0027). This symbol IS the raw-TX capability; it now ships in every device build
-// (ADR-0029 lifted ADR-0027 decision 3's SAPPER_TEST_HOOKS gate), guarded at *runtime* by the
-// operator's default-off deauth arm toggle rather than at compile time (§4 invariant #16). The
-// weaken_deauth_pre.py pre-script already ran for the shipped env, so this override links cleanly.
+// The ESP-IDF SDK blocks raw management-frame TX (deauth 0xC0 / disassoc 0xA0). The pinned
+// framework-arduinoespressif32-libs (the owned esp32-arduino-adv-libs build) ships
+// ieee80211_raw_frame_sanity_check as a weak symbol; this strong override returns 1 for the magic
+// argument to allow the frame, matching the Marauder/Bruce convention (ADR-0027). This symbol IS the
+// raw-TX capability; it now ships in every device build (ADR-0029 lifted ADR-0027 decision 3's
+// SAPPER_TEST_HOOKS gate), guarded at *runtime* by the operator's default-off deauth arm toggle
+// rather than at compile time (§4 invariant #16). The libs provide the symbol weak in-build (patch #1,
+// §4 invariant #52, ADR-0121), so this override links cleanly with no local objcopy hook.
 namespace {
 constexpr int32_t kSanityBypassMagic = 31337;  // Marauder/Bruce magic value; not ours to choose.
 }  // namespace
