@@ -106,3 +106,17 @@ on-device question (ADR-0121 decision 5, LEDGER) the link cannot assert.
 
 Definition-of-Done scenarios 1-3 are met on the machine-checkable half; the `t_embed` on-device PSRAM proof
 remains the operator's to run.
+
+## Amendment: 2026-11-15 T-embed on-device PSRAM proof: 8 MB octal PSRAM inits under the owned esp32s3 libs
+
+Run on the physical T-embed (`esp32-s3-devkitc1-n16r8`, `/dev/ttyACM0`) flashed with this slice's firmware
+(`pio run -e t_embed -t upload`). The boot `[STATE]` line reported `heap_free=99920 heap_max=8257524
+disp=320x170`: the largest contiguous `MALLOC_CAP_8BIT` block is **8257524 B (~7.87 MB)**, which on this
+board is the 8 MB octal PSRAM. So the PSRAM **initialised via Arduino's late `psramInit()`** despite the
+owned esp32s3 libs shipping `CONFIG_SPIRAM_BOOT_HW_INIT` unset (`esp32-adv-libs:ADR-0015`). This answers
+ADR-0121 decision 5's open question in the affirmative: T-embed's octal PSRAM comes up on the owned libs, so
+it keeps ADR-0080's runtime `MALLOC_CAP_SPIRAM` manifest route and needs **no** static-`.bss` fallback. The
+device booted cleanly to `phase=station_connect` with the display live (`disp=320x170`) and **no `[FATAL]`**
+line. The 28 KB cracked-manifest `MALLOC_CAP_SPIRAM` allocation cannot fail against ~7.87 MB free PSRAM; its
+in-hunt `[FATAL]`-silent confirmation needs the operator's provisioned WiFi to drive the device to the hunt
+phase, so it is a belt-and-suspenders follow-up, not an open risk, given the measured free PSRAM.
