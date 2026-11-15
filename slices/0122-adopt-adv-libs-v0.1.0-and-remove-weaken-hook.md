@@ -120,3 +120,16 @@ device booted cleanly to `phase=station_connect` with the display live (`disp=32
 line. The 28 KB cracked-manifest `MALLOC_CAP_SPIRAM` allocation cannot fail against ~7.87 MB free PSRAM; its
 in-hunt `[FATAL]`-silent confirmation needs the operator's provisioned WiFi to drive the device to the hunt
 phase, so it is a belt-and-suspenders follow-up, not an open risk, given the measured free PSRAM.
+
+## Amendment: 2026-11-15 Reverted: v0.1.0 patch #2 corrupts the esp32 core's .ext_ram.bss (ADR-0123)
+
+This slice was reverted the same day it merged. On-device testing of the Change-2 feasibility question
+(static `EXT_RAM_BSS_ATTR`) revealed that the plain v0.1.0 firmware **crash-loops on every esp32 board**
+(`m5stickc_plus2` and `cyd_3248s035c` reproduced, `atom_echo` same board class): `LoadProhibited` panics
+dereferencing uninitialised `0xaa…` pointers out of `.ext_ram.bss`. Root cause: patch #2
+(`CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y`) activates `.ext_ram.bss` placement for the Arduino core's
+own globals, while the libs ship PSRAM boot-init off, so the segment is never zeroed. The esp32s3 boards
+(`t_embed`, `cardputer`) were unaffected (patch #2 is esp32-only). The link and the native suite both passed,
+so this slid through to merge; only the on-device boot caught it. The v0.1.0 adoption is reverted and ADR-0121
+superseded; see ADR-0123 for the measured root cause, the revert, and the re-adoption blocker (withdraw patch
+#2 upstream). Re-adoption against a fixed libs release will flash+boot an esp32 board before merge, not after.

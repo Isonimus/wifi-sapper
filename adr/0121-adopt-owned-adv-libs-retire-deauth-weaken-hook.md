@@ -2,10 +2,10 @@
 id: '0121'
 title: "Adopt the owned esp32-arduino-adv-libs build (v0.1.0) and retire the local deauth-weaken hook"
 type: architecture
-status: accepted
+status: superseded
 date: 2026-11-15
 supersedes: []
-superseded_by: []
+superseded_by: ['0123']
 ---
 
 ## Context
