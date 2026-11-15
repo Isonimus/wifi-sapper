@@ -12,6 +12,17 @@ each `v*` tag, ADR-0095); this file is the curated human narrative. A live docum
 
 ## Unreleased
 
+- **The firmware now builds against the owned `esp32-arduino-adv-libs` v0.1.1 instead of the third-party
+  Bruce precompiled blob, and the local deauth-weaken build step is gone.** Every board's libs package pins
+  the owned build, which ships the weak `ieee80211_raw_frame_sanity_check` baked in, so the
+  `scripts/weaken_deauth_pre.py` link-time `objcopy` hook is no longer needed and is deleted. How the unit
+  behaves is unchanged: the raw-TX capability and the default-off deauth arm are the same; this is a
+  build-provenance and maintenance change (an auditable, self-owned RF-stack build, no dependency on one
+  third-party maintainer's release cadence). This re-adopts the owned build after the earlier v0.1.0 attempt
+  was reverted for an esp32 PSRAM boot crash (patch #2, since withdrawn upstream); v0.1.1 carries the
+  weak-symbol patch alone and was boot-verified on an esp32 and an esp32s3 board before merge. (slice-0125;
+  ADR-0124, superseding the reverted ADR-0121/ADR-0123 adoption)
+
 ## 2026-11-12 (v0.4.0)
 
 - **Fixed: a freshly flashed unit no longer reboots when you connect to its setup Wi-Fi.** On an

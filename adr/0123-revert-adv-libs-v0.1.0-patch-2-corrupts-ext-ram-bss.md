@@ -2,10 +2,10 @@
 id: '0123'
 title: "Revert the esp32-arduino-adv-libs v0.1.0 adoption: patch #2 corrupts the esp32 core's .ext_ram.bss"
 type: architecture
-status: accepted
+status: superseded
 date: 2026-11-15
 supersedes: ['0121']
-superseded_by: []
+superseded_by: ['0124']
 ---
 
 ## Context
